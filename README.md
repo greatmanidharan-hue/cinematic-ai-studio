@@ -1,10 +1,14 @@
+<p align="center">
+  <img src="https://fra.cloud.appwrite.io/v1/storage/buckets/697b974d001a7a80496e/files/697b9764002453409e98/view?project=69735edc00127d2033d8&mode=admin" alt="FairArena Logo" width="140" height="140">
+</p>
+
 # FairArena Video
 
 > **The open source CapCut alternative. Professional video editing in your browser. No uploads. No installs. 100% open source.**
 
 FairArena Video is a fully-featured browser-based video editor that runs entirely client-side. Built with React, TypeScript, WebCodecs, and WebGPU for professional-grade video editing without the need for expensive software or cloud processing.
 
-**[Try it Live](https://fairarena.video)** | **[Documentation](CONTRIBUTING.md)** | **[Discussions](https://github.com/FairArena/fairarena-video/discussions)** | **[Twitter](https://x.com/python_xi)**
+**[Try it Live](https://video-editor.fairarena.app)** | **[Documentation](CONTRIBUTING.md)** | **[Discussions](https://github.com/FairArena/fairarena-video/discussions)** | 
 
 ![FairArena Editor](https://img.shields.io/badge/Lines%20of%20Code-130k+-blue) ![License](https://img.shields.io/badge/License-MIT-green) ![Status](https://img.shields.io/badge/Status-Beta-orange) ![Open Source](https://img.shields.io/badge/Open%20Source-100%25-brightgreen)
 
@@ -92,7 +96,7 @@ FairArena Video is a fully-featured browser-based video editor that runs entirel
 ## Quick Start
 
 ### Try Online
-Visit **[fairarena.video](https://fairarena.video)** to start editing immediately.
+Visit **[video-editor.fairarena.app](https://video-editor.fairarena.app)** to start editing immediately.
 
 ### Run Locally
 
@@ -286,23 +290,3 @@ See [LICENSE](LICENSE) for details.
 - DaVinci Resolve - Professional tools done right
 - CapCut - Accessible editing for everyone
 - Figma - Browser-based professional software
-
----
-
-## Support
-
-- **GitHub Issues** - Bug reports and feature requests
-- **GitHub Discussions** - Questions and community chat
-- **Twitter/X** - [@python_xi](https://x.com/python_xi)
-
----
-
-## $FAIRARENA Token
-
-CA: `B7wDnfrdtvdG7SCkRjSMJ6LkVwGWvdWrQ75iV8G9pump`
-
----
-
-**Built with care by [@python_xi](https://x.com/python_xi) and AI working together.**
-
-*Making professional video editing accessible to everyone. Forever free. Forever open source.*
