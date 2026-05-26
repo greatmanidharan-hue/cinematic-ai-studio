@@ -1,0 +1,18 @@
+{
+  "$schema": "https://ui.shadcn.com/schema.json",
+  "style": "default",
+  "rsc": false,
+  "tsx": true,
+  "tailwind": {
+    "config": "",
+    "css": "src/styles/globals.css",
+    "baseColor": "neutral"
+  },
+  "aliases": {
+    "components": "@fairarena/ui/components",
+    "utils": "@fairarena/ui/lib/utils",
+    "hooks": "@fairarena/ui/hooks",
+    "ui": "@fairarena/ui/components",
+    "lib": "@fairarena/ui/lib"
+  }
+}

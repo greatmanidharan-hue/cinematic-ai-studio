@@ -1,0 +1,19 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": "./node_modules/.tmp/tsconfig.app.tsbuildinfo",
+    "jsx": "react-jsx",
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["./src/*"],
+      "@fairarena/core": ["../../packages/core/src/index.ts"],
+      "@fairarena/core/*": ["../../packages/core/src/*"],
+      "@fairarena/ui": ["../../packages/ui/src/index.ts"],
+      "@fairarena/ui/*": ["../../packages/ui/src/*"]
+    }
+  },
+  "include": ["src"]
+}

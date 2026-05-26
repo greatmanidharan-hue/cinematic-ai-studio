@@ -1,0 +1,13 @@
+name = "fairarena-editor"
+compatibility_date = "2024-01-01"
+pages_build_output_dir = "dist"
+
+# Cloudflare Pages configuration for FairArena video editor
+# This app requires special headers for SharedArrayBuffer (used by FFmpeg.wasm)
+# Custom domain: app.fairarena.video
+
+[env.production]
+name = "fairarena-editor"
+
+[env.preview]
+name = "fairarena-editor-preview"

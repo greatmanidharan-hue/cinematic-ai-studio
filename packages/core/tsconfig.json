@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "src",
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@fairarena/core": ["./src/index.ts"],
+      "@fairarena/core/*": ["./src/*"]
+    }
+  },
+  "include": ["src"],
+  "exclude": ["src/wasm/**/assembly"]
+}
