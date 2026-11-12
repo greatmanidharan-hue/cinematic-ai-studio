@@ -454,6 +454,62 @@ describe("ExportEngine", () => {
     });
   });
 
+  describe("video export settings validation", () => {
+    it("should reject invalid dimensions before initializing the GPU compositor", async () => {
+      await exportEngine.initialize();
+
+      const project = createMockProject({
+        timeline: createMockTimeline(),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, width: 0 },
+        writableStream,
+      );
+      const result = await generator.next();
+
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected validation to stop export");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockVideoEngine.initializeGPUCompositor).not.toHaveBeenCalled();
+    });
+
+    it("should reject frame rates outside the supported range", async () => {
+      await exportEngine.initialize();
+
+      const project = createMockProject({
+        timeline: createMockTimeline(),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 0 },
+        writableStream,
+      );
+      const result = await generator.next();
+
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected validation to stop export");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockVideoEngine.initializeGPUCompositor).not.toHaveBeenCalled();
+    });
+  });
+
   describe("video export", () => {
     it("should render long export audio in chunks and clear cached audio", async () => {
       const project = createMockProject({
