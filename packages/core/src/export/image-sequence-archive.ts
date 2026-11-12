@@ -99,11 +99,18 @@ export async function createImageSequenceZip(
           if (done) break;
           if (outputError) throw outputError;
           if (value?.byteLength) entry.push(value, false);
+          // Wait for emitted archive bytes to reach the destination before
+          // feeding more input. This applies backpressure and bounds queued
+          // output memory when the file writer is slower than compression.
+          await outputWriteQueue;
+          if (outputError) throw outputError;
           // Yield to the browser between chunks so cancellation and UI updates
           // can be processed even while a large frame is being compressed.
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
         }
         entry.push(new Uint8Array(0), true);
+        await outputWriteQueue;
+        if (outputError) throw outputError;
       } finally {
         reader.releaseLock();
       }
