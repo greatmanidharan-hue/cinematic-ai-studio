@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { memo, useRef, useState, useEffect } from "react";
 import { Image } from "lucide-react";
 import type { Clip, Track } from "@fairarena/core";
 import { useProjectStore } from "../../../stores/project-store";
@@ -34,7 +34,7 @@ const AUTO_SCROLL_THRESHOLD = 80;
 const AUTO_SCROLL_SPEED = 10;
 const DRAG_THRESHOLD = 5;
 
-export const ClipComponent: React.FC<ClipComponentProps> = ({
+const ClipComponentInner: React.FC<ClipComponentProps> = ({
   clip,
   track,
   allTracks,
@@ -612,3 +612,9 @@ export const ClipComponent: React.FC<ClipComponentProps> = ({
     </ContextMenu>
   );
 };
+
+// Keep expensive clip thumbnails, waveforms and keyframes stable when
+// unrelated timeline state changes. Project updates replace clip snapshots.
+export const ClipComponent = memo(ClipComponentInner);
+ClipComponent.displayName = "ClipComponent";
+
