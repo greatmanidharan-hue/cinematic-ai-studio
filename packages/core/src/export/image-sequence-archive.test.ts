@@ -16,6 +16,26 @@ describe("createImageSequenceZip", () => {
     expect(new TextDecoder().decode(files["frame_0002.png"])).toBe("second-frame");
   });
 
+  it("streams ZIP output chunks to the supplied writer without retaining an archive Blob", async () => {
+    const chunks: Uint8Array[] = [];
+    const archive = await createImageSequenceZip(
+      [{ name: "frame.png", blob: new Blob(["streamed-frame"]) }],
+      { onChunk: (chunk) => chunks.push(chunk.slice()) },
+    );
+
+    expect(archive.size).toBe(0);
+    expect(chunks.length).toBeGreaterThan(0);
+    const totalLength = chunks.reduce((total, chunk) => total + chunk.length, 0);
+    const bytes = new Uint8Array(totalLength);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    const files = unzipSync(bytes);
+    expect(new TextDecoder().decode(files["frame.png"])).toBe("streamed-frame");
+  });
+
   it("rejects an empty frame list", async () => {
     await expect(createImageSequenceZip([])).rejects.toThrow(/without frames/);
   });
