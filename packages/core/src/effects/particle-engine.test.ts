@@ -43,6 +43,37 @@ describe("deterministic particle simulation", () => {
     expect(simulate(123456)).not.toEqual(simulate(654321));
   });
 
+  it("reconstructs the same particles when seeking directly to an absolute time", () => {
+    const sequential = createEngine(777);
+    for (let frame = 1; frame <= 90; frame++) {
+      sequential.update(frame / 30, 1 / 30);
+    }
+
+    const sought = createEngine(123);
+    sought.seekToTime(3, 1 / 30, 777);
+
+    expect(sought.getParticles()).toEqual(sequential.getParticles());
+  });
+
+  it("clears particles and resets deterministically when seeking backwards", () => {
+    const engine = createEngine(99);
+    engine.seekToTime(4, 1 / 30, 99);
+    const laterParticles = engine.getParticles();
+
+    engine.seekToTime(1, 1 / 30, 99);
+    const earlierParticles = engine.getParticles();
+    engine.seekToTime(4, 1 / 30, 99);
+
+    expect(earlierParticles).not.toEqual(laterParticles);
+    expect(engine.getParticles()).toEqual(laterParticles);
+  });
+
+  it("treats negative seek times as the start of the timeline", () => {
+    const engine = createEngine(12);
+    engine.seekToTime(-5, 1 / 30, 12);
+    expect(engine.getParticles()).toEqual([]);
+  });
+
   it("replays the same simulation after resetting and reseeding", () => {
     const engine = createEngine(42);
     for (let frame = 1; frame <= 20; frame++) {
