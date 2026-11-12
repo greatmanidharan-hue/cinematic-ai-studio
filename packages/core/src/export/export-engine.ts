@@ -305,6 +305,8 @@ export class ExportEngine {
 
     const totalFrames = Math.ceil(timelineDuration * fullSettings.frameRate);
     let bytesWritten = 0;
+    let videoSource: { close: () => void } | null = null;
+    let audioSource: { close: () => void } | null = null;
 
     try {
       yield this.createProgress("preparing", 0, totalFrames, 0, 0);
@@ -375,14 +377,14 @@ export class ExportEngine {
         getFirstEncodableAudioCodec,
       );
 
-      const videoSource = new VideoSampleSource({
+      videoSource = new VideoSampleSource({
         codec: videoCodec,
         bitrate: fullSettings.bitrate ? fullSettings.bitrate * 1000 : QUALITY_MEDIUM,
         keyFrameInterval:
           fullSettings.keyframeInterval / fullSettings.frameRate,
         hardwareAcceleration: "prefer-software",
       });
-      const audioSource = new AudioBufferSource({
+      audioSource = new AudioBufferSource({
         codec: audioCodecResult.codec as "aac" | "opus" | "mp3",
         bitrate: audioCodecResult.bitrate,
       });
@@ -401,6 +403,7 @@ export class ExportEngine {
         this.audioEngine?.clearCache();
       }
       audioSource.close();
+      audioSource = null;
 
       const mediaEngine = getMediaEngine();
       const videoMediaIds: string[] = [];
@@ -492,6 +495,7 @@ export class ExportEngine {
       }
 
       videoSource.close();
+      videoSource = null;
       mediaEngine.disposeAllExportDecoders();
       mediaEngine.clearFrameCache();
       this.videoEngine?.clearVideoElementCache();
@@ -537,6 +541,8 @@ export class ExportEngine {
         ),
       };
     } finally {
+      try { audioSource?.close(); } catch {}
+      try { videoSource?.close(); } catch {}
       this.abortController = null;
       this.currentExport = null;
       this.audioEngine?.clearCache();
