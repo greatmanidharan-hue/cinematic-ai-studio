@@ -494,6 +494,14 @@ export class ExportEngine {
         );
       }
 
+      if (this.abortController?.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "rendering",
+        );
+      }
+
       videoSource.close();
       videoSource = null;
       mediaEngine.disposeAllExportDecoders();
@@ -511,6 +519,16 @@ export class ExportEngine {
         totalFrames,
         bytesWritten,
       );
+
+      // The async generator may be paused at the progress yield while the user
+      // cancels; check again before committing the muxed file.
+      if (this.abortController?.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "muxing",
+        );
+      }
 
       await output.finalize();
       await writableStream.close();
