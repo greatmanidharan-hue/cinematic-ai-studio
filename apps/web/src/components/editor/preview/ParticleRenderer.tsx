@@ -66,7 +66,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       }
     }
 
-        for (const prevId of prevIds) {
+    for (const prevId of prevIds) {
       if (!currentIds.has(prevId)) {
         engine.removeEffect(prevId);
       }
@@ -243,18 +243,24 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         const elapsedSinceStart = (now - playStartTimeRef.current) / 1000;
         const estimatedCurrentTime = playStartPlayheadRef.current + elapsedSinceStart;
         const fixedStep = 1 / 30;
+        let simulationAdvanced = false;
         if (deltaMs > 500) {
           engine.seekToTime(estimatedCurrentTime, fixedStep, particleSeed);
           lastSimulatedTimeRef.current = estimatedCurrentTime;
+          simulationAdvanced = true;
         } else {
           while (lastSimulatedTimeRef.current + fixedStep <= estimatedCurrentTime) {
             lastSimulatedTimeRef.current += fixedStep;
             engine.update(lastSimulatedTimeRef.current, fixedStep);
+            simulationAdvanced = true;
           }
         }
-        const particles = engine.getParticles();
-        updateParticles(particles);
-        render();
+        // The particle image is unchanged between fixed simulation ticks.
+        // Avoid uploading GPU buffers and issuing duplicate WebGL draws at 60/120 Hz.
+        if (simulationAdvanced) {
+          updateParticles(engine.getParticles());
+          render();
+        }
 
         animationFrameRef.current = requestAnimationFrame(animate);
       };
