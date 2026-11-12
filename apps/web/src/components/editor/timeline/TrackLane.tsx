@@ -91,9 +91,9 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
   onKeyframeDelete,
   selectedKeyframeIds = [],
 }) => {
-  const { isTrackExpanded, playheadPosition } = useTimelineStore();
-  const isExpanded = isTrackExpanded(track.id);
-  const { snapSettings } = useUIStore();
+  const isExpanded = useTimelineStore((state) => state.isTrackExpanded(track.id));
+  const playheadPosition = useTimelineStore((state) => state.playheadPosition);
+  const snapSettings = useUIStore((state) => state.snapSettings);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const laneRef = useRef<HTMLDivElement>(null);
