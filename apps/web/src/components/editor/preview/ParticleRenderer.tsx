@@ -112,15 +112,11 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     rendererRef.current = renderer;
 
     const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(10000 * 3);
-    const colors = new Float32Array(10000 * 3);
-    const sizes = new Float32Array(10000);
-    const alphas = new Float32Array(10000);
-
-    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    geometry.setAttribute("size", new THREE.BufferAttribute(sizes, 1));
-    geometry.setAttribute("alpha", new THREE.BufferAttribute(alphas, 1));
+    const initialCapacity = 256;
+    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(initialCapacity * 3), 3));
+    geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(initialCapacity * 3), 3));
+    geometry.setAttribute("size", new THREE.BufferAttribute(new Float32Array(initialCapacity), 1));
+    geometry.setDrawRange(0, 0);
     geometryRef.current = geometry;
 
     const material = new THREE.PointsMaterial({
@@ -149,43 +145,56 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     };
   }, [width, height]);
 
-  const hexToRgbNormalized = useCallback(
-    (hex: string): { r: number; g: number; b: number } => {
-      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-      if (result) {
-        return {
-          r: parseInt(result[1], 16) / 255,
-          g: parseInt(result[2], 16) / 255,
-          b: parseInt(result[3], 16) / 255,
-        };
-      }
-      const rgbMatch = /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/i.exec(hex);
-      if (rgbMatch) {
-        return {
-          r: parseInt(rgbMatch[1], 10) / 255,
-          g: parseInt(rgbMatch[2], 10) / 255,
-          b: parseInt(rgbMatch[3], 10) / 255,
-        };
-      }
-      return { r: 1, g: 1, b: 1 };
-    },
-    []
-  );
+  const colorCacheRef = useRef<Map<string, { r: number; g: number; b: number }>>(new Map());
+
+  const hexToRgbNormalized = useCallback((value: string) => {
+    const cache = colorCacheRef.current;
+    const cached = cache.get(value);
+    if (cached) return cached;
+
+    let rgb = { r: 1, g: 1, b: 1 };
+    const hex = /^#?([a-f\\d]{2})([a-f\\d]{2})([a-f\\d]{2})$/i.exec(value);
+    const match = /^rgb\\((\\d+),\\s*(\\d+),\\s*(\\d+)\\)$/i.exec(value);
+    if (hex) {
+      rgb = {
+        r: parseInt(hex[1], 16) / 255,
+        g: parseInt(hex[2], 16) / 255,
+        b: parseInt(hex[3], 16) / 255,
+      };
+    } else if (match) {
+      rgb = {
+        r: parseInt(match[1], 10) / 255,
+        g: parseInt(match[2], 10) / 255,
+        b: parseInt(match[3], 10) / 255,
+      };
+    }
+    if (cache.size >= 256) cache.clear();
+    cache.set(value, rgb);
+    return rgb;
+  }, []);
 
   const updateParticles = useCallback(
     (particles: Particle[]) => {
-      if (!geometryRef.current) return;
-
-      const positions = geometryRef.current.attributes.position.array as Float32Array;
-      const colors = geometryRef.current.attributes.color.array as Float32Array;
-      const sizes = geometryRef.current.attributes.size.array as Float32Array;
+      const geometry = geometryRef.current;
+      if (!geometry) return;
 
       const count = Math.min(particles.length, 10000);
+      const currentPosition = geometry.getAttribute("position") as THREE.BufferAttribute;
+      const currentCapacity = currentPosition.array.length / 3;
+      if (count > currentCapacity) {
+        const capacity = Math.min(10000, 2 ** Math.ceil(Math.log2(count)));
+        geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(capacity * 3), 3));
+        geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(capacity * 3), 3));
+        geometry.setAttribute("size", new THREE.BufferAttribute(new Float32Array(capacity), 1));
+      }
+
+      const positions = (geometry.getAttribute("position") as THREE.BufferAttribute).array as Float32Array;
+      const colors = (geometry.getAttribute("color") as THREE.BufferAttribute).array as Float32Array;
+      const sizes = (geometry.getAttribute("size") as THREE.BufferAttribute).array as Float32Array;
 
       for (let i = 0; i < count; i++) {
         const particle = particles[i];
         const i3 = i * 3;
-
         positions[i3] = particle.position.x;
         positions[i3 + 1] = height - particle.position.y;
         positions[i3 + 2] = particle.position.z;
@@ -194,22 +203,13 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         colors[i3] = rgb.r * particle.opacity;
         colors[i3 + 1] = rgb.g * particle.opacity;
         colors[i3 + 2] = rgb.b * particle.opacity;
-
         sizes[i] = particle.size;
       }
 
-      for (let i = count; i < 10000; i++) {
-        const i3 = i * 3;
-        positions[i3] = 0;
-        positions[i3 + 1] = 0;
-        positions[i3 + 2] = -1000;
-        sizes[i] = 0;
-      }
-
-      geometryRef.current.attributes.position.needsUpdate = true;
-      geometryRef.current.attributes.color.needsUpdate = true;
-      geometryRef.current.attributes.size.needsUpdate = true;
-      geometryRef.current.setDrawRange(0, count);
+      (geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+      (geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
+      (geometry.getAttribute("size") as THREE.BufferAttribute).needsUpdate = true;
+      geometry.setDrawRange(0, count);
     },
     [hexToRgbNormalized, height]
   );
