@@ -3500,7 +3500,12 @@ export const Preview: React.FC = () => {
           if (mediaItem?.type === "image" && mediaItem.blob) {
             try {
               const bitmap = await createImageBitmap(mediaItem.blob);
-              imageBitmapCacheRef.current.set(clip.id, bitmap);
+              if (isActive) {
+                imageBitmapCacheRef.current.set(clip.id, bitmap);
+              } else {
+                bitmap.close();
+                return;
+              }
             } catch (error) {
               console.warn(
                 `[Preview] Failed to pre-cache image clip ${clip.id}:`,
