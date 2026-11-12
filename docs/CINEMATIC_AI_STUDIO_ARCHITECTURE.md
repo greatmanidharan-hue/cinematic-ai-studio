@@ -73,8 +73,9 @@ Provide clear capability warnings and fallback paths.
 - Added unit tests for visible-particle drawing, inactive/transparent particle filtering and zero-opacity layers.
 - Renderer is exported from the core effects barrel. It is not yet wired into the editor preview/export bridge.
 - Preview audit found an existing Three.js `ParticleRenderer` mounted as a transparent overlay in `Preview.tsx`; it already advances the shared particle engine during playback and refreshes at the playhead while paused. Avoid mounting a second particle loop or duplicating engine ownership.
-- The existing Three.js preview renderer is separate from the newly added Canvas renderer. The Canvas renderer remains a reusable rendering primitive until a deliberate renderer migration or export adapter is implemented.
-- Preview currently renders particle overlays as a UI layer; the reviewed `RenderBridge` frame path and export path have not yet been proven to include those particles. Preview/export parity remains an open integration task.
+- The existing Three.js preview renderer is separate from the Canvas renderer. Preview continues to use the established Three.js overlay; no duplicate preview loop was added.
+- `VideoEngine.renderFrame` already advanced the particle engine during export, but drew plain circles. It now delegates particle drawing to the shared Canvas renderer, adding radial glow and rotation while preserving the existing bottom-left particle coordinate convention.
+- Export uses sequential frame timestamps and `resetExportState()` to reset particle simulation at export start. The particle simulation still uses random emission and is not guaranteed bit-for-bit deterministic across separate exports; frame-seek preview/export parity remains an open task.
 - No existing editor panel or render pipeline was replaced in this foundation step.
 
 ## Quality gates
