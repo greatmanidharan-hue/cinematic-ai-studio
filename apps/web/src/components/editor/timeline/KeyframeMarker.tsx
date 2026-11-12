@@ -38,33 +38,43 @@ const KeyframeMarkerInner: React.FC<KeyframeMarkerProps> = ({
     [onSelect]
   );
 
-  const handleMouseMove = useCallback(
-    (e: MouseEvent) => {
-      if (!isDragging) return;
-
-      const deltaX = e.clientX - dragStartX;
-      if (Math.abs(deltaX) > 2) {
-        onMove(deltaX);
-        setDragStartX(e.clientX);
-      }
-    },
-    [isDragging, dragStartX, onMove]
-  );
-
-  const handleMouseUp = useCallback(() => {
-    setIsDragging(false);
-  }, []);
-
   useEffect(() => {
-    if (isDragging) {
-      window.addEventListener("mousemove", handleMouseMove);
-      window.addEventListener("mouseup", handleMouseUp);
-      return () => {
-        window.removeEventListener("mousemove", handleMouseMove);
-        window.removeEventListener("mouseup", handleMouseUp);
-      };
-    }
-  }, [isDragging, handleMouseMove, handleMouseUp]);
+    if (!isDragging) return;
+
+    const handleMouseMove = (event: MouseEvent) => {
+      const deltaX = event.clientX - dragStartXRef.current;
+      if (Math.abs(deltaX) <= 2) return;
+
+      dragStartXRef.current = event.clientX;
+      pendingDeltaRef.current += deltaX;
+      if (dragFrameRef.current === null) {
+        dragFrameRef.current = requestAnimationFrame(flushPendingMove);
+      }
+    };
+
+    const handleMouseUp = () => {
+      if (dragFrameRef.current !== null) {
+        cancelAnimationFrame(dragFrameRef.current);
+        dragFrameRef.current = null;
+      }
+      const finalDelta = pendingDeltaRef.current;
+      pendingDeltaRef.current = 0;
+      if (finalDelta !== 0) onMoveRef.current(finalDelta);
+      setIsDragging(false);
+    };
+
+    window.addEventListener("mousemove", handleMouseMove);
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", handleMouseMove);
+      window.removeEventListener("mouseup", handleMouseUp);
+      if (dragFrameRef.current !== null) {
+        cancelAnimationFrame(dragFrameRef.current);
+        dragFrameRef.current = null;
+      }
+      pendingDeltaRef.current = 0;
+    };
+  }, [isDragging, flushPendingMove]);
 
   const handleContextMenu = useCallback(
     (e: React.MouseEvent) => {
