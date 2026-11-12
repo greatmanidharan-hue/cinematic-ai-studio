@@ -343,7 +343,19 @@ const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
     <label className="block space-y-1">
       <span className="text-[10px] text-text-muted">{label}</span>
       <input type="number" value={value} min={min} max={max} step={step}
-        onChange={(event) => { const next = Number(event.target.value); if (Number.isFinite(next)) update({ [patchKey]: Math.min(max, Math.max(min, next)) }); }}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          if (!Number.isFinite(next)) return;
+          const bounded = Math.min(max, Math.max(min, next));
+          if (particle && patchKey.startsWith("size.")) {
+            const key = patchKey.slice(5) as "min" | "max";
+            update({ config: { ...particle.config, size: { ...particle.config.size, [key]: bounded } } });
+          } else if (particle) {
+            update({ config: { ...particle.config, [patchKey]: bounded } });
+          } else {
+            update({ [patchKey]: bounded });
+          }
+        }}
         className="w-full h-8 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary" />
     </label>
   );
@@ -373,10 +385,59 @@ const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
         </div>
       )}
       {particle && (
-        <div className="space-y-2">
-          <p className="text-[10px] text-text-muted">Particle type: {particle.type}</p>
-          <p className="text-[10px] text-text-muted">Clip: {particle.clipId}</p>
-          <p className="text-[10px] text-text-muted">Detailed particle appearance settings remain in the clip's Particle Effects section.</p>
+        <div className="space-y-3">
+          <p className="text-[10px] text-text-muted">Particle type: {particle.type} · Clip: {particle.clipId}</p>
+          <label className="block space-y-1">
+            <span className="text-[10px] text-text-muted">Preset library</span>
+            <select value="" onChange={(event) => {
+              const preset = PARTICLE_PRESETS.find((item) => item.id === event.target.value);
+              if (preset) update({ config: { ...preset.config }, type: preset.type });
+            }} className="w-full h-8 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary">
+              <option value="" disabled>Apply a particle preset…</option>
+              {PARTICLE_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
+            </select>
+          </label>
+          <div className="grid grid-cols-2 gap-2">
+            {numberField("Particle count", particle.config.particleCount, "particleCount", 10, 1000, 10)}
+            {numberField("Speed", particle.config.speed, "speed", 0, 1000, 5)}
+            {numberField("Gravity", particle.config.gravity, "gravity", -1000, 1000, 5)}
+            {numberField("Emission rate", particle.config.emissionRate, "emissionRate", 0, 1000, 5)}
+            {numberField("Turbulence", particle.config.turbulence, "turbulence", 0, 200, 1)}
+            {numberField("Emission radius", particle.config.emissionRadius, "emissionRadius", 0, 1000, 1)}
+            {numberField("Min particle size", particle.config.size.min, "size.min", 0.1, 100, 0.5)}
+            {numberField("Max particle size", particle.config.size.max, "size.max", 0.1, 150, 0.5)}
+          </div>
+          <label className="block space-y-1">
+            <span className="text-[10px] text-text-muted">Emission shape</span>
+            <select value={particle.config.emissionShape} onChange={(event) => update({ config: { ...particle.config, emissionShape: event.target.value } })}
+              className="w-full h-8 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary">
+              {["point","line","circle","rectangle","sphere"].map((shape) => <option key={shape} value={shape}>{shape}</option>)}
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[10px] text-text-muted">Blend mode</span>
+            <select value={particle.config.blendMode} onChange={(event) => update({ config: { ...particle.config, blendMode: event.target.value } })}
+              className="w-full h-8 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary">
+              {["normal","add","multiply","screen"].map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+            </select>
+          </label>
+          <div className="space-y-2">
+            <span className="text-[10px] text-text-muted">Particle colors</span>
+            <div className="flex flex-wrap gap-2">
+              {particle.config.colors.map((color, index) => (
+                <label key={index} className="flex items-center gap-1 rounded border border-border bg-background-tertiary p-1">
+                  <input type="color" value={color} onChange={(event) => {
+                    const colors = [...particle.config.colors]; colors[index] = event.target.value;
+                    update({ config: { ...particle.config, colors } });
+                  }} className="h-6 w-7 cursor-pointer bg-transparent" />
+                  <button type="button" onClick={() => update({ config: { ...particle.config, colors: particle.config.colors.filter((_, i) => i !== index) } })}
+                    disabled={particle.config.colors.length <= 1} className="px-1 text-[10px] text-text-muted disabled:opacity-30">×</button>
+                </label>
+              ))}
+              <button type="button" onClick={() => update({ config: { ...particle.config, colors: [...particle.config.colors, "#ffffff"] } })}
+                className="h-8 w-8 rounded border border-dashed border-border text-xs text-text-muted">+</button>
+            </div>
+          </div>
         </div>
       )}
       <button type="button" onClick={() => {
