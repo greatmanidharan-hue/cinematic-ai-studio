@@ -55,6 +55,8 @@ import {
   getTrackInfo,
 } from "./timeline/index";
 
+const EMPTY_CLIPS: never[] = [];
+
 export const Timeline: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const tracksRef = useRef<HTMLDivElement>(null);
@@ -127,11 +129,19 @@ export const Timeline: React.FC = () => {
     return titleEngine?.getAllTextClips() ?? [];
   }, [titleEngine, project.modifiedAt]);
 
+  const textClipsByTrack = useMemo(() => {
+    const grouped = new Map<string, typeof allTextClips>();
+    for (const clip of allTextClips) {
+      const clips = grouped.get(clip.trackId) ?? [];
+      clips.push(clip);
+      grouped.set(clip.trackId, clips);
+    }
+    return grouped;
+  }, [allTextClips]);
+
   const getTextClipsForTrack = useCallback(
-    (trackId: string) => {
-      return allTextClips.filter((tc) => tc.trackId === trackId);
-    },
-    [allTextClips],
+    (trackId: string) => textClipsByTrack.get(trackId) ?? EMPTY_CLIPS,
+    [textClipsByTrack],
   );
 
   const graphicsEngine = getGraphicsEngine();
@@ -142,11 +152,19 @@ export const Timeline: React.FC = () => {
     return [...shapes, ...svgs, ...stickers];
   }, [graphicsEngine, project.modifiedAt]);
 
+  const shapeClipsByTrack = useMemo(() => {
+    const grouped = new Map<string, typeof allShapeClips>();
+    for (const clip of allShapeClips) {
+      const clips = grouped.get(clip.trackId) ?? [];
+      clips.push(clip);
+      grouped.set(clip.trackId, clips);
+    }
+    return grouped;
+  }, [allShapeClips]);
+
   const getShapeClipsForTrack = useCallback(
-    (trackId: string) => {
-      return allShapeClips.filter((sc) => sc.trackId === trackId);
-    },
-    [allShapeClips],
+    (trackId: string) => shapeClipsByTrack.get(trackId) ?? EMPTY_CLIPS,
+    [shapeClipsByTrack],
   );
   const [isBoxSelecting, setIsBoxSelecting] = React.useState(false);
   const [selectionBox, setSelectionBox] = React.useState<{
