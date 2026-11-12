@@ -744,8 +744,14 @@ export const Preview: React.FC = () => {
 
   // Keep a ref to timelineTracks for use in playback effect without causing re-runs
   const timelineTracksRef = useRef(timelineTracks);
+  const visibleAudioTracksRef = useRef(
+    timelineTracks.filter((track) => track.type === "audio" && !track.hidden),
+  );
   useEffect(() => {
     timelineTracksRef.current = timelineTracks;
+    visibleAudioTracksRef.current = timelineTracks.filter(
+      (track) => track.type === "audio" && !track.hidden,
+    );
   }, [timelineTracks]);
 
   // Keep a ref to allTextClips for use in playback effect
@@ -3651,10 +3657,7 @@ export const Preview: React.FC = () => {
             currentPlayhead,
           );
 
-          const audioTracksForFrame = timelineTracksRef.current.filter(
-            (t) => t.type === "audio" && !t.hidden,
-          );
-          const hasCurrentAudioClip = audioTracksForFrame.some((track) =>
+          const hasCurrentAudioClip = visibleAudioTracksRef.current.some((track) =>
             track.clips.some(
               (clip) =>
                 currentPlayhead >= clip.startTime &&
