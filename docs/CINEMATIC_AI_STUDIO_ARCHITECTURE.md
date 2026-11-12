@@ -71,11 +71,13 @@ Provide clear capability warnings and fallback paths.
   lightning-bolt generator. A bolt renderer/shader remains planned.
 - Added a reusable Canvas 2D particle renderer with radial glow, rotation, opacity and optional additive blending; it supports HTML canvas and OffscreenCanvas contexts.
 - Added unit tests for visible-particle drawing, inactive/transparent particle filtering and zero-opacity layers.
-- Renderer is exported from the core effects barrel. It is not yet wired into the editor preview/export bridge.
+- Renderer is exported from the core effects barrel and is used by `VideoEngine` for particle export rendering. The editor preview continues to use its existing Three.js renderer.
 - Preview audit found an existing Three.js `ParticleRenderer` mounted as a transparent overlay in `Preview.tsx`; it already advances the shared particle engine during playback and refreshes at the playhead while paused. Avoid mounting a second particle loop or duplicating engine ownership.
 - The existing Three.js preview renderer is separate from the Canvas renderer. Preview continues to use the established Three.js overlay; no duplicate preview loop was added.
 - `VideoEngine.renderFrame` already advanced the particle engine during export, but drew plain circles. It now delegates particle drawing to the shared Canvas renderer, adding radial glow and rotation while preserving the existing bottom-left particle coordinate convention.
-- Export uses sequential frame timestamps and `resetExportState()` to reset particle simulation at export start. The particle simulation still uses random emission and is not guaranteed bit-for-bit deterministic across separate exports; frame-seek preview/export parity remains an open task.
+- Particle simulation now uses a seeded Mulberry32 random source for emission, velocity, turbulence, size, rotation, lifetime and particle IDs. `VideoEngine.resetExportState()` derives a stable FNV-1a seed from the sorted particle-effect configuration before resetting the simulation, so repeated exports with the same effect setup and frame sequence reproduce the same particle pattern.
+- Deterministic simulation tests cover same-seed equality, different-seed variation and reset/replay reproducibility. Tests have been authored but have not yet been executed in this GitHub-only workflow.
+- Export still uses the shared particle-engine singleton also consumed by preview; export/preview concurrency isolation and arbitrary-time seek parity remain open tasks.
 - No existing editor panel or render pipeline was replaced in this foundation step.
 
 ## Quality gates
