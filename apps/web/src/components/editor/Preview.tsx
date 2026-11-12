@@ -3737,16 +3737,10 @@ export const Preview: React.FC = () => {
             timelineTracksRef.current,
           );
 
-          // Compute these here so they're visible in both the transition path
-          // and the normal compositing path below.
-          const activeShapeClips = getActiveShapeClips(
-            allShapeClipsRef.current,
-            currentPlayhead,
-          );
-          const activeTextClips = getActiveTextClips(
-            allTextClipsRef.current,
-            currentPlayhead,
-          );
+          // Reuse the active overlays already resolved for this frame.
+          // Both transition and normal compositing paths consume the same lists.
+          const activeShapeClips = currentShapeClips;
+          const activeTextClips = currentTextClips;
 
           if (transitionInfoMulti) {
             const tracks = timelineTracksRef.current;
