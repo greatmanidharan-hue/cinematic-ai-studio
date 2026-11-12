@@ -136,11 +136,12 @@ const ClipComponentInner: React.FC<ClipComponentProps> = ({
     // selected clips' start positions so we can drag them as a group.
     const selectedIds = useUIStore.getState().getSelectedClipIds();
     if (selectedIds.length > 1 && selectedIds.includes(clip.id)) {
+      const selectedIdSet = new Set(selectedIds);
       const snapshot: Array<{ clipId: string; startTime: number; trackId: string }> = [];
       for (const t of allTracks) {
         for (const c of t.clips) {
           if (c.id === clip.id) continue;
-          if (!selectedIds.includes(c.id)) continue;
+          if (!selectedIdSet.has(c.id)) continue;
           if (t.locked) continue;
           snapshot.push({ clipId: c.id, startTime: c.startTime, trackId: t.id });
         }
