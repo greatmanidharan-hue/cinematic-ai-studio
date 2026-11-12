@@ -84,6 +84,36 @@ describe("createImageSequenceZip", () => {
     expect(new TextDecoder().decode(files["frame.png"])).toBe("streamed-frame");
   });
 
+  it("rejects promptly when cancellation occurs during a pending destination write", async () => {
+    const controller = new AbortController();
+    let releaseWrite: (() => void) | undefined;
+    let notifyWriteStarted: (() => void) | undefined;
+    const writeStarted = new Promise<void>((resolve) => {
+      notifyWriteStarted = resolve;
+    });
+    const pendingWrite = new Promise<void>((resolve) => {
+      releaseWrite = resolve;
+    });
+    const packaging = createImageSequenceZip(
+      [{ name: "frame.png", blob: new Blob(["frame-data"]) }],
+      {
+        signal: controller.signal,
+        onChunk: async () => {
+          notifyWriteStarted?.();
+          await pendingWrite;
+        },
+      },
+    );
+
+    try {
+      await writeStarted;
+      controller.abort();
+      await expect(packaging).rejects.toThrow(/cancelled/i);
+    } finally {
+      releaseWrite?.();
+    }
+  });
+
   it("honors cancellation while a streamed destination write is pending", async () => {
     const controller = new AbortController();
     let releaseWrite: (() => void) | undefined;
