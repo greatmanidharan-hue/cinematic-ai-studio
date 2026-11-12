@@ -478,8 +478,14 @@ export const Toolbar: React.FC = () => {
             }));
           },
         });
-        // Observe early archive failures while the renderer is still producing frames.
-        void archivePromise.catch(() => undefined);
+        // If the destination fails early, wake the producer and stop rendering.
+        void archivePromise.catch((error) => {
+          frameError = error instanceof Error ? error : new Error("Image sequence ZIP packaging failed.");
+          framesDone = true;
+          zipController.abort();
+          engine.cancel();
+          frameWaiters.splice(0).forEach((wake) => wake());
+        });
         const generator = engine.exportImageSequence(project, settings, async (frame) => {
           if (zipController.signal.aborted) throw new Error("Image sequence export cancelled.");
           queuedFrames.push(frame);
