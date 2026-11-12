@@ -119,7 +119,7 @@ export async function createImageSequenceZip(
     await zipFinished;
     await outputWriteQueue;
     if (outputError) throw outputError;
-    return options.onChunk ? undefined : new Blob(output, { type: "application/zip" });
+    return new Blob(output, { type: "application/zip" });
   } catch (error) {
     try {
       zip.terminate();
