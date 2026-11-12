@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect, useRef } from "react";
+import React, { memo, useCallback, useState, useEffect, useRef } from "react";
 import type { Keyframe } from "@fairarena/core";
 
 interface KeyframeMarkerProps {
@@ -11,7 +11,7 @@ interface KeyframeMarkerProps {
   onDelete: () => void;
 }
 
-export const KeyframeMarker: React.FC<KeyframeMarkerProps> = ({
+const KeyframeMarkerInner: React.FC<KeyframeMarkerProps> = ({
   keyframe,
   xPosition,
   color,
@@ -116,5 +116,8 @@ export const KeyframeMarker: React.FC<KeyframeMarkerProps> = ({
     </div>
   );
 };
+
+export const KeyframeMarker = memo(KeyframeMarkerInner);
+KeyframeMarker.displayName = "KeyframeMarker";
 
 export default KeyframeMarker;
