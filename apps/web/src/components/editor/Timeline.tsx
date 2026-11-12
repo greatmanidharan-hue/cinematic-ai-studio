@@ -1200,7 +1200,7 @@ export const Timeline: React.FC = () => {
                 pixelsPerSecond={pixelsPerSecond}
                 scrollX={scrollX}
                 viewportWidth={viewportWidth}
-                totalHeight={totalTracksHeight + 44}
+                totalHeight={totalTracksHeight + 88}
               />
 
               {project.timeline.markers.map((marker) => (
