@@ -118,6 +118,27 @@ export class ExportEngine {
     }
   }
 
+  private createImageSequenceFileName(
+    pattern: string,
+    frameNumber: number,
+    format: ImageExportSettings["format"],
+  ): string {
+    const framePattern = pattern.match(/\{(0+)\}/);
+    const expandedName = framePattern
+      ? pattern.replace(
+          framePattern[0],
+          String(frameNumber).padStart(framePattern[1].length, "0"),
+        )
+      : `${pattern}_${frameNumber}`;
+    const safeBaseName = expandedName
+      .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+      .replace(/\.(jpg|jpeg|png|webp)$/i, "")
+      .replace(/^[. ]+|[. ]+$/g, "")
+      .trim();
+    const extension = format === "jpg" ? "jpg" : format;
+    return `${safeBaseName || "frame_${frameNumber}"}.${extension}`;
+  }
+
   private validateImageSettings(settings: ImageExportSettings): string | null {
     if (!["jpg", "png", "webp"].includes(settings.format)) {
       return "Unsupported image format.";
@@ -953,13 +974,11 @@ export class ExportEngine {
           };
         }
 
-        const framePattern = fullSettings.namingPattern.match(/\{(0+)\}/);
-        const frameName = framePattern
-          ? fullSettings.namingPattern.replace(
-              framePattern[0],
-              String(frameNumber).padStart(framePattern[1].length, "0"),
-            )
-          : `${fullSettings.namingPattern}_${frameNumber}`;
+        const frameName = this.createImageSequenceFileName(
+          fullSettings.namingPattern,
+          frameNumber,
+          fullSettings.format,
+        );
         files.push({ name: frameName, blob: result.blob });
         this.currentExport!.framesRendered = i + 1;
 
