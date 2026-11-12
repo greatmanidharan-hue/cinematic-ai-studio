@@ -2855,6 +2855,8 @@ export class VideoEngine {
   dispose(): void {
     this.clearCache();
     this.clearVideoElementCache();
+    this.exportParticleEngine?.dispose();
+    this.exportParticleEngine = null;
     for (const bitmap of this.staticImageCache.values()) {
       try { bitmap.close(); } catch {}
     }
