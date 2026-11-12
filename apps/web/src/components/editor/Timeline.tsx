@@ -1174,6 +1174,8 @@ export const Timeline: React.FC = () => {
                 duration={timelineDuration}
                 onUpdate={updateLightningEffect}
                 onSelect={(effectId) => select({ type: "effect", id: effectId })}
+                onInteractionStart={() => useProjectStore.getState().beginHistoryGroup("Move lightning VFX")}
+                onInteractionEnd={() => useProjectStore.getState().endHistoryGroup()}
               />
 
               <ParticleEffectLane
@@ -1186,6 +1188,8 @@ export const Timeline: React.FC = () => {
                 markerTimes={project.timeline.markers.map((marker) => marker.time)}
                 onUpdate={updateParticleEffect}
                 onSelect={(effectId) => select({ type: "effect", id: effectId })}
+                onInteractionStart={() => useProjectStore.getState().beginHistoryGroup("Move particle VFX")}
+                onInteractionEnd={() => useProjectStore.getState().endHistoryGroup()}
               />
 
               <BeatMarkerOverlay
