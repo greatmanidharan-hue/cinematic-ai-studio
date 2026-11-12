@@ -701,6 +701,48 @@ describe("ExportEngine", () => {
       }
     });
 
+    it("rejects a second export while a streamed sequence is active", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const exportFrameSpy = vi.spyOn(exportEngine, "exportFrame")
+        .mockResolvedValue({ success: true, blob: new Blob(["frame"]) });
+
+      let releaseFrame!: () => void;
+      const frameWrite = new Promise<void>((resolve) => {
+        releaseFrame = resolve;
+      });
+      const firstGenerator = exportEngine.exportImageSequence(
+        project,
+        {},
+        async () => frameWrite,
+      );
+
+      try {
+        await firstGenerator.next();
+        const activeStep = firstGenerator.next();
+        // Let the frame callback begin and hold the first export open.
+        await Promise.resolve();
+        const secondGenerator = exportEngine.exportImageSequence(project);
+        const secondResult = await secondGenerator.next();
+
+        expect(secondResult.done).toBe(true);
+        if (!secondResult.done) throw new Error("Expected concurrent export to be rejected");
+        expect(secondResult.value.success).toBe(false);
+        expect(secondResult.value.error?.message).toContain("already in progress");
+
+        releaseFrame();
+        let firstResult = await activeStep;
+        while (!firstResult.done) firstResult = await firstGenerator.next();
+        expect(firstResult.value.success).toBe(true);
+      } finally {
+        releaseFrame();
+        exportFrameSpy.mockRestore();
+      }
+    });
+
     it("stops rendering when the streamed frame consumer fails", async () => {
       await exportEngine.initialize();
       const project = createMockProject({
