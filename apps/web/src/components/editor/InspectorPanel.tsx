@@ -327,16 +327,13 @@ const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
   const particle = (project.timeline.particleEffects ?? []).find((item) => item.id === effectId);
   const effect = lightning ?? particle;
   const update = (patch: Record<string, unknown>) => {
-    useProjectStore.setState((state) => ({
-      project: {
-        ...state.project,
-        timeline: lightning
-          ? { ...state.project.timeline, lightningEffects: (state.project.timeline.lightningEffects ?? []).map((item) => item.id === effectId ? { ...item, ...patch } : item) }
-          : { ...state.project.timeline, particleEffects: (state.project.timeline.particleEffects ?? []).map((item) => item.id === effectId ? { ...item, ...patch } : item) },
-        modifiedAt: Date.now(),
-      },
-    }));
-    window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+    const current = useProjectStore.getState().project.timeline;
+    const request = lightning
+      ? { lightningEffects: (current.lightningEffects ?? []).map((item) => item.id === effectId ? { ...item, ...patch } : item) }
+      : { particleEffects: (current.particleEffects ?? []).map((item) => item.id === effectId ? { ...item, ...patch } : item) };
+    void useProjectStore.getState().updateTimelineVfx(request).then((result) => {
+      if (result.success) window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+    });
   };
   if (!effect) return <EmptyState />;
   const numberField = (label: string, value: number, patchKey: string, min: number, max: number, step: number) => (
@@ -444,16 +441,16 @@ const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
         </div>
       )}
       <button type="button" onClick={() => {
-        useProjectStore.setState((state) => ({
-          project: {
-            ...state.project,
-            timeline: lightning
-              ? { ...state.project.timeline, lightningEffects: (state.project.timeline.lightningEffects ?? []).filter((item) => item.id !== effectId) }
-              : { ...state.project.timeline, particleEffects: (state.project.timeline.particleEffects ?? []).filter((item) => item.id !== effectId) },
-            modifiedAt: Date.now(),
-          },
-        }));
-        useUIStore.getState().clearSelection();
+        const current = useProjectStore.getState().project.timeline;
+        const request = lightning
+          ? { lightningEffects: (current.lightningEffects ?? []).filter((item) => item.id !== effectId) }
+          : { particleEffects: (current.particleEffects ?? []).filter((item) => item.id !== effectId) };
+        void useProjectStore.getState().updateTimelineVfx(request).then((result) => {
+          if (result.success) {
+            useUIStore.getState().clearSelection();
+            window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+          }
+        });
       }} className="w-full rounded border border-red-500/40 bg-red-500/10 py-2 text-xs text-red-400 hover:bg-red-500/20">
         Remove VFX
       </button>
