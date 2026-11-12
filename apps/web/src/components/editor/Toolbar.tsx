@@ -431,8 +431,14 @@ export const Toolbar: React.FC = () => {
     async (settings: SequenceExportSettings) => {
       setIsExportDialogOpen(false);
       let writable: FileSystemWritableFileStream | null = null;
+      const zipController = new AbortController();
+      sequenceZipAbortController.current = zipController;
       try {
         writable = await showSavePicker(`${project.name || "image-sequence"}.zip`, "zip");
+        if (zipController.signal.aborted) {
+          await writable.abort();
+          return;
+        }
         setExportState({ isExporting: true, progress: 0, phase: "Preparing image sequence...", error: null, complete: false });
         const engine = getExportEngine();
         await engine.initialize();
@@ -440,6 +446,9 @@ export const Toolbar: React.FC = () => {
         let result: ExportResult | undefined;
         while (true) {
           const { value, done } = await generator.next();
+          if (zipController.signal.aborted) {
+            throw new Error("Image sequence export cancelled.");
+          }
           if (done) {
             result = value;
             break;
@@ -453,8 +462,6 @@ export const Toolbar: React.FC = () => {
         if (!result?.success || !result.files?.length) {
           throw new Error(result?.error?.message || "Image sequence export failed");
         }
-        const zipController = new AbortController();
-        sequenceZipAbortController.current = zipController;
         const archive = await createImageSequenceZip(result.files, {
           signal: zipController.signal,
           onChunk: async (chunk) => {
@@ -489,9 +496,23 @@ export const Toolbar: React.FC = () => {
         });
         setTimeout(() => setExportState({ isExporting: false, progress: 0, phase: "", error: null, complete: false }), 2500);
       } catch (error) {
+        const cancelled =
+          zipController.signal.aborted ||
+          (error instanceof Error &&
+            (error.name === "AbortError" || /cancelled/i.test(error.message)));
         sequenceZipAbortController.current = null;
         if (writable) {
           try { await writable.abort(); } catch {}
+        }
+        if (cancelled) {
+          setExportState({
+            isExporting: false,
+            progress: 0,
+            phase: "",
+            error: null,
+            complete: false,
+          });
+          return;
         }
         setExportState((prev) => ({
           ...prev,
