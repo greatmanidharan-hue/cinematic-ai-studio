@@ -568,7 +568,7 @@ describe("ExportEngine", () => {
       });
       const firstBlob = new Blob(["frame-0"]);
       const secondBlob = new Blob(["frame-1"]);
-      vi.spyOn(exportEngine, "exportFrame")
+      const exportFrameSpy = vi.spyOn(exportEngine, "exportFrame")
         .mockResolvedValueOnce({ success: true, blob: firstBlob })
         .mockResolvedValueOnce({ success: true, blob: secondBlob });
 
@@ -576,9 +576,14 @@ describe("ExportEngine", () => {
         namingPattern: "../shot:{000}",
         format: "png",
       });
-      let result = await generator.next();
-      while (!result.done) {
+      let result;
+      try {
         result = await generator.next();
+        while (!result.done) {
+          result = await generator.next();
+        }
+      } finally {
+        exportFrameSpy.mockRestore();
       }
 
       expect(result.value.success).toBe(true);
