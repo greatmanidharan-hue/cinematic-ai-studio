@@ -8,14 +8,14 @@ export interface ImageSequenceZipOptions {
 
 function validateEntryName(name: string): string {
   const trimmedName = name.trim();
-  const normalizedName = trimmedName.replace(/\\\\/g, "/");
+  const normalizedName = trimmedName.replace(/\\/g, "/");
   const segments = normalizedName.split("/");
   if (
     !trimmedName ||
     normalizedName.startsWith("/") ||
-    /^[A-Za-z]:\\//.test(normalizedName) ||
+    /^[A-Za-z]:\//.test(normalizedName) ||
     segments.some((segment) => segment === "." || segment === "..") ||
-    trimmedName.includes("\\0")
+    trimmedName.includes("\0")
   ) {
     throw new Error(`Unsafe image sequence filename: ${name}`);
   }
