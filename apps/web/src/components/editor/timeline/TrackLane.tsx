@@ -94,6 +94,21 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
   const resizeStartY = useRef<number>(0);
   const resizeStartHeight = useRef<number>(0);
 
+  const textClipIds = useMemo(
+    () => new Set(textClips.map((clip) => clip.id)),
+    [textClips],
+  );
+  const shapeClipIds = useMemo(
+    () => new Set(shapeClips.map((clip) => clip.id)),
+    [shapeClips],
+  );
+  const visibleTrackClips = useMemo(
+    () => track.clips.filter(
+      (clip) => !textClipIds.has(clip.id) && !shapeClipIds.has(clip.id),
+    ),
+    [track.clips, textClipIds, shapeClipIds],
+  );
+
   const clipsWithKeyframes = useMemo(() => {
     return track.clips.filter((clip) => clip.keyframes && clip.keyframes.length > 0);
   }, [track.clips]);
@@ -101,7 +116,7 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
-    setIsDragOver(true);
+    setIsDragOver((current) => current ? current : true);
   }, []);
 
   const handleDragLeave = useCallback(() => {
@@ -184,7 +199,7 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
         // Silently ignore parse errors
       }
     },
-    [track.id, track.name, pixelsPerSecond, scrollX, onDropMedia],
+    [track.id, track.name, pixelsPerSecond, scrollX, onDropMedia, allTracks, playheadPosition, snapSettings],
   );
 
   const handleResizeStart = useCallback(
@@ -238,10 +253,7 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        {track.clips
-          .filter((clip) => !textClips.some((tc) => tc.id === clip.id))
-          .filter((clip) => !shapeClips.some((sc) => sc.id === clip.id))
-          .map((clip) => (
+        {visibleTrackClips.map((clip) => (
             <ClipComponent
               key={clip.id}
               clip={clip}
