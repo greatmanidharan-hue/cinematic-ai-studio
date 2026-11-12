@@ -69,7 +69,10 @@ Provide clear capability warnings and fallback paths.
   clip-scoped effect creation.
 - Lightning Impact Sparks is a short electric impact burst, not a continuous
   lightning-bolt generator. A bolt renderer/shader remains planned.
-- No editor panel or render pipeline was replaced in this foundation step.
+- Added a reusable Canvas 2D particle renderer with radial glow, rotation, opacity and optional additive blending; it supports HTML canvas and OffscreenCanvas contexts.
+- Added unit tests for visible-particle drawing, inactive/transparent particle filtering and zero-opacity layers.
+- Renderer is exported from the core effects barrel. It is not yet wired into the editor preview/export bridge; that integration remains the next task.
+- No existing editor panel or render pipeline was replaced in this foundation step.
 
 ## Quality gates
 - Run relevant unit tests, type checks and build checks for each change.
