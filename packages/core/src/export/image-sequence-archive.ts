@@ -12,13 +12,13 @@ function validateEntryName(name: string): string {
   const normalizedName = trimmedName.replace(/\\/g, "/");
   const segments = normalizedName.split("/");
   const hasUnsafeSegment = segments.some((segment) => {
-    const deviceName = segment.split(".")[0].toUpperCase();
+    const deviceName = segment.split(".")[0].trimEnd().toUpperCase();
     return (
       segment === "." ||
       segment === ".." ||
       /[. ]$/.test(segment) ||
       /[:<>"|?*\u0000-\u001f]/.test(segment) ||
-      /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(deviceName)
+      /^(CON|PRN|AUX|NUL|COM[1-9¹²³]|LPT[1-9¹²³])$/.test(deviceName)
     );
   });
   if (
@@ -104,7 +104,14 @@ export async function createImageSequenceZipFromFrames(
       }
       const name = validateEntryName(frame.name);
       const collisionKey = name.toLocaleLowerCase("en-US");
-      if (names.has(collisionKey)) throw new Error(`Duplicate image sequence filename: ${name}`);
+      const pathSegments = collisionKey.split("/");
+      const hasPathConflict = pathSegments.some((_, index) => {
+        if (index === pathSegments.length - 1) return false;
+        return names.has(pathSegments.slice(0, index + 1).join("/"));
+      }) || Array.from(names).some((existingName) => existingName.startsWith(collisionKey + "/"));
+      if (names.has(collisionKey) || hasPathConflict) {
+        throw new Error(`Conflicting image sequence filename: ${name}`);
+      }
       names.add(collisionKey);
 
       const entry = new ZipDeflate(name, { level: 6 });
