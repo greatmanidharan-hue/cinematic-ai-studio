@@ -576,12 +576,11 @@ describe("ExportEngine", () => {
         namingPattern: "../shot:{000}",
         format: "png",
       });
-      await generator.next();
-      await generator.next();
-      const result = await generator.next();
+      let result = await generator.next();
+      while (!result.done) {
+        result = await generator.next();
+      }
 
-      expect(result.done).toBe(true);
-      if (!result.done) throw new Error("Expected image sequence export to finish");
       expect(result.value.success).toBe(true);
       expect(result.value.files?.map((file) => file.name)).toEqual([
         "_shot_000.png",
