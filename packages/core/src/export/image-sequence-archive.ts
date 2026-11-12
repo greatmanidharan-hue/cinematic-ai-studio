@@ -44,6 +44,26 @@ export async function createImageSequenceZipFromFrames(
   let outputError: Error | null = null;
   let resolveZip: (() => void) | undefined;
   const zipFinished = new Promise<void>((resolve) => { resolveZip = resolve; });
+  const waitForOutputWrites = async () => {
+    if (!options.signal) {
+      await outputWriteQueue;
+      return;
+    }
+    if (options.signal.aborted) {
+      throw new Error("Image sequence ZIP packaging cancelled.");
+    }
+    let removeAbortListener = () => {};
+    const aborted = new Promise<never>((_, reject) => {
+      const onAbort = () => reject(new Error("Image sequence ZIP packaging cancelled."));
+      options.signal!.addEventListener("abort", onAbort, { once: true });
+      removeAbortListener = () => options.signal!.removeEventListener("abort", onAbort);
+    });
+    try {
+      await Promise.race([outputWriteQueue, aborted]);
+    } finally {
+      removeAbortListener();
+    }
+  };
   const zip = new Zip((error, data, final) => {
     if (error) {
       outputError = error;
@@ -96,12 +116,12 @@ export async function createImageSequenceZipFromFrames(
           if (done) break;
           if (outputError) throw outputError;
           if (value?.byteLength) entry.push(value, false);
-          await outputWriteQueue;
+          await waitForOutputWrites();
           if (outputError) throw outputError;
           await new Promise<void>((resolve) => setTimeout(resolve, 0));
         }
         entry.push(new Uint8Array(0), true);
-        await outputWriteQueue;
+        await waitForOutputWrites();
         if (outputError) throw outputError;
       } finally {
         options.signal?.removeEventListener("abort", cancelReaderOnAbort);
@@ -118,7 +138,7 @@ export async function createImageSequenceZipFromFrames(
     if (options.signal?.aborted) throw new Error("Image sequence ZIP packaging cancelled.");
     zip.end();
     await zipFinished;
-    await outputWriteQueue;
+    await waitForOutputWrites();
     if (outputError) throw outputError;
     return new Blob(output, { type: "application/zip" });
   } catch (error) {
