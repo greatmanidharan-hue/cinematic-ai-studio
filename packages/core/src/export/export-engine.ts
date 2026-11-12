@@ -124,6 +124,26 @@ export class ExportEngine {
     }
   }
 
+  /**
+   * The export engine owns shared encoder, cache, progress, and cancellation
+   * state. Until those resources are isolated per export, only one export may
+   * run at a time.
+   */
+  private hasActiveExport(): boolean {
+    return this.abortController !== null;
+  }
+
+  private createExportInProgressResult(): ExportResult {
+    return {
+      success: false,
+      error: this.createError(
+        "MUXER_ERROR",
+        "Another export is already in progress. Wait for it to finish or cancel it before starting a new export.",
+        "preparing",
+      ),
+    };
+  }
+
   private createImageSequenceFileName(
     pattern: string,
     frameNumber: number,
@@ -399,18 +419,13 @@ export class ExportEngine {
       };
     }
 
-    await this.initializeGPUForExport(
-      fullSettings.width,
-      fullSettings.height,
-    );
-
-    this.abortController = new AbortController();
-    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
-
-    this.videoEngine?.resetExportState(project.timeline.particleEffects ?? []);
-    if (this.videoEngine) {
-      this.videoEngine.exportMode = true;
+    if (this.hasActiveExport()) {
+      return this.createExportInProgressResult();
     }
+
+    const controller = new AbortController();
+    this.abortController = controller;
+    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
 
     const totalFrames = Math.ceil(timelineDuration * fullSettings.frameRate);
     let bytesWritten = 0;
@@ -418,6 +433,18 @@ export class ExportEngine {
     let audioSource: InstanceType<typeof import("mediabunny").AudioBufferSource> | null = null;
 
     try {
+      // Keep GPU setup inside the protected lifecycle so failures and
+      // cancellation always pass through the same identity-safe cleanup.
+      await this.initializeGPUForExport(
+        fullSettings.width,
+        fullSettings.height,
+      );
+
+      this.videoEngine?.resetExportState(project.timeline.particleEffects ?? []);
+      if (this.videoEngine) {
+        this.videoEngine.exportMode = true;
+      }
+
       yield this.createProgress("preparing", 0, totalFrames, 0, 0);
 
       const {
@@ -536,7 +563,7 @@ export class ExportEngine {
       }
 
       for (let frame = 0; frame < totalFrames; frame++) {
-        if (this.abortController.signal.aborted) {
+        if (controller.signal.aborted) {
           throw this.createError(
             "CANCELLED",
             "Export cancelled by user",
@@ -603,7 +630,7 @@ export class ExportEngine {
         );
       }
 
-      if (this.abortController?.signal.aborted) {
+      if (controller.signal.aborted) {
         throw this.createError(
           "CANCELLED",
           "Export cancelled by user",
@@ -631,7 +658,7 @@ export class ExportEngine {
 
       // The async generator may be paused at the progress yield while the user
       // cancels; check again before committing the muxed file.
-      if (this.abortController?.signal.aborted) {
+      if (controller.signal.aborted) {
         throw this.createError(
           "CANCELLED",
           "Export cancelled by user",
@@ -670,8 +697,10 @@ export class ExportEngine {
     } finally {
       try { audioSource?.close(); } catch {}
       try { videoSource?.close(); } catch {}
-      this.abortController = null;
-      this.currentExport = null;
+      if (this.abortController === controller) {
+        this.abortController = null;
+        this.currentExport = null;
+      }
       this.audioEngine?.clearCache();
       this.videoEngine?.clearVideoElementCache();
       this.videoEngine?.clearCache();
@@ -737,7 +766,12 @@ export class ExportEngine {
       };
     }
 
-    this.abortController = new AbortController();
+    if (this.hasActiveExport()) {
+      return this.createExportInProgressResult();
+    }
+
+    const controller = new AbortController();
+    this.abortController = controller;
     this.currentExport = { startTime: Date.now(), framesRendered: 0 };
 
     try {
@@ -798,8 +832,10 @@ export class ExportEngine {
         ),
       };
     } finally {
-      this.abortController = null;
-      this.currentExport = null;
+      if (this.abortController === controller) {
+        this.abortController = null;
+        this.currentExport = null;
+      }
     }
   }
 
@@ -953,6 +989,10 @@ export class ExportEngine {
           "preparing",
         ),
       };
+    }
+
+    if (this.hasActiveExport()) {
+      return this.createExportInProgressResult();
     }
 
     const framesToExport = fullSettings.endFrame - fullSettings.startFrame + 1;
