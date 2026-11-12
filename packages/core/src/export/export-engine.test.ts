@@ -597,6 +597,43 @@ describe("ExportEngine", () => {
       ]);
     });
 
+    it("streams each rendered frame to an awaited callback without retaining frame Blobs", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 2 }),
+      });
+      const firstBlob = new Blob(["frame-0"]);
+      const secondBlob = new Blob(["frame-1"]);
+      const exportFrameSpy = vi.spyOn(exportEngine, "exportFrame")
+        .mockResolvedValueOnce({ success: true, blob: firstBlob })
+        .mockResolvedValueOnce({ success: true, blob: secondBlob });
+      const received: Array<{ name: string; blob: Blob }> = [];
+      const callback = vi.fn(async (frame: { name: string; blob: Blob }) => {
+        await Promise.resolve();
+        received.push(frame);
+      });
+      const generator = exportEngine.exportImageSequence(project, {
+        namingPattern: "frame_{000}",
+        format: "png",
+      }, callback);
+      let result;
+      try {
+        result = await generator.next();
+        while (!result.done) result = await generator.next();
+      } finally {
+        exportFrameSpy.mockRestore();
+      }
+
+      expect(result.value.success).toBe(true);
+      expect(callback).toHaveBeenCalledTimes(2);
+      expect(received.map((frame) => frame.name)).toEqual(["frame_000.png", "frame_001.png"]);
+      expect(received.map((frame) => frame.blob)).toEqual([firstBlob, secondBlob]);
+      expect(result.value.files).toEqual([]);
+      expect(result.value.blob).toBeUndefined();
+      expect(result.value.stats?.fileSize).toBe(firstBlob.size + secondBlob.size);
+    });
+
     it("should reject an empty sequence naming pattern before rendering", async () => {
       await exportEngine.initialize();
       const project = createMockProject({
