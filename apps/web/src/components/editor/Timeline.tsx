@@ -731,6 +731,15 @@ export const Timeline: React.FC = () => {
     [],
   );
 
+  const beginLightningVfxGesture = useCallback(() => useProjectStore.getState().beginHistoryGroup("Move lightning VFX"), []);
+  const endLightningVfxGesture = useCallback(() => useProjectStore.getState().endHistoryGroup(), []);
+  const beginParticleVfxGesture = useCallback(() => useProjectStore.getState().beginHistoryGroup("Move particle VFX"), []);
+  const endParticleVfxGesture = useCallback(() => useProjectStore.getState().endHistoryGroup(), []);
+  const markerTimes = useMemo(
+    () => project.timeline.markers.map((marker) => marker.time),
+    [project.timeline.markers],
+  );
+
   const visualOrderTracks = useMemo(() => tracks, [tracks]);
 
   return (
@@ -1177,9 +1186,9 @@ export const Timeline: React.FC = () => {
                 snapSettings={snapSettings}
                 snapPoints={playheadSnapPoints}
                 playheadPosition={playheadPosition}
-                markerTimes={project.timeline.markers.map((marker) => marker.time)}
-                onInteractionStart={() => useProjectStore.getState().beginHistoryGroup("Move lightning VFX")}
-                onInteractionEnd={() => useProjectStore.getState().endHistoryGroup()}
+                markerTimes={markerTimes}
+                onInteractionStart={beginLightningVfxGesture}
+                onInteractionEnd={endLightningVfxGesture}
               />
 
               <ParticleEffectLane
