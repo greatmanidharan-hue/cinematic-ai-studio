@@ -138,6 +138,11 @@ export async function createImageSequenceZipFromFrames(
             throw new Error("Image sequence ZIP packaging cancelled.");
           }
           const { value, done } = await reader.read();
+          // A pending read can resolve as done when the abort handler cancels
+          // the reader. Recheck before treating that as a completed frame.
+          if (options.signal?.aborted) {
+            throw new Error("Image sequence ZIP packaging cancelled.");
+          }
           if (done) break;
           if (outputError) throw outputError;
           if (value?.byteLength) entry.push(value, false);
