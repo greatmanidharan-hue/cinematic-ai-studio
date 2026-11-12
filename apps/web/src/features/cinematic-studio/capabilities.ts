@@ -4,7 +4,7 @@
  * workflow is already finished.
  */
 export type StudioCapabilityStatus = "foundation" | "planned" | "experimental";
-export type StudioCapabilityId = "vfx" | "three-d" | "face-ai" | "color" | "motion" | "export";
+export type StudioCapabilityId = "vfx" | "three-d" | "face-ai" | "color" | "motion" | "export" | "ai-video";
 
 export interface StudioCapability {
   id: StudioCapabilityId;
@@ -93,6 +93,21 @@ export const CINEMATIC_STUDIO_CAPABILITIES: readonly StudioCapability[] = [
       "Map constant-speed support and interpolation limits.",
       "Design keyframed speed-ramp curves.",
       "Validate audio synchronization and export behavior.",
+    ],
+  },
+  {
+    id: "ai-video",
+    name: "AI Video Generator",
+    summary: "Generate 10, 20 or 30 second videos from text prompts and import results into the editing timeline.",
+    status: "planned",
+    foundations: [
+      "packages/core/src/ai-video/types.ts",
+    ],
+    nextSteps: [
+      "Build a prompt composer with 10, 20 and 30 second duration choices.",
+      "Add provider adapters with secure server-side credential handling.",
+      "Show generation progress, failures and provider cost before submission.",
+      "Import completed generated videos into the local project media library and timeline.",
     ],
   },
   {
