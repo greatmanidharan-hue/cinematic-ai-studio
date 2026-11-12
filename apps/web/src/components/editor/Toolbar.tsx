@@ -276,13 +276,14 @@ export const Toolbar: React.FC = () => {
         cursor = position;
         return Promise.resolve();
       },
-      write(data: unknown) {
-        if (data instanceof ArrayBuffer) {
+      async write(data: unknown) {
+        if (data instanceof Blob) {
+          writeBytes(new Uint8Array(await data.arrayBuffer()), cursor);
+        } else if (data instanceof ArrayBuffer) {
           writeBytes(new Uint8Array(data), cursor);
         } else if (ArrayBuffer.isView(data)) {
           writeBytes(new Uint8Array(data.buffer, data.byteOffset, data.byteLength), cursor);
         }
-        return Promise.resolve();
       },
       close() {
         triggerDownload();
