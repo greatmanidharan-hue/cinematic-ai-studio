@@ -437,11 +437,15 @@ export const Toolbar: React.FC = () => {
         writable = await showSavePicker(`${project.name || "image-sequence"}.zip`, "zip");
         if (zipController.signal.aborted) {
           await writable.abort();
+          sequenceZipAbortController.current = null;
           return;
         }
         setExportState({ isExporting: true, progress: 0, phase: "Preparing image sequence...", error: null, complete: false });
         const engine = getExportEngine();
         await engine.initialize();
+        if (zipController.signal.aborted) {
+          throw new Error("Image sequence export cancelled.");
+        }
         const generator = engine.exportImageSequence(project, settings);
         let result: ExportResult | undefined;
         while (true) {
