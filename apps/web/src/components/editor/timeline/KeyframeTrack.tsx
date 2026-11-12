@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback } from "react";
+import React, { memo, useMemo, useCallback } from "react";
 import type { Keyframe, Clip } from "@fairarena/core";
 import { KeyframeMarker } from "./KeyframeMarker";
 import { EasingCurve } from "./EasingCurve";
@@ -40,7 +40,7 @@ interface PropertyGroup {
   label: string;
 }
 
-export const KeyframeTrack: React.FC<KeyframeTrackProps> = ({
+const KeyframeTrackInner: React.FC<KeyframeTrackProps> = ({
   clip,
   pixelsPerSecond,
   onKeyframeSelect,
@@ -146,5 +146,8 @@ export const KeyframeTrack: React.FC<KeyframeTrackProps> = ({
     </div>
   );
 };
+
+export const KeyframeTrack = memo(KeyframeTrackInner);
+KeyframeTrack.displayName = "KeyframeTrack";
 
 export default KeyframeTrack;
