@@ -1054,6 +1054,10 @@ export const Timeline: React.FC = () => {
                   <div
                     key={track.id}
                     className={draggedTrackId === track.id ? "opacity-50" : ""}
+                    style={{
+                      contentVisibility: "auto",
+                      containIntrinsicSize: `auto ${getTrackHeight(track.id)}px`,
+                    }}
                   >
                     <TrackHeader
                       track={track}
@@ -1166,6 +1170,13 @@ export const Timeline: React.FC = () => {
               className="min-w-full"
             >
               {visualOrderTracks.map((track) => (
+                <div
+                  key={track.id}
+                  style={{
+                    contentVisibility: "auto",
+                    containIntrinsicSize: `auto ${getTrackHeight(track.id)}px`,
+                  }}
+                >
                 <TrackLane
                   key={track.id}
                   track={track}
@@ -1199,6 +1210,7 @@ export const Timeline: React.FC = () => {
                   onKeyframeDelete={handleKeyframeDelete}
                   selectedKeyframeIds={selectedKeyframeIds}
                 />
+                </div>
               ))}
 
               <LightningEffectLane
