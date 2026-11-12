@@ -127,6 +127,8 @@ export const Toolbar: React.FC = () => {
   const [deviceProfile, setDeviceProfile] = useState<DeviceProfile | null>(null);
   const [exportEstimates, setExportEstimates] = useState<Map<string, TimeEstimate>>(new Map());
   const sequenceZipAbortController = useRef<AbortController | null>(null);
+  // Prevent rapid repeated clicks while a save picker or export is starting.
+  const exportStartLock = useRef(false);
 
   useEffect(() => {
     setGlobalExportState({
@@ -301,6 +303,8 @@ export const Toolbar: React.FC = () => {
 
   const handleExport = useCallback(
     async (type: ExportType) => {
+      if (exportStartLock.current) return;
+      exportStartLock.current = true;
       setIsExportOpen(false);
 
       try {
@@ -409,6 +413,8 @@ export const Toolbar: React.FC = () => {
           isExporting: false,
           error: error instanceof Error ? error.message : "Export failed",
         }));
+      } finally {
+        exportStartLock.current = false;
       }
     },
     [project, track, runExport, showSavePicker],
@@ -429,6 +435,8 @@ export const Toolbar: React.FC = () => {
 
   const handleSequenceExport = useCallback(
     async (settings: SequenceExportSettings) => {
+      if (exportStartLock.current) return;
+      exportStartLock.current = true;
       setIsExportDialogOpen(false);
       let writable: FileSystemWritableFileStream | null = null;
       const zipController = new AbortController();
@@ -578,6 +586,9 @@ export const Toolbar: React.FC = () => {
           isExporting: false,
           error: error instanceof Error ? error.message : "Image sequence export failed",
         }));
+      } finally {
+        exportStartLock.current = false;
+        sequenceZipAbortController.current = null;
       }
     },
     [project, track, showSavePicker],
@@ -585,6 +596,8 @@ export const Toolbar: React.FC = () => {
 
   const handleCustomExport = useCallback(
     async (settings: VideoExportSettings) => {
+      if (exportStartLock.current) return;
+      exportStartLock.current = true;
       setIsExportDialogOpen(false);
 
       try {
@@ -636,6 +649,8 @@ export const Toolbar: React.FC = () => {
           isExporting: false,
           error: error instanceof Error ? error.message : "Export failed",
         }));
+      } finally {
+        exportStartLock.current = false;
       }
     },
     [project, track, runExport, showSavePicker],
