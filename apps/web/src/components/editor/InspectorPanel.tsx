@@ -460,8 +460,14 @@ const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
               ))}
             </div>
             {PARTICLE_PRESETS.filter((preset) => {
-              const q = presetQuery.trim().toLowerCase();
-              return (!q || `${preset.name} ${preset.description} ${preset.id}`.toLowerCase().includes(q));
+              const name = `${preset.name} ${preset.description} ${preset.id}`.toLowerCase();
+              const category = /fire|smoke|lightning/.test(preset.id) ? "cinematic"
+                : /dust|snow|confetti/.test(preset.id) ? "atmosphere"
+                : /explode|shatter/.test(preset.type) ? "impact"
+                : /morph|disintegrate|pixelate|dissolve|implode/.test(preset.type) ? "transform"
+                : "atmosphere";
+              return name.includes(presetQuery.trim().toLowerCase()) &&
+                (presetCategory === "all" || presetCategory === category);
             }).length === 0 && <p className="py-2 text-center text-[10px] text-text-muted">No matching presets</p>}
           </div>
           <div className="grid grid-cols-2 gap-2">
