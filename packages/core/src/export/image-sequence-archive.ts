@@ -19,12 +19,12 @@ export async function createImageSequenceZip(
 
   for (const frame of frames) {
     const name = frame.name.trim();
-    const segments = name.replace(/\\\\/g, "/").split("/");
+    const segments = name.replace(/\\/g, "/").split("/");
     if (
       !name ||
       name.startsWith("/") ||
       segments.some((segment) => segment === "." || segment === "..") ||
-      name.includes("\\0")
+      name.includes("\0")
     ) {
       throw new Error(`Unsafe image sequence filename: ${frame.name}`);
     }
@@ -34,7 +34,8 @@ export async function createImageSequenceZip(
     entries[name] = new Uint8Array(await frame.blob.arrayBuffer());
   }
 
-  return new Blob([zipSync(entries, { level: 6 })], {
-    type: "application/zip",
-  });
+  const zipBytes = zipSync(entries, { level: 6 });
+  const archiveBuffer = new ArrayBuffer(zipBytes.byteLength);
+  new Uint8Array(archiveBuffer).set(zipBytes);
+  return new Blob([archiveBuffer], { type: "application/zip" });
 }
