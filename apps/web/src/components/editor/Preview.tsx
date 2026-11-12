@@ -747,11 +747,25 @@ export const Preview: React.FC = () => {
   const visibleAudioTracksRef = useRef(
     timelineTracks.filter((track) => track.type === "audio" && !track.hidden),
   );
+  const visibleVideoTracksRef = useRef(
+    timelineTracks
+      .map((track, trackIndex) => ({ track, trackIndex }))
+      .filter(
+        ({ track }) =>
+          (track.type === "video" || track.type === "image") && !track.hidden,
+      ),
+  );
   useEffect(() => {
     timelineTracksRef.current = timelineTracks;
     visibleAudioTracksRef.current = timelineTracks.filter(
       (track) => track.type === "audio" && !track.hidden,
     );
+    visibleVideoTracksRef.current = timelineTracks
+      .map((track, trackIndex) => ({ track, trackIndex }))
+      .filter(
+        ({ track }) =>
+          (track.type === "video" || track.type === "image") && !track.hidden,
+      );
   }, [timelineTracks]);
 
   // Keep a ref to allTextClips for use in playback effect
@@ -3040,23 +3054,19 @@ export const Preview: React.FC = () => {
         trackIndex: number;
       }> = [];
 
-      tracks.forEach((track, originalIndex) => {
-        if (
-          (track.type === "video" || track.type === "image") &&
-          !track.hidden
-        ) {
-          for (const clip of track.clips) {
-            if (
-              time >= clip.startTime &&
-              time < clip.startTime + clip.duration
-            ) {
-              results.push({ clip, track, trackIndex: originalIndex });
-            }
+      for (const { track, trackIndex } of visibleVideoTracksRef.current) {
+        for (const clip of track.clips) {
+          if (
+            time >= clip.startTime &&
+            time < clip.startTime + clip.duration
+          ) {
+            results.push({ clip, track, trackIndex });
           }
         }
-      });
+      }
 
-      return results.sort((a, b) => a.trackIndex - b.trackIndex);
+      // The cached track list is already in timeline order.
+      return results;
     };
 
     const findClipAtTime = (time: number) => {
