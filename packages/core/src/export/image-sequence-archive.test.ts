@@ -234,6 +234,31 @@ describe("createImageSequenceZip", () => {
     ).rejects.toThrow(/Unsafe image sequence filename/);
   });
 
+  it("rejects Windows reserved device names and trailing-dot segments", async () => {
+    for (const name of ["CON.png", "folder/NUL.txt", "frames/frame.png."]) {
+      await expect(
+        createImageSequenceZip([{ name, blob: new Blob(["unsafe"]) }]),
+      ).rejects.toThrow(/Unsafe image sequence filename/);
+    }
+  });
+
+  it("rejects drive-relative paths and colon characters", async () => {
+    for (const name of ["C:frame.png", "frames/alternate:stream.png"]) {
+      await expect(
+        createImageSequenceZip([{ name, blob: new Blob(["unsafe"]) }]),
+      ).rejects.toThrow(/Unsafe image sequence filename/);
+    }
+  });
+
+  it("rejects case-insensitive duplicate paths for portable extraction", async () => {
+    await expect(
+      createImageSequenceZip([
+        { name: "Frames/Shot.PNG", blob: new Blob(["one"]) },
+        { name: "frames/shot.png", blob: new Blob(["two"]) },
+      ]),
+    ).rejects.toThrow(/Duplicate image sequence filename/);
+  });
+
   it("rejects filenames containing null bytes", async () => {
     await expect(
       createImageSequenceZip([{ name: "frame" + String.fromCharCode(0) + ".png", blob: new Blob(["unsafe"]) }]),
