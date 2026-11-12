@@ -28,6 +28,29 @@ export interface LUTData {
   intensity: number;
 }
 
+/**
+ * Validate a 3D RGB LUT before allocating a canvas or entering the pixel loop.
+ * Extra trailing bytes are tolerated for compatibility with packed LUT sources.
+ */
+export const validateLUTData = (lut: LUTData): string[] => {
+  const errors: string[] = [];
+  if (!Number.isInteger(lut.size) || lut.size < 2) {
+    errors.push("LUT size must be an integer of at least 2.");
+  }
+  if (!(lut.data instanceof Uint8Array)) {
+    errors.push("LUT data must be a Uint8Array.");
+  } else if (Number.isInteger(lut.size) && lut.size >= 2) {
+    const expectedLength = lut.size * lut.size * lut.size * 3;
+    if (!Number.isSafeInteger(expectedLength) || lut.data.length < expectedLength) {
+      errors.push(`LUT data must contain at least ${expectedLength} RGB values.`);
+    }
+  }
+  if (!Number.isFinite(lut.intensity) || lut.intensity < 0 || lut.intensity > 1) {
+    errors.push("LUT intensity must be between 0 and 1.");
+  }
+  return errors;
+};
+
 export interface WaveformScopeData {
   luminance: Uint8Array;
   red: Uint8Array;
@@ -555,6 +578,11 @@ export class ColorGradingEngine {
     image: ImageBitmap,
     lut: LUTData,
   ): Promise<ColorGradingResult> {
+    const validationErrors = validateLUTData(lut);
+    if (validationErrors.length > 0) {
+      throw new Error(`Invalid LUT: ${validationErrors.join(" ")}`);
+    }
+
     const startTime = performance.now();
 
     // CPU implementation for LUT application
