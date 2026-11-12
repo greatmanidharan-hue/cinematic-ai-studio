@@ -305,8 +305,8 @@ export class ExportEngine {
 
     const totalFrames = Math.ceil(timelineDuration * fullSettings.frameRate);
     let bytesWritten = 0;
-    let videoSource: { close: () => void } | null = null;
-    let audioSource: { close: () => void } | null = null;
+    let videoSource: InstanceType<typeof import("mediabunny").VideoSampleSource> | null = null;
+    let audioSource: InstanceType<typeof import("mediabunny").AudioBufferSource> | null = null;
 
     try {
       yield this.createProgress("preparing", 0, totalFrames, 0, 0);
