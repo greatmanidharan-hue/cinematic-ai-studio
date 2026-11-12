@@ -3523,9 +3523,7 @@ export const Preview: React.FC = () => {
         playbackStartPosition,
       );
 
-      const audioTracks = timelineTracksRef.current.filter(
-        (t) => t.type === "audio" && !t.hidden,
-      );
+      const audioTracks = visibleAudioTracksRef.current;
       const hasActiveAudioClip = audioTracks.some((track) =>
         track.clips.some(
           (clip) =>
