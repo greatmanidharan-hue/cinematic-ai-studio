@@ -36,6 +36,19 @@ describe("createImageSequenceZip", () => {
     expect(new TextDecoder().decode(files["frame.png"])).toBe("streamed-frame");
   });
 
+  it("propagates errors from the streamed ZIP destination", async () => {
+    await expect(
+      createImageSequenceZip(
+        [{ name: "frame.png", blob: new Blob(["frame-data"]) }],
+        {
+          onChunk: async () => {
+            throw new Error("destination write failed");
+          },
+        },
+      ),
+    ).rejects.toThrow("destination write failed");
+  });
+
   it("rejects an empty frame list", async () => {
     await expect(createImageSequenceZip([])).rejects.toThrow(/without frames/);
   });
