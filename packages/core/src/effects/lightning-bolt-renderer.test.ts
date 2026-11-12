@@ -2,12 +2,14 @@ import { describe, expect, it, vi } from "vitest";
 import { renderLightningBolt } from "./lightning-bolt-renderer";
 
 function createContext() {
+  const lineTo = vi.fn();
   return {
+    lineToMock: lineTo,
     save: vi.fn(),
     restore: vi.fn(),
     beginPath: vi.fn(),
     moveTo: vi.fn(),
-    lineTo: vi.fn(),
+    lineTo,
     stroke: vi.fn(),
     set globalCompositeOperation(_value: string) {},
     set lineCap(_value: string) {},
@@ -16,7 +18,7 @@ function createContext() {
     set shadowColor(_value: string) {},
     set shadowBlur(_value: number) {},
     set lineWidth(_value: number) {},
-  } as unknown as CanvasRenderingContext2D;
+  } as unknown as CanvasRenderingContext2D & { lineToMock: ReturnType<typeof vi.fn> };
 }
 
 describe("lightning bolt renderer", () => {
@@ -47,7 +49,7 @@ describe("lightning bolt renderer", () => {
     renderLightningBolt(first, options);
     renderLightningBolt(second, options);
 
-    expect(first.lineTo.mock.calls).toEqual(second.lineTo.mock.calls);
+    expect(first.lineToMock.mock.calls).toEqual(second.lineToMock.mock.calls);
   });
 
   it("does not draw when both endpoints are identical", () => {
