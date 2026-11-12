@@ -68,7 +68,7 @@ describe("createImageSequenceZip", () => {
 
   it("rejects filenames containing null bytes", async () => {
     await expect(
-      createImageSequenceZip([{ name: "frame\\0.png", blob: new Blob(["unsafe"]) }]),
+      createImageSequenceZip([{ name: "frame" + String.fromCharCode(0) + ".png", blob: new Blob(["unsafe"]) }]),
     ).rejects.toThrow(/Unsafe image sequence filename/);
   });
   it("supports cancellation before ZIP packaging starts", async () => {
