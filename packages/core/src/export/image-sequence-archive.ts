@@ -37,7 +37,7 @@ export async function createImageSequenceZip(
   }
 
   const zipBytes = zipSync(entries, { level: 6 });
-  const archiveBuffer = new ArrayBuffer(zipBytes.byteLength);
-  new Uint8Array(archiveBuffer).set(zipBytes);
-  return new Blob([archiveBuffer], { type: "application/zip" });
+  // Pass the ZIP byte view directly to Blob. Avoid creating a second full-size
+  // ArrayBuffer copy before Blob takes ownership of the archive data.
+  return new Blob([zipBytes], { type: "application/zip" });
 }
