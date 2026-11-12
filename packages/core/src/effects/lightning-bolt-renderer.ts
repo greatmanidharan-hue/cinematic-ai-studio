@@ -128,3 +128,33 @@ export function renderLightningBolt(
 
   context.restore();
 }
+
+/** Build a timeline-ready lightning clip with safe cinematic defaults. */
+export function createLightningEffectClip(
+  id: string,
+  startTime: number,
+  duration: number,
+  start: { x: number; y: number } = { x: 0.5, y: 0.08 },
+  end: { x: number; y: number } = { x: 0.5, y: 0.92 },
+) {
+  return {
+    id,
+    name: "Lightning Strike",
+    startTime: Math.max(0, startTime),
+    duration: Math.max(0.05, duration),
+    start: {
+      x: Math.max(0, Math.min(1, start.x)),
+      y: Math.max(0, Math.min(1, start.y)),
+    },
+    end: {
+      x: Math.max(0, Math.min(1, end.x)),
+      y: Math.max(0, Math.min(1, end.y)),
+    },
+    color: "#9bdcff",
+    intensity: 0.9,
+    segments: 18,
+    branches: 3,
+    amplitude: 24,
+    enabled: true,
+  } as const;
+}
