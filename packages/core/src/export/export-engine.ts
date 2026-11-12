@@ -118,6 +118,37 @@ export class ExportEngine {
     }
   }
 
+  private validateVideoSettings(settings: VideoExportSettings): string | null {
+    if (!["mp4", "webm", "mov"].includes(settings.format)) {
+      return "Unsupported video container format.";
+    }
+    if (!["h264", "h265", "vp8", "vp9", "av1", "prores"].includes(settings.codec)) {
+      return "Unsupported video codec.";
+    }
+    if (!Number.isInteger(settings.width) || settings.width <= 0) {
+      return "Video width must be a positive integer.";
+    }
+    if (!Number.isInteger(settings.height) || settings.height <= 0) {
+      return "Video height must be a positive integer.";
+    }
+    if (!Number.isFinite(settings.frameRate) || settings.frameRate < 1 || settings.frameRate > 120) {
+      return "Frame rate must be between 1 and 120 fps.";
+    }
+    if (!Number.isFinite(settings.bitrate) || settings.bitrate <= 0) {
+      return "Video bitrate must be a finite positive number.";
+    }
+    if (!Number.isFinite(settings.quality) || settings.quality < 0 || settings.quality > 100) {
+      return "Video quality must be between 0 and 100.";
+    }
+    if (!Number.isFinite(settings.keyframeInterval) || settings.keyframeInterval <= 0) {
+      return "Keyframe interval must be a finite positive number.";
+    }
+    if (!["cbr", "vbr"].includes(settings.bitrateMode)) {
+      return "Unsupported video bitrate mode.";
+    }
+    return null;
+  }
+
   private validateAudioSettings(settings: AudioExportSettings): string | null {
     if (!["mp3", "wav", "aac", "flac", "ogg"].includes(settings.format)) {
       return "Unsupported audio export format.";
@@ -254,6 +285,14 @@ export class ExportEngine {
         ...settings.audioSettings,
       },
     };
+
+    const videoSettingsError = this.validateVideoSettings(fullSettings);
+    if (videoSettingsError) {
+      return {
+        success: false,
+        error: this.createError("INVALID_SETTINGS", videoSettingsError, "preparing"),
+      };
+    }
 
     if (fullSettings.codec === "prores") {
       fullSettings.codec = "h264";
