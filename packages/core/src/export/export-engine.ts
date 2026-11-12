@@ -267,19 +267,7 @@ export class ExportEngine {
       fullSettings.frameRate = 30;
     }
 
-    this.abortController = new AbortController();
-    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
-
-    await this.initializeGPUForExport(
-      fullSettings.width,
-      fullSettings.height,
-    );
-
-    this.videoEngine?.resetExportState(project.timeline.particleEffects ?? []);
-    if (this.videoEngine) {
-      this.videoEngine.exportMode = true;
-    }
-
+    // Validate prerequisites before changing shared engine state.
     if (timelineDuration <= 0) {
       return {
         success: false,
@@ -300,6 +288,19 @@ export class ExportEngine {
           "preparing",
         ),
       };
+    }
+
+    this.abortController = new AbortController();
+    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
+
+    await this.initializeGPUForExport(
+      fullSettings.width,
+      fullSettings.height,
+    );
+
+    this.videoEngine?.resetExportState(project.timeline.particleEffects ?? []);
+    if (this.videoEngine) {
+      this.videoEngine.exportMode = true;
     }
 
     const totalFrames = Math.ceil(timelineDuration * fullSettings.frameRate);
@@ -592,6 +593,10 @@ export class ExportEngine {
       yield this.createProgress("preparing", 0, 1, 0, 0);
       const audioBuffer = await this.renderTimelineAudio(project);
 
+      if (this.abortController?.signal.aborted) {
+        throw this.createError("CANCELLED", "Export cancelled by user", "rendering");
+      }
+
       if (!audioBuffer) {
         throw this.createError(
           "AUDIO_ENCODE_FAILED",
@@ -604,6 +609,10 @@ export class ExportEngine {
 
       // Encode based on format
       let blob: Blob;
+
+      if (this.abortController?.signal.aborted) {
+        throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+      }
 
       if (fullSettings.format === "wav") {
         blob = this.encodeWav(audioBuffer, fullSettings);
