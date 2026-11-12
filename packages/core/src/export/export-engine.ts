@@ -118,6 +118,12 @@ export class ExportEngine {
     }
   }
 
+  private ensureRenderingInitialized(): void {
+    if (!this.initialized || !this.videoEngine) {
+      throw new Error("ExportEngine not initialized. Call initialize() first.");
+    }
+  }
+
   private createImageSequenceFileName(
     pattern: string,
     frameNumber: number,
@@ -802,7 +808,7 @@ export class ExportEngine {
     time: number,
     settings: Partial<ImageExportSettings> = {},
   ): Promise<ExportResult> {
-    this.ensureInitialized();
+    this.ensureRenderingInitialized();
 
     const fullSettings: ImageExportSettings = {
       ...DEFAULT_IMAGE_SETTINGS,
@@ -897,7 +903,7 @@ export class ExportEngine {
     project: Project,
     settings: Partial<SequenceExportSettings> = {},
   ): AsyncGenerator<ExportProgress, ExportResult> {
-    this.ensureInitialized();
+    this.ensureRenderingInitialized();
 
     const { timeline } = project;
     const frameRate = project.settings.frameRate;
