@@ -188,6 +188,14 @@ describe("createImageSequenceZip", () => {
     await expect(createImageSequenceZip([])).rejects.toThrow(/without frames/);
   });
 
+  it("preserves valid leading whitespace in archive filenames", async () => {
+    const archive = await createImageSequenceZip([
+      { name: " frame.png", blob: new Blob(["frame"]) },
+    ]);
+    const files = unzipSync(new Uint8Array(await archive.arrayBuffer()));
+    expect(Object.keys(files)).toEqual([" frame.png"]);
+  });
+
   it("rejects path traversal filenames", async () => {
     await expect(
       createImageSequenceZip([
