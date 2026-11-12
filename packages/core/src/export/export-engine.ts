@@ -952,6 +952,7 @@ export class ExportEngine {
     this.abortController = controller;
     this.currentExport = { startTime: Date.now(), framesRendered: 0 };
     const files: Array<{ name: string; blob: Blob }> = [];
+    let totalBytes = 0;
 
     try {
       yield this.createProgress("preparing", 0, framesToExport, 0, 0);
@@ -986,6 +987,7 @@ export class ExportEngine {
           fullSettings.format,
         );
         files.push({ name: frameName, blob: result.blob });
+        totalBytes += result.blob.size;
         this.currentExport!.framesRendered = i + 1;
 
         yield this.createProgress(
@@ -993,7 +995,7 @@ export class ExportEngine {
           (i + 1) / framesToExport,
           framesToExport,
           i + 1,
-          files.reduce((sum, file) => sum + file.blob.size, 0),
+          totalBytes,
         );
       }
 
@@ -1010,10 +1012,10 @@ export class ExportEngine {
         1,
         framesToExport,
         framesToExport,
-        files.reduce((sum, file) => sum + file.blob.size, 0),
+        totalBytes,
       );
 
-      const totalSize = files.reduce((sum, file) => sum + file.blob.size, 0);
+      const totalSize = totalBytes;
       return {
         success: true,
         blob: files[0]?.blob,
