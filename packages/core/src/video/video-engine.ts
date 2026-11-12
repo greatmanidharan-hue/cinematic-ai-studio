@@ -51,7 +51,7 @@ import {
   getGifFrameAtTime,
   isAnimatedGif,
 } from "../media/gif-decoder";
-import { getParticleEngine } from "../effects/particle-engine";
+import { ParticleEngine, getParticleEngine } from "../effects/particle-engine";
 import { renderParticles } from "../effects/particle-renderer";
 import { getPersonSegmentationEngine } from "../ai/person-segmentation-engine";
 
@@ -106,6 +106,7 @@ export class VideoEngine {
   private effectsEngine: VideoEffectsEngine | null = null;
   private transitionEngine: TransitionEngine | null = null;
   private lastExportTime: number = -1;
+  private exportParticleEngine: ParticleEngine | null = null;
   private exportFrameRate: number = 30;
   exportMode: boolean = false;
 
@@ -1234,7 +1235,8 @@ export class VideoEngine {
     width: number,
     height: number,
   ): void {
-    const particleEngine = getParticleEngine();
+    const particleEngine = this.exportParticleEngine;
+    if (!particleEngine) return;
     particleEngine.setCanvasSize(width, height);
 
     const deltaTime = this.lastExportTime >= 0
@@ -1259,21 +1261,37 @@ export class VideoEngine {
 
   resetExportState(): void {
     this.lastExportTime = -1;
-    const particleEngine = getParticleEngine();
-    const effectsSignature = JSON.stringify(
-      particleEngine
-        .getAllEffects()
-        .slice()
-        .sort((a, b) => a.id.localeCompare(b.id)),
-    );
+    // Export owns a private simulation so resetting/seeding an export cannot
+    // disturb the live preview's shared particle engine.
+    this.exportParticleEngine?.dispose();
+    const sourceEngine = getParticleEngine();
+    const effects = sourceEngine
+      .getAllEffects()
+      .slice()
+      .sort((a, b) => a.id.localeCompare(b.id));
+    this.exportParticleEngine = new ParticleEngine();
+    for (const effect of effects) {
+      this.exportParticleEngine.addEffect({
+        ...effect,
+        config: {
+          ...effect.config,
+          wind: { ...effect.config.wind },
+          colors: [...effect.config.colors],
+          size: { ...effect.config.size },
+          opacity: { ...effect.config.opacity },
+          lifetime: { ...effect.config.lifetime },
+        },
+      });
+    }
     // FNV-1a gives each export a stable seed derived from its particle setup.
+    const effectsSignature = JSON.stringify(effects);
     let seed = 0x811c9dc5;
     for (let index = 0; index < effectsSignature.length; index++) {
       seed ^= effectsSignature.charCodeAt(index);
       seed = Math.imul(seed, 0x01000193);
     }
-    particleEngine.setRandomSeed(seed >>> 0);
-    particleEngine.reset();
+    this.exportParticleEngine.setRandomSeed(seed >>> 0);
+    this.exportParticleEngine.reset();
   }
 
   private renderSubtitleToCanvasCtx(
