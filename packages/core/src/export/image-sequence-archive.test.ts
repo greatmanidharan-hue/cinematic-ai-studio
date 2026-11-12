@@ -71,6 +71,29 @@ describe("createImageSequenceZip", () => {
       createImageSequenceZip([{ name: "frame\\0.png", blob: new Blob(["unsafe"]) }]),
     ).rejects.toThrow(/Unsafe image sequence filename/);
   });
+  it("supports cancellation before ZIP packaging starts", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    await expect(
+      createImageSequenceZip(
+        [{ name: "frame.png", blob: new Blob(["frame"]) }],
+        { signal: controller.signal },
+      ),
+    ).rejects.toThrow(/cancelled/i);
+  });
+
+  it("stops between frames when cancellation is requested", async () => {
+    const controller = new AbortController();
+    await expect(
+      createImageSequenceZip(
+        [
+          { name: "frame-1.png", blob: new Blob(["one"]) },
+          { name: "frame-2.png", blob: new Blob(["two"]) },
+        ],
+        { signal: controller.signal, onProgress: () => controller.abort() },
+      ),
+    ).rejects.toThrow(/cancelled/i);
+  });
   it("rejects duplicate filenames", async () => {
     await expect(
       createImageSequenceZip([
