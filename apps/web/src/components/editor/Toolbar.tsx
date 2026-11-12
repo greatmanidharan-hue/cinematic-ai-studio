@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect } from "react";
+import React, { useCallback, useState, useEffect, useRef } from "react";
 import {
   Search,
   Command,
@@ -126,6 +126,7 @@ export const Toolbar: React.FC = () => {
   });
   const [deviceProfile, setDeviceProfile] = useState<DeviceProfile | null>(null);
   const [exportEstimates, setExportEstimates] = useState<Map<string, TimeEstimate>>(new Map());
+  const sequenceZipAbortController = useRef<AbortController | null>(null);
 
   useEffect(() => {
     setGlobalExportState({
@@ -416,6 +417,7 @@ export const Toolbar: React.FC = () => {
   const handleCancelExport = useCallback(() => {
     const engine = getExportEngine();
     engine.cancel();
+    sequenceZipAbortController.current?.abort();
     setExportState({
       isExporting: false,
       progress: 0,
@@ -451,9 +453,24 @@ export const Toolbar: React.FC = () => {
         if (!result?.success || !result.files?.length) {
           throw new Error(result?.error?.message || "Image sequence export failed");
         }
-        const archive = await createImageSequenceZip(result.files);
+        const zipController = new AbortController();
+        sequenceZipAbortController.current = zipController;
+        const archive = await createImageSequenceZip(result.files, {
+          signal: zipController.signal,
+          onProgress: (completed, total) => {
+            setExportState((prev) => ({
+              ...prev,
+              progress: 100,
+              phase: "Packaging ZIP... " + completed + "/" + total + " frames",
+            }));
+          },
+        });
+        if (zipController.signal.aborted) {
+          throw new Error("Image sequence ZIP packaging cancelled.");
+        }
         await writable.write(archive);
         await writable.close();
+        sequenceZipAbortController.current = null;
         setExportState((prev) => ({ ...prev, complete: true, progress: 100, phase: "ZIP saved!" }));
         track(AnalyticsEvents.PROJECT_EXPORTED, {
           format: "zip",
@@ -466,6 +483,7 @@ export const Toolbar: React.FC = () => {
         });
         setTimeout(() => setExportState({ isExporting: false, progress: 0, phase: "", error: null, complete: false }), 2500);
       } catch (error) {
+        sequenceZipAbortController.current = null;
         if (writable) {
           try { await writable.abort(); } catch {}
         }
