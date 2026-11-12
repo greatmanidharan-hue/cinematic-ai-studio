@@ -148,8 +148,14 @@ export const Timeline: React.FC = () => {
         if (end > maxEnd) maxEnd = end;
       }
     }
+    for (const effect of project.timeline.lightningEffects ?? []) {
+      maxEnd = Math.max(maxEnd, effect.startTime + effect.duration);
+    }
+    for (const effect of project.timeline.particleEffects ?? []) {
+      maxEnd = Math.max(maxEnd, effect.startTime + effect.duration);
+    }
     return Math.max(maxEnd, 60); // Minimum 60 seconds
-  }, [tracks]);
+  }, [tracks, project.timeline.lightningEffects, project.timeline.particleEffects]);
 
   const playheadSnapPoints = useMemo(() => {
     const points = new Set<number>();
@@ -159,8 +165,16 @@ export const Timeline: React.FC = () => {
         points.add(clip.startTime + clip.duration);
       }
     }
+    for (const effect of project.timeline.lightningEffects ?? []) {
+      points.add(effect.startTime);
+      points.add(effect.startTime + effect.duration);
+    }
+    for (const effect of project.timeline.particleEffects ?? []) {
+      points.add(effect.startTime);
+      points.add(effect.startTime + effect.duration);
+    }
     return Array.from(points).sort((a, b) => a - b);
-  }, [tracks]);
+  }, [tracks, project.timeline.lightningEffects, project.timeline.particleEffects]);
 
   const totalTracksHeight = useMemo(() => {
     let height = 0;
