@@ -1,4 +1,4 @@
-import React, { memo, useRef, useState, useEffect } from "react";
+import React, { memo, useRef, useState, useEffect, useMemo } from "react";
 import { Image } from "lucide-react";
 import type { Clip, Track } from "@fairarena/core";
 import { useProjectStore } from "../../../stores/project-store";
@@ -49,6 +49,10 @@ const ClipComponentInner: React.FC<ClipComponentProps> = ({
 }) => {
   const mediaItem = useProjectStore((state) =>
     state.project.mediaLibrary.items.find((item) => item.id === clip.mediaId),
+  );
+  const waveformPath = useMemo(
+    () => mediaItem?.waveformData ? generateWaveformPath(mediaItem.waveformData, 100) : null,
+    [mediaItem?.waveformData],
   );
   const snapSettings = useUIStore((state) => state.snapSettings);
   const effectApplicationClipId = useUIStore(
@@ -550,7 +554,7 @@ const ClipComponentInner: React.FC<ClipComponentProps> = ({
                 viewBox="0 0 100 40"
               >
                 <path
-                  d={generateWaveformPath(mediaItem.waveformData, 100)}
+                  d={waveformPath ?? ""}
                   stroke="currentColor"
                   className={isAudio ? "text-blue-400" : "text-green-300"}
                   fill="none"
