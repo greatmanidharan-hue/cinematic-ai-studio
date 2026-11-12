@@ -357,34 +357,51 @@ const ClipComponentInner: React.FC<ClipComponentProps> = ({
   useEffect(() => {
     if (!isTrimming || !trimEdge || !onTrimClip) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
-      const deltaX = e.clientX - trimStartRef.current.mouseX;
+    let frameId: number | null = null;
+    let pendingClientX: number | null = null;
+
+    const applyTrim = (clientX: number) => {
+      const deltaX = clientX - trimStartRef.current.mouseX;
       const deltaTime = deltaX / pixelsPerSecond;
 
       if (trimEdge === "left") {
-        const newStartTime = Math.max(
-          0,
-          trimStartRef.current.startTime + deltaTime,
-        );
-        const maxStartTime =
-          trimStartRef.current.startTime + trimStartRef.current.duration - 0.1;
+        const newStartTime = Math.max(0, trimStartRef.current.startTime + deltaTime);
+        const maxStartTime = trimStartRef.current.startTime + trimStartRef.current.duration - 0.1;
         const clampedStartTime = Math.min(newStartTime, maxStartTime);
         onTrimClip(clip.id, "left", clampedStartTime);
       } else {
-        const newEndTime =
-          trimStartRef.current.startTime +
-          trimStartRef.current.duration +
-          deltaTime;
+        const newEndTime = trimStartRef.current.startTime + trimStartRef.current.duration + deltaTime;
         const minEndTime = trimStartRef.current.startTime + 0.1;
         const clampedEndTime = Math.max(newEndTime, minEndTime);
         onTrimClip(clip.id, "right", clampedEndTime);
       }
     };
 
+    const flushPendingTrim = () => {
+      frameId = null;
+      if (pendingClientX === null) return;
+      const clientX = pendingClientX;
+      pendingClientX = null;
+      applyTrim(clientX);
+    };
+
+    const handleMouseMove = (event: MouseEvent) => {
+      pendingClientX = event.clientX;
+      if (frameId === null) frameId = requestAnimationFrame(flushPendingTrim);
+    };
+
     const handleMouseUp = () => {
+      if (frameId !== null) cancelAnimationFrame(frameId);
+      frameId = null;
+      if (pendingClientX !== null) {
+        const clientX = pendingClientX;
+        pendingClientX = null;
+        applyTrim(clientX);
+      }
       setIsTrimming(false);
       setTrimEdge(null);
       document.body.style.cursor = "";
+      document.body.style.userSelect = "";
     };
 
     window.addEventListener("mousemove", handleMouseMove);
@@ -393,6 +410,7 @@ const ClipComponentInner: React.FC<ClipComponentProps> = ({
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
+      if (frameId !== null) cancelAnimationFrame(frameId);
     };
   }, [isTrimming, trimEdge, clip.id, pixelsPerSecond, onTrimClip]);
 
