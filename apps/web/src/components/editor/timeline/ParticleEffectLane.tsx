@@ -11,6 +11,7 @@ interface ParticleEffectLaneProps {
   playheadPosition: number;
   markerTimes: readonly number[];
   onUpdate: (effectId: string, updates: Partial<ParticleEffect>) => void;
+  onSelect?: (effectId: string) => void;
 }
 
 type DragMode = "move" | "trim";
@@ -37,6 +38,7 @@ export const ParticleEffectLane: React.FC<ParticleEffectLaneProps> = ({
   playheadPosition,
   markerTimes,
   onUpdate,
+  onSelect,
 }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const dragRef = useRef<{
@@ -103,6 +105,7 @@ export const ParticleEffectLane: React.FC<ParticleEffectLaneProps> = ({
     event.preventDefault();
     event.stopPropagation();
     setSelectedId(effect.id);
+    onSelect?.(effect.id);
     dragRef.current = {
       id: effect.id,
       mode,
@@ -135,6 +138,7 @@ export const ParticleEffectLane: React.FC<ParticleEffectLaneProps> = ({
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
                 setSelectedId(effect.id);
+                onSelect?.(effect.id);
               }
             }}
             className={`absolute top-1 h-8 rounded border flex items-center gap-1 px-2 text-[10px] font-semibold overflow-hidden select-none ${effect.enabled ? tint : "bg-slate-500/15 border-slate-500/50 text-slate-400"} ${active ? "ring-1 ring-white/70" : ""}`}
