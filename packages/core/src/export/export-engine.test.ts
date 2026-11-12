@@ -634,6 +634,32 @@ describe("ExportEngine", () => {
       expect(result.value.stats?.fileSize).toBe(firstBlob.size + secondBlob.size);
     });
 
+    it("stops rendering when the streamed frame consumer fails", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 2 }),
+      });
+      const exportFrameSpy = vi.spyOn(exportEngine, "exportFrame")
+        .mockResolvedValue({ success: true, blob: new Blob(["frame"]) });
+      const onFrame = vi.fn(async () => {
+        throw new Error("ZIP destination unavailable");
+      });
+      const generator = exportEngine.exportImageSequence(project, {}, onFrame);
+      let result;
+      try {
+        result = await generator.next();
+        while (!result.done) result = await generator.next();
+      } finally {
+        exportFrameSpy.mockRestore();
+      }
+
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.message).toContain("ZIP destination unavailable");
+      expect(onFrame).toHaveBeenCalledTimes(1);
+      expect(exportFrameSpy).toHaveBeenCalledTimes(1);
+    });
+
     it("should reject an empty sequence naming pattern before rendering", async () => {
       await exportEngine.initialize();
       const project = createMockProject({
