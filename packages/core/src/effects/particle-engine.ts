@@ -7,12 +7,14 @@ import {
   DEFAULT_PARTICLE_CONFIG,
 } from "./particle-types";
 
-function generateId(): string {
-  return Math.random().toString(36).substring(2, 11);
+type RandomSource = () => number;
+
+function generateId(random: RandomSource): string {
+  return random().toString(36).substring(2, 11);
 }
 
-function randomRange(min: number, max: number): number {
-  return min + Math.random() * (max - min);
+function randomRange(min: number, max: number, random: RandomSource, random): number {
+  return min + random() * (max - min);
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
@@ -34,11 +36,11 @@ function lerpColor(color1: string, color2: string, t: number): string {
   return `rgb(${r},${g},${b})`;
 }
 
-function getEmissionPosition(config: ParticleConfig, center: Vector3): Vector3 {
+function getEmissionPosition(config: ParticleConfig, center: Vector3, random: RandomSource): Vector3 {
   switch (config.emissionShape) {
     case "circle": {
-      const angle = Math.random() * Math.PI * 2;
-      const r = Math.random() * config.emissionRadius;
+      const angle = random() * Math.PI * 2;
+      const r = random() * config.emissionRadius;
       return {
         x: center.x + Math.cos(angle) * r,
         y: center.y + Math.sin(angle) * r,
@@ -46,9 +48,9 @@ function getEmissionPosition(config: ParticleConfig, center: Vector3): Vector3 {
       };
     }
     case "sphere": {
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      const r = Math.random() * config.emissionRadius;
+      const theta = random() * Math.PI * 2;
+      const phi = Math.acos(2 * random() - 1);
+      const r = random() * config.emissionRadius;
       return {
         x: center.x + r * Math.sin(phi) * Math.cos(theta),
         y: center.y + r * Math.sin(phi) * Math.sin(theta),
@@ -57,14 +59,14 @@ function getEmissionPosition(config: ParticleConfig, center: Vector3): Vector3 {
     }
     case "rectangle": {
       return {
-        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius),
-        y: center.y + randomRange(-config.emissionRadius, config.emissionRadius),
+        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius, random),
+        y: center.y + randomRange(-config.emissionRadius, config.emissionRadius, random),
         z: center.z,
       };
     }
     case "line": {
       return {
-        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius),
+        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius, random),
         y: center.y,
         z: center.z,
       };
@@ -79,9 +81,10 @@ function getInitialVelocity(
   config: ParticleConfig,
   effectType: string,
   center: Vector3,
-  position: Vector3
+  position: Vector3,
+  random: RandomSource
 ): Vector3 {
-  const speed = config.speed + randomRange(-config.speedVariance, config.speedVariance);
+  const speed = config.speed + randomRange(-config.speedVariance, config.speedVariance, random);
 
   switch (effectType) {
     case "explode": {
@@ -89,9 +92,9 @@ function getInitialVelocity(
       const dy = position.y - center.y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
       return {
-        x: (dx / dist) * speed + randomRange(-20, 20),
-        y: (dy / dist) * speed + randomRange(-20, 20),
-        z: randomRange(-speed * 0.5, speed * 0.5),
+        x: (dx / dist) * speed + randomRange(-20, 20, random),
+        y: (dy / dist) * speed + randomRange(-20, 20, random),
+        z: randomRange(-speed * 0.5, speed * 0.5, random),
       };
     }
     case "implode": {
@@ -106,38 +109,38 @@ function getInitialVelocity(
     }
     case "confetti": {
       return {
-        x: randomRange(-speed, speed),
-        y: -Math.abs(speed) * randomRange(0.5, 1.5),
-        z: randomRange(-speed * 0.3, speed * 0.3),
+        x: randomRange(-speed, speed, random),
+        y: -Math.abs(speed) * randomRange(0.5, 1.5, random),
+        z: randomRange(-speed * 0.3, speed * 0.3, random),
       };
     }
     case "dust":
     case "sparkle": {
-      const angle = Math.random() * Math.PI * 2;
+      const angle = random() * Math.PI * 2;
       return {
         x: Math.cos(angle) * speed * 0.3,
         y: Math.sin(angle) * speed * 0.3 - speed * 0.2,
-        z: randomRange(-10, 10),
+        z: randomRange(-10, 10, random),
       };
     }
     case "disintegrate": {
       return {
-        x: randomRange(-speed * 0.5, speed * 0.5),
-        y: -speed * randomRange(0.3, 0.8),
-        z: randomRange(-speed * 0.2, speed * 0.2),
+        x: randomRange(-speed * 0.5, speed * 0.5, random),
+        y: -speed * randomRange(0.3, 0.8, random),
+        z: randomRange(-speed * 0.2, speed * 0.2, random),
       };
     }
     case "shatter": {
-      const angle = Math.random() * Math.PI * 2;
+      const angle = random() * Math.PI * 2;
       return {
         x: Math.cos(angle) * speed,
         y: Math.sin(angle) * speed - speed * 0.5,
-        z: randomRange(-speed * 0.5, speed * 0.5),
+        z: randomRange(-speed * 0.5, speed * 0.5, random),
       };
     }
     case "dissolve":
     default: {
-      const angle = Math.random() * Math.PI * 2;
+      const angle = random() * Math.PI * 2;
       return {
         x: Math.cos(angle) * speed * 0.5,
         y: Math.sin(angle) * speed * 0.5,
@@ -154,6 +157,25 @@ export class ParticleEngine {
   private canvasHeight: number = 1080;
   private changeListeners: Set<() => void> = new Set();
   private changeVersion: number = 0;
+  private randomState = 0x6d2b79f5;
+  private particleSequence = 0;
+
+  /**
+   * Set the deterministic random seed before resetting and simulating an export.
+   * The same seed and update sequence produce the same particle simulation.
+   */
+  setRandomSeed(seed: number): void {
+    this.randomState = (seed >>> 0) || 0x6d2b79f5;
+    this.particleSequence = 0;
+  }
+
+  private nextRandom = (): number => {
+    // Mulberry32: compact, fast, deterministic, and independent of Math.random.
+    let value = (this.randomState += 0x6d2b79f5);
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
 
   onEffectsChange(listener: () => void): () => void {
     this.changeListeners.add(listener);
@@ -238,21 +260,22 @@ export class ParticleEngine {
     center: Vector3
   ): Particle {
     const config = effect.config;
-    const position = getEmissionPosition(config, center);
-    const velocity = getInitialVelocity(config, effect.type, center, position);
-    const colorIndex = Math.floor(Math.random() * config.colors.length);
+    const random = this.nextRandom;
+    const position = getEmissionPosition(config, center, random);
+    const velocity = getInitialVelocity(config, effect.type, center, position, random);
+    const colorIndex = Math.floor(random() * config.colors.length);
 
     return {
-      id: generateId(),
+      id: `particle-${++this.particleSequence}-${generateId(random)}`,
       position,
       velocity,
       acceleration: { x: 0, y: config.gravity, z: 0 },
       color: config.colors[colorIndex],
-      size: randomRange(config.size.min, config.size.max),
+      size: randomRange(config.size.min, config.size.max, random),
       opacity: config.opacity.start,
-      rotation: Math.random() * Math.PI * 2,
-      rotationSpeed: randomRange(-config.rotationSpeed, config.rotationSpeed),
-      lifetime: randomRange(config.lifetime.min, config.lifetime.max),
+      rotation: random() * Math.PI * 2,
+      rotationSpeed: randomRange(-config.rotationSpeed, config.rotationSpeed, random),
+      lifetime: randomRange(config.lifetime.min, config.lifetime.max, random),
       age: 0,
       active: true,
     };
@@ -300,8 +323,8 @@ export class ParticleEngine {
         particle.velocity.z += (particle.acceleration.z + config.wind.z) * deltaTime;
 
         if (config.turbulence > 0) {
-          particle.velocity.x += randomRange(-config.turbulence, config.turbulence) * deltaTime;
-          particle.velocity.y += randomRange(-config.turbulence, config.turbulence) * deltaTime;
+          particle.velocity.x += randomRange(-config.turbulence, config.turbulence, random) * deltaTime;
+          particle.velocity.y += randomRange(-config.turbulence, config.turbulence, random) * deltaTime;
         }
 
         particle.position.x += particle.velocity.x * deltaTime;
