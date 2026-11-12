@@ -64,9 +64,13 @@ export async function createImageSequenceZipFromFrames(
     }
     let removeAbortListener = () => {};
     const aborted = new Promise<never>((_, reject) => {
+      const signal = options.signal!;
       const onAbort = () => reject(new Error("Image sequence ZIP packaging cancelled."));
-      options.signal!.addEventListener("abort", onAbort, { once: true });
-      removeAbortListener = () => options.signal!.removeEventListener("abort", onAbort);
+      signal.addEventListener("abort", onAbort, { once: true });
+      removeAbortListener = () => signal.removeEventListener("abort", onAbort);
+      // Abort can fire between the initial check and listener registration.
+      // Recheck after subscribing so the race cannot leave this wait pending.
+      if (signal.aborted) onAbort();
     });
     try {
       await Promise.race([outputWriteQueue, aborted]);
