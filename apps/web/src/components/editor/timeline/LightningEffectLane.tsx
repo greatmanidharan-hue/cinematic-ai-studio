@@ -82,8 +82,12 @@ export const LightningEffectLane: React.FC<LightningEffectLaneProps> = ({
     return () => {
       window.removeEventListener("pointermove", handlePointerMove);
       window.removeEventListener("pointerup", handlePointerUp);
+      if (dragRef.current) onInteractionEnd?.();
+      dragRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
     };
-  }, [handlePointerMove, handlePointerUp]);
+  }, [handlePointerMove, handlePointerUp, onInteractionEnd]);
 
   const beginDrag = (event: React.PointerEvent, effect: LightningEffectClip, mode: DragMode) => {
     event.preventDefault();
