@@ -70,6 +70,9 @@ export async function createImageSequenceZipFromFrames(
     for await (const frame of frames) {
       if (options.signal?.aborted) throw new Error("Image sequence ZIP packaging cancelled.");
       if (outputError) throw outputError;
+      if (completedFrames >= totalFrames) {
+        throw new Error(`Image sequence frame count mismatch: expected ${totalFrames}, received more than declared.`);
+      }
       const name = validateEntryName(frame.name);
       if (names.has(name)) throw new Error(`Duplicate image sequence filename: ${name}`);
       names.add(name);
