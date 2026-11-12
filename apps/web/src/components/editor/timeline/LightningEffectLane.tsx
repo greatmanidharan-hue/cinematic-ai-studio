@@ -87,7 +87,7 @@ export const LightningEffectLane: React.FC<LightningEffectLaneProps> = ({
             title={`Lightning · ${effect.startTime.toFixed(2)}s – ${(effect.startTime + effect.duration).toFixed(2)}s`}
           >
             <span className="truncate">⚡ {effect.name || "Lightning"}</span>
-            <button type="button" aria-label="Trim lightning duration"
+            <span aria-hidden="true"
               onPointerDown={(event) => beginDrag(event, effect, "trim")}
               className="absolute right-0 top-0 h-full w-2 cursor-ew-resize bg-sky-300/40 hover:bg-sky-200/80" />
           </div>
