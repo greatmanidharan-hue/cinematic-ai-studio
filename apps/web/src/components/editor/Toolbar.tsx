@@ -35,7 +35,7 @@ import {
   type AudioExportSettings,
   type ExportResult,
   type SequenceExportSettings,
-  createImageSequenceZip,
+  createImageSequenceZipFromFrames,
   type DeviceProfile,
   type TimeEstimate,
 } from "@fairarena/core";
@@ -446,32 +446,26 @@ export const Toolbar: React.FC = () => {
         if (zipController.signal.aborted) {
           throw new Error("Image sequence export cancelled.");
         }
-        const generator = engine.exportImageSequence(project, settings);
-        let result: ExportResult | undefined;
-        while (true) {
-          const { value, done } = await generator.next();
-          if (zipController.signal.aborted) {
-            throw new Error("Image sequence export cancelled.");
+        const totalTimelineFrames = Math.ceil(project.timeline.duration * project.settings.frameRate);
+        const expectedFrames = (settings.endFrame ?? totalTimelineFrames - 1) - (settings.startFrame ?? 0) + 1;
+        const queuedFrames: Array<{ name: string; blob: Blob }> = [];
+        const frameWaiters: Array<() => void> = [];
+        let framesDone = false;
+        let frameError: Error | null = null;
+        const frameSource = async function* () {
+          while (!framesDone || queuedFrames.length > 0) {
+            if (queuedFrames.length === 0) {
+              await new Promise<void>((resolve) => frameWaiters.push(resolve));
+              continue;
+            }
+            yield queuedFrames.shift()!;
           }
-          if (done) {
-            result = value;
-            break;
-          }
-          setExportState((prev) => ({
-            ...prev,
-            progress: value.progress * 100,
-            phase: value.phase === "complete" ? "Packaging ZIP..." : `${value.phase}...`,
-          }));
-        }
-        if (!result?.success || !result.files?.length) {
-          throw new Error(result?.error?.message || "Image sequence export failed");
-        }
-        const archive = await createImageSequenceZip(result.files, {
+          if (frameError) throw frameError;
+        };
+        const archivePromise = createImageSequenceZipFromFrames(frameSource(), expectedFrames, {
           signal: zipController.signal,
           onChunk: async (chunk) => {
-            if (zipController.signal.aborted) {
-              throw new Error("Image sequence ZIP packaging cancelled.");
-            }
+            if (zipController.signal.aborted) throw new Error("Image sequence ZIP packaging cancelled.");
             await writable?.write(chunk);
           },
           onProgress: (completed, total) => {
@@ -482,6 +476,41 @@ export const Toolbar: React.FC = () => {
             }));
           },
         });
+        // Observe early archive failures while the renderer is still producing frames.
+        void archivePromise.catch(() => undefined);
+        const generator = engine.exportImageSequence(project, settings, async (frame) => {
+          if (zipController.signal.aborted) throw new Error("Image sequence export cancelled.");
+          queuedFrames.push(frame);
+          frameWaiters.shift()?.();
+          // Wait until the ZIP consumer takes this frame before rendering another.
+          while (queuedFrames.includes(frame) && !zipController.signal.aborted) {
+            await new Promise<void>((resolve) => frameWaiters.push(resolve));
+          }
+        });
+        let result: ExportResult | undefined;
+        try {
+          while (true) {
+            const { value, done } = await generator.next();
+            if (zipController.signal.aborted) throw new Error("Image sequence export cancelled.");
+            if (done) {
+              result = value;
+              break;
+            }
+            setExportState((prev) => ({
+              ...prev,
+              progress: value.progress * 100,
+              phase: value.phase === "complete" ? "Packaging ZIP..." : `${value.phase}...`,
+            }));
+          }
+          if (!result?.success) throw new Error(result?.error?.message || "Image sequence export failed");
+        } catch (error) {
+          frameError = error instanceof Error ? error : new Error("Image sequence export failed");
+          throw error;
+        } finally {
+          framesDone = true;
+          frameWaiters.splice(0).forEach((wake) => wake());
+        }
+        const archive = await archivePromise;
         if (zipController.signal.aborted) {
           throw new Error("Image sequence ZIP packaging cancelled.");
         }
@@ -496,7 +525,7 @@ export const Toolbar: React.FC = () => {
           frameRate: project.settings.frameRate,
           duration: project.timeline?.duration ?? 0,
           exportType: "image-sequence",
-          frameCount: result.files.length,
+          frameCount: expectedFrames,
         });
         setTimeout(() => setExportState({ isExporting: false, progress: 0, phase: "", error: null, complete: false }), 2500);
       } catch (error) {
