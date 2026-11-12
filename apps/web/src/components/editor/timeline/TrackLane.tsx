@@ -52,6 +52,7 @@ interface TrackLaneProps {
     newTime: number,
   ) => void;
   scrollX: number;
+  viewportWidth: number;
   trackHeight: number;
   onResizeTrack: (trackId: string, newHeight: number) => void;
   onKeyframeSelect?: (keyframeId: string, addToSelection: boolean) => void;
@@ -78,6 +79,7 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
   onTrimTextClip,
   onTrimShapeClip,
   scrollX,
+  viewportWidth,
   trackHeight,
   onResizeTrack,
   onKeyframeSelect,
