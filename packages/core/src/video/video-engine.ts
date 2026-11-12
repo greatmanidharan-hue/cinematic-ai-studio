@@ -1260,6 +1260,19 @@ export class VideoEngine {
   resetExportState(): void {
     this.lastExportTime = -1;
     const particleEngine = getParticleEngine();
+    const effectsSignature = JSON.stringify(
+      particleEngine
+        .getAllEffects()
+        .slice()
+        .sort((a, b) => a.id.localeCompare(b.id)),
+    );
+    // FNV-1a gives each export a stable seed derived from its particle setup.
+    let seed = 0x811c9dc5;
+    for (let index = 0; index < effectsSignature.length; index++) {
+      seed ^= effectsSignature.charCodeAt(index);
+      seed = Math.imul(seed, 0x01000193);
+    }
+    particleEngine.setRandomSeed(seed >>> 0);
     particleEngine.reset();
   }
 
