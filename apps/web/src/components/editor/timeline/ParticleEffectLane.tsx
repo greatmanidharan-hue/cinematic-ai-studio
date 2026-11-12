@@ -142,7 +142,7 @@ export const ParticleEffectLane: React.FC<ParticleEffectLaneProps> = ({
             title={`${labels[effect.type]} · ${effect.startTime.toFixed(2)}s – ${(effect.startTime + effect.duration).toFixed(2)}s · Clip ${effect.clipId}`}
           >
             <span className="truncate">✦ {labels[effect.type]}</span>
-            <button type="button" aria-label="Trim particle effect duration"
+            <span aria-hidden="true"
               onPointerDown={(event) => beginDrag(event, effect, "trim")}
               className="absolute right-0 top-0 h-full w-2 cursor-ew-resize bg-amber-300/40 hover:bg-amber-200/80" />
           </div>
