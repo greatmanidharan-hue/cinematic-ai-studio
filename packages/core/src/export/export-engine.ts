@@ -1010,6 +1010,15 @@ export class ExportEngine {
         // retaining all encoded frame Blobs in memory.
         if (onFrame) {
           await onFrame(exportedFrame);
+          // The destination callback may be awaiting a slow write while the
+          // user cancels. Do not count or report that frame after cancellation.
+          if (controller.signal.aborted) {
+            throw this.createError(
+              "CANCELLED",
+              "Export cancelled by user",
+              "rendering",
+            );
+          }
         } else {
           files.push(exportedFrame);
         }
