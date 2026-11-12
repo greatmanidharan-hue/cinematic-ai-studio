@@ -838,6 +838,7 @@ export class ExportEngine {
     }
 
     let renderedImage: ImageBitmap | null = null;
+    let canvas: OffscreenCanvas | null = null;
     try {
       const renderedFrame = await this.videoEngine!.renderFrame(
         project,
@@ -847,7 +848,7 @@ export class ExportEngine {
       );
       renderedImage = renderedFrame.image;
 
-      const canvas = new OffscreenCanvas(fullSettings.width, fullSettings.height);
+      canvas = new OffscreenCanvas(fullSettings.width, fullSettings.height);
       const ctx = canvas.getContext("2d");
       if (!ctx) {
         throw new Error("Unable to create an image export canvas.");
@@ -889,6 +890,12 @@ export class ExportEngine {
       };
     } finally {
       renderedImage?.close();
+      // Release the per-frame backing store immediately instead of waiting
+      // for garbage collection during long image-sequence exports.
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
     }
   }
 
