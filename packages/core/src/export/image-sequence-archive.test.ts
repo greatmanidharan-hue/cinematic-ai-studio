@@ -33,6 +33,21 @@ describe("createImageSequenceZipFromFrames", () => {
     }
     await expect(createImageSequenceZipFromFrames(frames(), 2)).rejects.toThrow(/frame count mismatch/);
   });
+
+  it("stops an async source as soon as it yields more frames than declared", async () => {
+    let yielded = 0;
+    async function* frames() {
+      yielded += 1;
+      yield { name: "frame-1.png", blob: new Blob(["one"]) };
+      yielded += 1;
+      yield { name: "frame-2.png", blob: new Blob(["two"]) };
+      yielded += 1;
+      yield { name: "frame-3.png", blob: new Blob(["three"]) };
+    }
+
+    await expect(createImageSequenceZipFromFrames(frames(), 2)).rejects.toThrow(/frame count mismatch/);
+    expect(yielded).toBe(3);
+  });
 });
 
 describe("createImageSequenceZip", () => {
