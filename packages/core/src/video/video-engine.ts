@@ -5,6 +5,7 @@ import type {
   Effect,
   Transform,
   Subtitle,
+  LightningEffectClip,
 } from "../types/timeline";
 import type { MediaItem, Project } from "../types/project";
 import type { TextClip } from "../text/types";
@@ -53,6 +54,7 @@ import {
 } from "../media/gif-decoder";
 import { ParticleEngine, getParticleEngine } from "../effects/particle-engine";
 import { renderParticles } from "../effects/particle-renderer";
+import { renderLightningBolt } from "../effects/lightning-bolt-renderer";
 import { getPersonSegmentationEngine } from "../ai/person-segmentation-engine";
 
 const DEFAULT_CACHE_CONFIG: FrameCacheConfig = {
@@ -901,6 +903,7 @@ export class VideoEngine {
     subjectFrame?.close();
 
     this.renderParticlesToContext(ctx, time, width, height);
+    this.renderLightningEffectsToContext(ctx, timeline.lightningEffects ?? [], time, width, height);
 
     for (const subtitle of activeSubtitles) {
       this.renderSubtitleToCanvasCtx(ctx, subtitle, width, height);
@@ -1227,6 +1230,51 @@ export class VideoEngine {
     return subtitles.filter((sub) => {
       return time >= sub.startTime && time < sub.endTime;
     });
+  }
+
+  private renderLightningEffectsToContext(
+    ctx: OffscreenCanvasRenderingContext2D,
+    effects: readonly LightningEffectClip[],
+    time: number,
+    width: number,
+    height: number,
+  ): void {
+    for (const effect of effects) {
+      if (
+        !effect.enabled ||
+        effect.duration <= 0 ||
+        time < effect.startTime ||
+        time >= effect.startTime + effect.duration
+      ) {
+        continue;
+      }
+
+      const intensity = Math.max(0, Math.min(1, effect.intensity));
+      if (intensity <= 0) continue;
+
+      const frameIndex = Math.floor((time - effect.startTime) * this.exportFrameRate);
+      let seed = 0x811c9dc5;
+      const seedInput = `${effect.id}:${frameIndex}`;
+      for (let index = 0; index < seedInput.length; index++) {
+        seed ^= seedInput.charCodeAt(index);
+        seed = Math.imul(seed, 0x01000193);
+      }
+
+      ctx.save();
+      ctx.globalAlpha = intensity;
+      renderLightningBolt(ctx, {
+        start: { x: effect.start.x * width, y: effect.start.y * height },
+        end: { x: effect.end.x * width, y: effect.end.y * height },
+        segments: effect.segments ?? 18,
+        branches: effect.branches ?? 2,
+        amplitude: effect.amplitude ?? 24,
+        color: effect.color ?? "#9bdcff",
+        lineWidth: 1.5 + intensity * 3.5,
+        glow: 8 + intensity * 22,
+        seed: seed >>> 0,
+      });
+      ctx.restore();
+    }
   }
 
   private renderParticlesToContext(
