@@ -47,16 +47,17 @@ const ClipComponentInner: React.FC<ClipComponentProps> = ({
   onSnapIndicator,
   onTrimClip,
 }) => {
-  const { getMediaItem } = useProjectStore();
-  const { snapSettings } = useUIStore();
+  const mediaItem = useProjectStore((state) =>
+    state.project.mediaLibrary.items.find((item) => item.id === clip.mediaId),
+  );
+  const snapSettings = useUIStore((state) => state.snapSettings);
   const effectApplicationClipId = useUIStore(
     (state) => state.effectApplicationClipId,
   );
   const effectApplicationLabel = useUIStore(
     (state) => state.effectApplicationLabel,
   );
-  const { playheadPosition } = useTimelineStore();
-  const mediaItem = getMediaItem(clip.mediaId);
+  const playheadPosition = useTimelineStore((state) => state.playheadPosition);
   const [isDragging, setIsDragging] = useState(false);
   const [isPendingDrag, setIsPendingDrag] = useState(false);
   const [dragOffset, setDragOffset] = useState(0);
