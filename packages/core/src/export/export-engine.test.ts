@@ -414,6 +414,7 @@ describe("ExportEngine", () => {
       const result = await generator.next();
 
       expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected validation to stop export");
       expect(result.value.success).toBe(false);
       expect(result.value.error?.code).toBe("INVALID_SETTINGS");
       expect(mockRenderAudio).not.toHaveBeenCalled();
@@ -438,7 +439,7 @@ describe("ExportEngine", () => {
           ...DEFAULT_VIDEO_SETTINGS,
           audioSettings: {
             ...DEFAULT_AUDIO_SETTINGS,
-            sampleRate: 12345 as 44100,
+            sampleRate: 12345 as unknown as 44100,
           },
         },
         writableStream,
