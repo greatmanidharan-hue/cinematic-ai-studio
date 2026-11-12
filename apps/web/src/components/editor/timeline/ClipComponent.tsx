@@ -420,7 +420,9 @@ const ClipComponentInner: React.FC<ClipComponentProps> = ({
     };
   }, [isTrimming, trimEdge, clip.id, pixelsPerSecond, onTrimClip]);
 
-  const thumbnailCount = Math.max(1, Math.floor(width / 60));
+  // Bound filmstrip DOM work for very long clips at high timeline zoom levels.
+  // Each thumbnail is decorative; a capped strip is preferable to thousands of nodes.
+  const thumbnailCount = Math.min(96, Math.max(1, Math.floor(width / 60)));
   const clipName = mediaItem?.name || clip.mediaId.slice(0, 8);
 
   const isInteracting = isDragging || isTrimming;
