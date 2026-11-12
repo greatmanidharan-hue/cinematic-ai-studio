@@ -260,6 +260,7 @@ const LightningEffectsSection: React.FC = () => {
     <label className="block space-y-1">
       <span className="text-[10px] text-text-muted">{label}</span>
       <input type="number" value={value} min={min} max={max} step={step}
+        onFocus={beginEdit} onBlur={endEdit}
         onChange={(event) => {
           const next = Number(event.target.value);
           if (Number.isFinite(next)) onChange(Math.min(max, Math.max(min, next)));
@@ -326,6 +327,8 @@ const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
   const lightning = (project.timeline.lightningEffects ?? []).find((item) => item.id === effectId);
   const particle = (project.timeline.particleEffects ?? []).find((item) => item.id === effectId);
   const effect = lightning ?? particle;
+  const beginEdit = () => useProjectStore.getState().beginHistoryGroup("Edit VFX settings");
+  const endEdit = () => useProjectStore.getState().endHistoryGroup();
   const update = (patch: Record<string, unknown>) => {
     const current = useProjectStore.getState().project.timeline;
     const request = lightning
@@ -367,7 +370,7 @@ const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
       </div>
       <label className="flex items-center justify-between text-xs text-text-secondary">
         Enabled
-        <input type="checkbox" checked={effect.enabled} onChange={(event) => update({ enabled: event.target.checked })} />
+        <input type="checkbox" checked={effect.enabled} onFocus={beginEdit} onBlur={endEdit} onChange={(event) => update({ enabled: event.target.checked })} />
       </label>
       <div className="grid grid-cols-2 gap-2">
         {numberField("Start time (s)", effect.startTime, "startTime", 0, 36000, 0.05)}
@@ -380,7 +383,7 @@ const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
           {numberField("Segments", lightning.segments ?? 18, "segments", 2, 64, 1)}
           <label className="flex items-center justify-between text-xs text-text-secondary">
             Bolt color
-            <input type="color" value={lightning.color ?? "#9bdcff"} onChange={(event) => update({ color: event.target.value })} />
+            <input type="color" value={lightning.color ?? "#9bdcff"} onFocus={beginEdit} onBlur={endEdit} onChange={(event) => update({ color: event.target.value })} />
           </label>
         </div>
       )}
@@ -389,7 +392,7 @@ const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
           <p className="text-[10px] text-text-muted">Particle type: {particle.type} · Clip: {particle.clipId}</p>
           <label className="block space-y-1">
             <span className="text-[10px] text-text-muted">Preset library</span>
-            <select value="" onChange={(event) => {
+            <select value="" onFocus={beginEdit} onBlur={endEdit} onChange={(event) => {
               const preset = PARTICLE_PRESETS.find((item) => item.id === event.target.value);
               if (preset) update({ config: { ...preset.config }, type: preset.type });
             }} className="w-full h-8 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary">
@@ -409,14 +412,14 @@ const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
           </div>
           <label className="block space-y-1">
             <span className="text-[10px] text-text-muted">Emission shape</span>
-            <select value={particle.config.emissionShape} onChange={(event) => update({ config: { ...particle.config, emissionShape: event.target.value } })}
+            <select value={particle.config.emissionShape} onFocus={beginEdit} onBlur={endEdit} onChange={(event) => update({ config: { ...particle.config, emissionShape: event.target.value } })}
               className="w-full h-8 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary">
               {["point","line","circle","rectangle","sphere"].map((shape) => <option key={shape} value={shape}>{shape}</option>)}
             </select>
           </label>
           <label className="block space-y-1">
             <span className="text-[10px] text-text-muted">Blend mode</span>
-            <select value={particle.config.blendMode} onChange={(event) => update({ config: { ...particle.config, blendMode: event.target.value } })}
+            <select value={particle.config.blendMode} onFocus={beginEdit} onBlur={endEdit} onChange={(event) => update({ config: { ...particle.config, blendMode: event.target.value } })}
               className="w-full h-8 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary">
               {["normal","add","multiply","screen"].map((mode) => <option key={mode} value={mode}>{mode}</option>)}
             </select>
@@ -426,7 +429,7 @@ const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
             <div className="flex flex-wrap gap-2">
               {particle.config.colors.map((color, index) => (
                 <label key={index} className="flex items-center gap-1 rounded border border-border bg-background-tertiary p-1">
-                  <input type="color" value={color} onChange={(event) => {
+                  <input type="color" value={color} onFocus={beginEdit} onBlur={endEdit} onChange={(event) => {
                     const colors = [...particle.config.colors]; colors[index] = event.target.value;
                     update({ config: { ...particle.config, colors } });
                   }} className="h-6 w-7 cursor-pointer bg-transparent" />
