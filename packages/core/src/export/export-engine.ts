@@ -118,6 +118,22 @@ export class ExportEngine {
     }
   }
 
+  private validateImageSettings(settings: ImageExportSettings): string | null {
+    if (!["jpg", "png", "webp"].includes(settings.format)) {
+      return "Unsupported image format.";
+    }
+    if (!Number.isInteger(settings.width) || settings.width <= 0) {
+      return "Image width must be a positive integer.";
+    }
+    if (!Number.isInteger(settings.height) || settings.height <= 0) {
+      return "Image height must be a positive integer.";
+    }
+    if (!Number.isFinite(settings.quality) || settings.quality < 0 || settings.quality > 100) {
+      return "Image quality must be between 0 and 100.";
+    }
+    return null;
+  }
+
   private validateVideoSettings(settings: VideoExportSettings): string | null {
     if (!["mp4", "webm", "mov"].includes(settings.format)) {
       return "Unsupported video container format.";
@@ -774,6 +790,27 @@ export class ExportEngine {
       ...settings,
     };
 
+    const settingsError = this.validateImageSettings(fullSettings);
+    if (settingsError) {
+      return {
+        success: false,
+        error: this.createError("INVALID_SETTINGS", settingsError, "preparing"),
+      };
+    }
+
+    const timelineDuration = this.calculateTimelineDuration(project.timeline);
+    if (!Number.isFinite(time) || time < 0 || time > timelineDuration) {
+      return {
+        success: false,
+        error: this.createError(
+          "INVALID_SETTINGS",
+          "Frame time must be finite and within the timeline duration.",
+          "preparing",
+        ),
+      };
+    }
+
+    let renderedImage: ImageBitmap | null = null;
     try {
       const renderedFrame = await this.videoEngine!.renderFrame(
         project,
@@ -781,33 +818,22 @@ export class ExportEngine {
         fullSettings.width,
         fullSettings.height,
       );
+      renderedImage = renderedFrame.image;
 
-      // Scale if needed (fallback in case render didn't match)
-      let canvas: OffscreenCanvas;
-      if (
-        fullSettings.width !== renderedFrame.width ||
-        fullSettings.height !== renderedFrame.height
-      ) {
-        canvas = new OffscreenCanvas(fullSettings.width, fullSettings.height);
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(
-            renderedFrame.image,
-            0,
-            0,
-            fullSettings.width,
-            fullSettings.height,
-          );
-        }
-        renderedFrame.image.close();
-      } else {
-        canvas = new OffscreenCanvas(renderedFrame.width, renderedFrame.height);
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(renderedFrame.image, 0, 0);
-        }
-        renderedFrame.image.close();
+      const canvas = new OffscreenCanvas(fullSettings.width, fullSettings.height);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        throw new Error("Unable to create an image export canvas.");
       }
+
+      ctx.drawImage(
+        renderedImage,
+        0,
+        0,
+        fullSettings.width,
+        fullSettings.height,
+      );
+
       const mimeType = this.getImageMimeType(fullSettings.format);
       const blob = await canvas.convertToBlob({
         type: mimeType,
@@ -834,6 +860,8 @@ export class ExportEngine {
           "rendering",
         ),
       };
+    } finally {
+      renderedImage?.close();
     }
   }
 
