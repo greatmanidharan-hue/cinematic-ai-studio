@@ -64,6 +64,35 @@ describe("createImageSequenceZip", () => {
     await expect(packaging).rejects.toThrow(/cancelled/i);
   });
 
+  it("interrupts a pending frame read when cancellation is requested", async () => {
+    const controller = new AbortController();
+    let notifyReadStarted: (() => void) | undefined;
+    let wasCancelled = false;
+    const readStarted = new Promise<void>((resolve) => {
+      notifyReadStarted = resolve;
+    });
+    const pendingBlob = new Blob(["pending-frame"]);
+    pendingBlob.stream = () =>
+      new ReadableStream<Uint8Array>({
+        start() {
+          notifyReadStarted?.();
+        },
+        cancel() {
+          wasCancelled = true;
+        },
+      });
+
+    const packaging = createImageSequenceZip(
+      [{ name: "frame.png", blob: pendingBlob }],
+      { signal: controller.signal },
+    );
+
+    await readStarted;
+    controller.abort();
+    await expect(packaging).rejects.toThrow(/cancelled/i);
+    expect(wasCancelled).toBe(true);
+  });
+
   it("propagates errors from the streamed ZIP destination", async () => {
     await expect(
       createImageSequenceZip(
