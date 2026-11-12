@@ -54,12 +54,15 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       const existingEffect = engine.getEffect(effect.id);
       if (!existingEffect) {
         engine.addEffect(effect);
-      } else if (!prevIds.has(effect.id)) {
+      } else {
+        // Keep inspector edits (including timing and enable state) live in preview.
         engine.updateEffect(effect.id, effect.config);
+        engine.updateEffectTiming(effect.id, effect.startTime, effect.duration);
+        engine.toggleEffect(effect.id, effect.enabled);
       }
     }
 
-    for (const prevId of prevIds) {
+        for (const prevId of prevIds) {
       if (!currentIds.has(prevId)) {
         engine.removeEffect(prevId);
       }
