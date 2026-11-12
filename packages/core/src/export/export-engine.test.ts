@@ -454,6 +454,35 @@ describe("ExportEngine", () => {
     });
   });
 
+  describe("image export validation", () => {
+    it("should reject invalid image dimensions before rendering", async () => {
+      await exportEngine.initialize();
+
+      const result = await exportEngine.exportFrame(
+        createMockProject(),
+        0,
+        { ...DEFAULT_IMAGE_SETTINGS, width: 0 },
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockRenderFrame).not.toHaveBeenCalled();
+    });
+
+    it("should reject frame times outside the timeline", async () => {
+      await exportEngine.initialize();
+
+      const project = createMockProject({
+        timeline: createMockTimeline({ duration: 5 }),
+      });
+      const result = await exportEngine.exportFrame(project, 6);
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockRenderFrame).not.toHaveBeenCalled();
+    });
+  });
+
   describe("video export settings validation", () => {
     it("should reject invalid dimensions before initializing the GPU compositor", async () => {
       await exportEngine.initialize();
