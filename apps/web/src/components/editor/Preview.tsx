@@ -869,21 +869,8 @@ export const Preview: React.FC = () => {
     []
   );
 
-  const particleEngine = React.useMemo(() => getParticleEngine(), []);
-  const [particleUpdateTrigger, setParticleUpdateTrigger] = React.useState(
-    () => particleEngine.getChangeVersion()
-  );
-
-  React.useEffect(() => {
-    const unsubscribe = particleEngine.onEffectsChange(() => {
-      setParticleUpdateTrigger(particleEngine.getChangeVersion());
-    });
-    return unsubscribe;
-  }, [particleEngine]);
-
-  const particleEffects = React.useMemo(() => {
-    return particleEngine.getAllEffects();
-  }, [particleEngine, particleUpdateTrigger]);
+  // Project-owned particle overlays remain serializable and reload-safe.
+  const particleEffects = project.timeline.particleEffects ?? [];
 
   // Calculate the actual end time for playback (where clips actually end)
   // This needs to recalculate whenever the timeline changes
