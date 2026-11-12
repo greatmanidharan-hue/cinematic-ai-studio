@@ -790,6 +790,42 @@ describe("ExportEngine", () => {
   });
 
   describe("video export", () => {
+    it("honors cancellation while GPU initialization is pending", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      let finishGpuInitialization!: () => void;
+      mockVideoEngine.initializeGPUCompositor.mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          finishGpuInitialization = resolve;
+        }),
+      );
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 1, width: 640, height: 360 },
+        writableStream,
+      );
+      const pendingResult = generator.next();
+      exportEngine.cancel();
+      finishGpuInitialization();
+
+      const result = await pendingResult;
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected cancelled export to finish");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("CANCELLED");
+      expect(mockOutputStart).not.toHaveBeenCalled();
+    });
+
     it("should render long export audio in chunks and clear cached audio", async () => {
       const project = createMockProject({
         timeline: createMockTimeline({
