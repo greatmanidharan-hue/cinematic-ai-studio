@@ -4,7 +4,7 @@ import { useProjectStore } from "../../stores/project-store";
 import { useTimelineStore } from "../../stores/timeline-store";
 import { useUIStore } from "../../stores/ui-store";
 import { useEngineStore } from "../../stores/engine-store";
-import type { Transform, FitMode, Clip, EditingTemplatePrimitive } from "@fairarena/core";
+import type { Transform, FitMode, Clip, EditingTemplatePrimitive, LightningEffectClip } from "@fairarena/core";
 import {
   ChromaKeyEngine,
   initializeTranscriptionService,
@@ -192,6 +192,116 @@ const ParticleEffectsSectionWrapper: React.FC<{
       onToggleEffect={handleToggleEffect}
       onUpdateTiming={handleUpdateTiming}
     />
+  );
+};
+
+
+const LightningEffectsSection: React.FC = () => {
+  const project = useProjectStore((state) => state.project);
+  const effects = project.timeline.lightningEffects ?? [];
+  const [selectedId, setSelectedId] = useState<string | null>(effects[0]?.id ?? null);
+  const selected = effects.find((effect) => effect.id === selectedId) ?? effects[0] ?? null;
+
+  const updateEffects = useCallback((next: LightningEffectClip[]) => {
+    useProjectStore.setState((state) => ({
+      project: {
+        ...state.project,
+        timeline: { ...state.project.timeline, lightningEffects: next },
+        modifiedAt: Date.now(),
+      },
+    }));
+    window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+  }, []);
+
+  const addEffect = useCallback(() => {
+    const id = `lightning-${Date.now().toString(36)}`;
+    const effect = createLightningEffectClip(
+      id,
+      0,
+      Math.min(1.2, Math.max(0.25, project.timeline.duration || 1.2)),
+    );
+    updateEffects([...effects, effect]);
+    setSelectedId(id);
+  }, [effects, project.timeline.duration, updateEffects]);
+
+  const updateSelected = useCallback((patch: Partial<LightningEffectClip>) => {
+    if (!selected) return;
+    updateEffects(effects.map((effect) => effect.id === selected.id
+      ? { ...effect, ...patch,
+          start: patch.start ? { ...effect.start, ...patch.start } : effect.start,
+          end: patch.end ? { ...effect.end, ...patch.end } : effect.end }
+      : effect));
+  }, [effects, selected, updateEffects]);
+
+  const numberField = (
+    label: string,
+    value: number,
+    min: number,
+    max: number,
+    step: number,
+    onChange: (value: number) => void,
+  ) => (
+    <label className="block space-y-1">
+      <span className="text-[10px] text-text-muted">{label}</span>
+      <input type="number" value={value} min={min} max={max} step={step}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          if (Number.isFinite(next)) onChange(Math.min(max, Math.max(min, next)));
+        }}
+        className="w-full h-7 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary" />
+    </label>
+  );
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <select value={selected?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)}
+          className="min-w-0 flex-1 h-8 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary">
+          {effects.length === 0 && <option value="">No lightning effects</option>}
+          {effects.map((effect, index) => <option key={effect.id} value={effect.id}>{effect.name || `Lightning ${index + 1}`}</option>)}
+        </select>
+        <button type="button" onClick={addEffect}
+          className="h-8 rounded bg-primary px-3 text-xs font-medium text-primary-foreground hover:opacity-90">+ Add</button>
+      </div>
+      {!selected ? (
+        <p className="py-3 text-center text-[10px] text-text-muted">Add a bolt to create a cinematic lightning overlay.</p>
+      ) : (
+        <>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-text-primary">Bolt settings</span>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1 text-[10px] text-text-muted">
+                <input type="checkbox" checked={selected.enabled} onChange={(event) => updateSelected({ enabled: event.target.checked })} />
+                Enabled
+              </label>
+              <button type="button" onClick={() => {
+                const remaining = effects.filter((effect) => effect.id !== selected.id);
+                updateEffects(remaining);
+                setSelectedId(remaining[0]?.id ?? null);
+              }} className="text-[10px] text-red-400 hover:text-red-300">Remove</button>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {numberField("Start time (s)", selected.startTime, 0, Math.max(0, project.timeline.duration), 0.1, (v) => updateSelected({ startTime: v }))}
+            {numberField("Duration (s)", selected.duration, 0.05, 30, 0.05, (v) => updateSelected({ duration: v }))}
+            {numberField("Start X (0–1)", selected.start.x, 0, 1, 0.01, (v) => updateSelected({ start: { ...selected.start, x: v } }))}
+            {numberField("Start Y (0–1)", selected.start.y, 0, 1, 0.01, (v) => updateSelected({ start: { ...selected.start, y: v } }))}
+            {numberField("End X (0–1)", selected.end.x, 0, 1, 0.01, (v) => updateSelected({ end: { ...selected.end, x: v } }))}
+            {numberField("End Y (0–1)", selected.end.y, 0, 1, 0.01, (v) => updateSelected({ end: { ...selected.end, y: v } }))}
+            {numberField("Intensity", selected.intensity, 0, 1, 0.05, (v) => updateSelected({ intensity: v }))}
+            {numberField("Branches", selected.branches ?? 3, 0, 12, 1, (v) => updateSelected({ branches: v }))}
+            {numberField("Segments", selected.segments ?? 18, 2, 64, 1, (v) => updateSelected({ segments: v }))}
+            {numberField("Amplitude", selected.amplitude ?? 24, 0, 100, 1, (v) => updateSelected({ amplitude: v }))}
+          </div>
+          <label className="flex items-center justify-between text-[10px] text-text-muted">
+            Bolt color
+            <input type="color" value={selected.color ?? "#9bdcff"} onChange={(event) => updateSelected({ color: event.target.value })}
+              className="h-7 w-10 cursor-pointer rounded border border-border bg-transparent" />
+          </label>
+          <p className="text-[10px] text-text-muted">Coordinates are normalized to the preview frame. The bolt is visible only during its start time and duration.</p>
+        </>
+      )}
+    </div>
   );
 };
 
@@ -1514,6 +1624,10 @@ export const InspectorPanel: React.FC = () => {
                 <MotionPathSection clipId={clipId} />
               </Section>
             )}
+
+            <Section title="Lightning VFX" sectionId="lightning-effects" defaultOpen={false}>
+              <LightningEffectsSection />
+            </Section>
 
             {/* Particle Effects - Visual particle systems */}
             {(clipType === "video" ||
