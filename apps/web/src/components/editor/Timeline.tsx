@@ -91,8 +91,6 @@ export const Timeline: React.FC = () => {
     scrollX,
     scrollY,
     viewportWidth,
-    setScrollX,
-    setScrollY,
     setViewportDimensions,
     zoomIn,
     zoomOut,
