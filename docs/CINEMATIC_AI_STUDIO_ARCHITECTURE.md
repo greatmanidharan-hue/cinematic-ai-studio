@@ -71,7 +71,10 @@ Provide clear capability warnings and fallback paths.
   lightning-bolt generator. A bolt renderer/shader remains planned.
 - Added a reusable Canvas 2D particle renderer with radial glow, rotation, opacity and optional additive blending; it supports HTML canvas and OffscreenCanvas contexts.
 - Added unit tests for visible-particle drawing, inactive/transparent particle filtering and zero-opacity layers.
-- Renderer is exported from the core effects barrel. It is not yet wired into the editor preview/export bridge; that integration remains the next task.
+- Renderer is exported from the core effects barrel. It is not yet wired into the editor preview/export bridge.
+- Preview audit found an existing Three.js `ParticleRenderer` mounted as a transparent overlay in `Preview.tsx`; it already advances the shared particle engine during playback and refreshes at the playhead while paused. Avoid mounting a second particle loop or duplicating engine ownership.
+- The existing Three.js preview renderer is separate from the newly added Canvas renderer. The Canvas renderer remains a reusable rendering primitive until a deliberate renderer migration or export adapter is implemented.
+- Preview currently renders particle overlays as a UI layer; the reviewed `RenderBridge` frame path and export path have not yet been proven to include those particles. Preview/export parity remains an open integration task.
 - No existing editor panel or render pipeline was replaced in this foundation step.
 
 ## Quality gates
