@@ -474,7 +474,7 @@ export const Toolbar: React.FC = () => {
         if (zipController.signal.aborted) {
           throw new Error("Image sequence ZIP packaging cancelled.");
         }
-        if (archive) await writable.write(archive);
+        if (archive.size > 0) await writable.write(archive);
         await writable.close();
         sequenceZipAbortController.current = null;
         setExportState((prev) => ({ ...prev, complete: true, progress: 100, phase: "ZIP saved!" }));
