@@ -49,6 +49,11 @@ const KeyframeTrackInner: React.FC<KeyframeTrackProps> = ({
   selectedKeyframeIds,
 }) => {
 
+  const selectedKeyframeIdSet = useMemo(
+    () => new Set(selectedKeyframeIds),
+    [selectedKeyframeIds],
+  );
+
   const propertyGroups = useMemo((): PropertyGroup[] => {
     const groups = new Map<string, Keyframe[]>();
 
@@ -128,7 +133,7 @@ const KeyframeTrackInner: React.FC<KeyframeTrackProps> = ({
                     keyframe={keyframe}
                     xPosition={xPos}
                     color={group.color}
-                    isSelected={selectedKeyframeIds.includes(keyframe.id)}
+                    isSelected={selectedKeyframeIdSet.has(keyframe.id)}
                     onSelect={(addToSelection) =>
                       onKeyframeSelect(keyframe.id, addToSelection)
                     }
