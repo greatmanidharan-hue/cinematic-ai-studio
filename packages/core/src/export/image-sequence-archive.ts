@@ -65,7 +65,10 @@ export async function createImageSequenceZip(
     }
     if (data.length > 0) {
       if (options.onChunk) {
-        outputWriteQueue = outputWriteQueue.then(() => options.onChunk?.(data)).then(
+        // fflate may reuse its output buffer after the callback returns. Copy the
+        // chunk before handing it to an asynchronous destination writer.
+        const chunk = data.slice();
+        outputWriteQueue = outputWriteQueue.then(() => options.onChunk?.(chunk)).then(
           () => undefined,
           (error: unknown) => {
             outputError = error instanceof Error ? error : new Error("Failed to write ZIP output chunk.");
