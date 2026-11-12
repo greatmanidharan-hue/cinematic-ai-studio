@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { memo, useRef, useState, useEffect } from "react";
 import { Type } from "lucide-react";
 import type { TextClip } from "@fairarena/core";
 import { ContextMenu, ContextMenuTrigger } from "@fairarena/ui";
@@ -17,7 +17,7 @@ interface TextClipComponentProps {
   onMoveClip?: (clipId: string, newStartTime: number) => void;
 }
 
-export const TextClipComponent: React.FC<TextClipComponentProps> = ({
+const TextClipComponentInner: React.FC<TextClipComponentProps> = ({
   textClip,
   pixelsPerSecond,
   isSelected,
@@ -215,3 +215,7 @@ export const TextClipComponent: React.FC<TextClipComponentProps> = ({
     </ContextMenu>
   );
 };
+
+export const TextClipComponent = memo(TextClipComponentInner);
+TextClipComponent.displayName = "TextClipComponent";
+
