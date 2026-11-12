@@ -70,11 +70,14 @@ const TextClipComponentInner: React.FC<TextClipComponentProps> = ({
   useEffect(() => {
     if (!isDragging || !onMoveClip) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
+    let frameId: number | null = null;
+    let pendingClientX: number | null = null;
+
+    const applyDrag = (clientX: number) => {
       const rect = clipRef.current?.parentElement?.getBoundingClientRect();
       if (!rect) return;
 
-      const x = e.clientX - rect.left - dragOffset;
+      const x = clientX - rect.left - dragOffset;
       const rawTime = Math.max(0, x / pixelsPerSecond);
       const allTracks = useProjectStore.getState().project.timeline.tracks;
       const dragSnapSettings = { ...snapSettings, snapToPlayhead: false };
@@ -90,8 +93,30 @@ const TextClipComponentInner: React.FC<TextClipComponentProps> = ({
       onMoveClip(textClip.id, snapResult.time);
     };
 
+    const flushPendingDrag = () => {
+      frameId = null;
+      if (pendingClientX === null) return;
+      const clientX = pendingClientX;
+      pendingClientX = null;
+      applyDrag(clientX);
+    };
+
+    const handleMouseMove = (event: MouseEvent) => {
+      pendingClientX = event.clientX;
+      if (frameId === null) frameId = requestAnimationFrame(flushPendingDrag);
+    };
+
     const handleMouseUp = () => {
+      if (frameId !== null) cancelAnimationFrame(frameId);
+      frameId = null;
+      if (pendingClientX !== null) {
+        const clientX = pendingClientX;
+        pendingClientX = null;
+        applyDrag(clientX);
+      }
       setIsDragging(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
     };
 
     window.addEventListener("mousemove", handleMouseMove);
@@ -100,6 +125,7 @@ const TextClipComponentInner: React.FC<TextClipComponentProps> = ({
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
+      if (frameId !== null) cancelAnimationFrame(frameId);
     };
   }, [isDragging, textClip.id, textClip.duration, pixelsPerSecond, dragOffset, onMoveClip, snapSettings, playheadPosition]);
 
