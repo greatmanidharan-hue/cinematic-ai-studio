@@ -321,6 +321,82 @@ const LightningEffectsSection: React.FC = () => {
   );
 };
 
+const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
+  const project = useProjectStore((state) => state.project);
+  const lightning = (project.timeline.lightningEffects ?? []).find((item) => item.id === effectId);
+  const particle = (project.timeline.particleEffects ?? []).find((item) => item.id === effectId);
+  const effect = lightning ?? particle;
+  const update = (patch: Record<string, unknown>) => {
+    useProjectStore.setState((state) => ({
+      project: {
+        ...state.project,
+        timeline: lightning
+          ? { ...state.project.timeline, lightningEffects: (state.project.timeline.lightningEffects ?? []).map((item) => item.id === effectId ? { ...item, ...patch } : item) }
+          : { ...state.project.timeline, particleEffects: (state.project.timeline.particleEffects ?? []).map((item) => item.id === effectId ? { ...item, ...patch } : item) },
+        modifiedAt: Date.now(),
+      },
+    }));
+    window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+  };
+  if (!effect) return <EmptyState />;
+  const numberField = (label: string, value: number, patchKey: string, min: number, max: number, step: number) => (
+    <label className="block space-y-1">
+      <span className="text-[10px] text-text-muted">{label}</span>
+      <input type="number" value={value} min={min} max={max} step={step}
+        onChange={(event) => { const next = Number(event.target.value); if (Number.isFinite(next)) update({ [patchKey]: Math.min(max, Math.max(min, next)) }); }}
+        className="w-full h-8 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary" />
+    </label>
+  );
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-border bg-background-tertiary p-3">
+        <p className="text-xs font-semibold text-text-primary">{lightning ? "⚡ Lightning VFX" : "✦ Particle VFX"}</p>
+        <p className="mt-1 text-[10px] text-text-muted">Selected timeline effect · {effect.id}</p>
+      </div>
+      <label className="flex items-center justify-between text-xs text-text-secondary">
+        Enabled
+        <input type="checkbox" checked={effect.enabled} onChange={(event) => update({ enabled: event.target.checked })} />
+      </label>
+      <div className="grid grid-cols-2 gap-2">
+        {numberField("Start time (s)", effect.startTime, "startTime", 0, 36000, 0.05)}
+        {numberField("Duration (s)", effect.duration, "duration", 0.05, 36000, 0.05)}
+      </div>
+      {lightning && (
+        <div className="space-y-2">
+          {numberField("Intensity", lightning.intensity, "intensity", 0, 1, 0.05)}
+          {numberField("Branches", lightning.branches ?? 3, "branches", 0, 12, 1)}
+          {numberField("Segments", lightning.segments ?? 18, "segments", 2, 64, 1)}
+          <label className="flex items-center justify-between text-xs text-text-secondary">
+            Bolt color
+            <input type="color" value={lightning.color ?? "#9bdcff"} onChange={(event) => update({ color: event.target.value })} />
+          </label>
+        </div>
+      )}
+      {particle && (
+        <div className="space-y-2">
+          <p className="text-[10px] text-text-muted">Particle type: {particle.type}</p>
+          <p className="text-[10px] text-text-muted">Clip: {particle.clipId}</p>
+          <p className="text-[10px] text-text-muted">Detailed particle appearance settings remain in the clip's Particle Effects section.</p>
+        </div>
+      )}
+      <button type="button" onClick={() => {
+        useProjectStore.setState((state) => ({
+          project: {
+            ...state.project,
+            timeline: lightning
+              ? { ...state.project.timeline, lightningEffects: (state.project.timeline.lightningEffects ?? []).filter((item) => item.id !== effectId) }
+              : { ...state.project.timeline, particleEffects: (state.project.timeline.particleEffects ?? []).filter((item) => item.id !== effectId) },
+            modifiedAt: Date.now(),
+          },
+        }));
+        useUIStore.getState().clearSelection();
+      }} className="w-full rounded border border-red-500/40 bg-red-500/10 py-2 text-xs text-red-400 hover:bg-red-500/20">
+        Remove VFX
+      </button>
+    </div>
+  );
+};
+
 export const InspectorPanel: React.FC = () => {
   // Stores
   const {
@@ -1045,7 +1121,9 @@ export const InspectorPanel: React.FC = () => {
           Inspector
         </h3>
 
-        {selectedClip ? (
+        {selectedItems.some((item) => item.type === "effect") ? (
+          <SelectedVfxInspector effectId={selectedItems.find((item) => item.type === "effect")!.id} />
+        ) : selectedClip ? (
           <>
             {/* Clip Info */}
             <div className="mb-4 p-3 bg-background-tertiary rounded-lg border border-border">
