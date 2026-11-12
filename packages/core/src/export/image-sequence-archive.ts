@@ -9,7 +9,7 @@ export interface ImageSequenceZipOptions {
 
 function validateEntryName(name: string): string {
   const trimmedName = name.trim();
-  const normalizedName = trimmedName.replace(/\\/g, "/");
+  const normalizedName = trimmedName.replace(/\\/g, "/").normalize("NFC");
   const segments = normalizedName.split("/");
   const hasUnsafeSegment = segments.some((segment) => {
     const deviceName = segment.split(".")[0].trimEnd().toUpperCase();
@@ -49,6 +49,7 @@ export async function createImageSequenceZipFromFrames(
 
   const output: Uint8Array[] = [];
   const names = new Set<string>();
+  const directoryPaths = new Set<string>();
   let completedFrames = 0;
   let outputWriteQueue = Promise.resolve();
   let outputError: Error | null = null;
@@ -104,19 +105,23 @@ export async function createImageSequenceZipFromFrames(
         throw new Error(`Image sequence frame count mismatch: expected ${totalFrames}, received more than declared.`);
       }
       const name = validateEntryName(frame.name);
-      const collisionKey = name.toLocaleLowerCase("en-US");
+      const collisionKey = name.toLowerCase();
       const pathSegments = collisionKey.split("/");
-      const hasPathConflict = pathSegments.some((_, index) => {
+      const hasFileAncestor = pathSegments.some((_, index) => {
         if (index === pathSegments.length - 1) return false;
         return names.has(pathSegments.slice(0, index + 1).join("/"));
-      }) || Array.from(names).some((existingName) => existingName.startsWith(collisionKey + "/"));
+      });
+      const hasDirectoryDescendant = directoryPaths.has(collisionKey);
       if (names.has(collisionKey)) {
         throw new Error(`Duplicate image sequence filename: ${name}`);
       }
-      if (hasPathConflict) {
+      if (hasFileAncestor || hasDirectoryDescendant) {
         throw new Error(`Conflicting image sequence filename: ${name}`);
       }
       names.add(collisionKey);
+      for (let index = 1; index < pathSegments.length; index += 1) {
+        directoryPaths.add(pathSegments.slice(0, index).join("/"));
+      }
 
       const entry = new ZipDeflate(name, { level: 6 });
       zip.add(entry);
