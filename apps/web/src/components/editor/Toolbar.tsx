@@ -457,10 +457,16 @@ export const Toolbar: React.FC = () => {
         sequenceZipAbortController.current = zipController;
         const archive = await createImageSequenceZip(result.files, {
           signal: zipController.signal,
+          onChunk: async (chunk) => {
+            if (zipController.signal.aborted) {
+              throw new Error("Image sequence ZIP packaging cancelled.");
+            }
+            await writable?.write(chunk);
+          },
           onProgress: (completed, total) => {
             setExportState((prev) => ({
               ...prev,
-              progress: 100,
+              progress: (completed / total) * 100,
               phase: "Packaging ZIP... " + completed + "/" + total + " frames",
             }));
           },
@@ -468,7 +474,7 @@ export const Toolbar: React.FC = () => {
         if (zipController.signal.aborted) {
           throw new Error("Image sequence ZIP packaging cancelled.");
         }
-        await writable.write(archive);
+        if (archive) await writable.write(archive);
         await writable.close();
         sequenceZipAbortController.current = null;
         setExportState((prev) => ({ ...prev, complete: true, progress: 100, phase: "ZIP saved!" }));
