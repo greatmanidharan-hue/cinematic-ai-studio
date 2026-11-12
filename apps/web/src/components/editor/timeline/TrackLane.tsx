@@ -102,16 +102,46 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
     () => new Set(shapeClips.map((clip) => clip.id)),
     [shapeClips],
   );
+  // Keep a modest horizontal overscan so clips mount just before entering view.
+  // The lane remains full-width; only off-screen clip components are omitted.
+  const visibleTimeRange = useMemo(() => {
+    const overscanPixels = Math.max(500, viewportWidth * 0.5);
+    return {
+      start: Math.max(0, (scrollX - overscanPixels) / pixelsPerSecond),
+      end: (scrollX + viewportWidth + overscanPixels) / pixelsPerSecond,
+    };
+  }, [scrollX, viewportWidth, pixelsPerSecond]);
+
+  const intersectsViewport = useCallback(
+    (clip: { startTime: number; duration: number }) =>
+      clip.startTime + clip.duration >= visibleTimeRange.start &&
+      clip.startTime <= visibleTimeRange.end,
+    [visibleTimeRange],
+  );
+
   const visibleTrackClips = useMemo(
     () => track.clips.filter(
-      (clip) => !textClipIds.has(clip.id) && !shapeClipIds.has(clip.id),
+      (clip) =>
+        !textClipIds.has(clip.id) &&
+        !shapeClipIds.has(clip.id) &&
+        intersectsViewport(clip),
     ),
-    [track.clips, textClipIds, shapeClipIds],
+    [track.clips, textClipIds, shapeClipIds, intersectsViewport],
+  );
+
+  const visibleTextClips = useMemo(
+    () => textClips.filter(intersectsViewport),
+    [textClips, intersectsViewport],
+  );
+
+  const visibleShapeClips = useMemo(
+    () => shapeClips.filter(intersectsViewport),
+    [shapeClips, intersectsViewport],
   );
 
   const clipsWithKeyframes = useMemo(() => {
-    return track.clips.filter((clip) => clip.keyframes && clip.keyframes.length > 0);
-  }, [track.clips]);
+    return track.clips.filter((clip) => clip.keyframes && clip.keyframes.length > 0 && intersectsViewport(clip));
+  }, [track.clips, intersectsViewport]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -269,7 +299,7 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
               onTrimClip={onTrimClip}
             />
           ))}
-        {textClips.map((textClip) => (
+        {visibleTextClips.map((textClip) => (
           <TextClipComponent
             key={textClip.id}
             textClip={textClip}
@@ -280,7 +310,7 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
             onMoveClip={onMoveTextClip}
           />
         ))}
-        {shapeClips.map((shapeClip) => (
+        {visibleShapeClips.map((shapeClip) => (
           <ShapeClipComponent
             key={shapeClip.id}
             shapeClip={shapeClip}
