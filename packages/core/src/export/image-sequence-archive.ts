@@ -14,6 +14,7 @@ function validateEntryName(name: string): string {
   const hasUnsafeSegment = segments.some((segment) => {
     const deviceName = segment.split(".")[0].trimEnd().toUpperCase();
     return (
+      segment.length === 0 ||
       segment === "." ||
       segment === ".." ||
       /[. ]$/.test(segment) ||
@@ -109,7 +110,10 @@ export async function createImageSequenceZipFromFrames(
         if (index === pathSegments.length - 1) return false;
         return names.has(pathSegments.slice(0, index + 1).join("/"));
       }) || Array.from(names).some((existingName) => existingName.startsWith(collisionKey + "/"));
-      if (names.has(collisionKey) || hasPathConflict) {
+      if (names.has(collisionKey)) {
+        throw new Error(`Duplicate image sequence filename: ${name}`);
+      }
+      if (hasPathConflict) {
         throw new Error(`Conflicting image sequence filename: ${name}`);
       }
       names.add(collisionKey);
