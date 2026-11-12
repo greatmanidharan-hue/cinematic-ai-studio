@@ -53,6 +53,24 @@ describe("createImageSequenceZip", () => {
       ]),
     ).rejects.toThrow(/Duplicate image sequence filename/);
   });
+  it("rejects absolute paths beginning with a Windows separator", async () => {
+    const separator = String.fromCharCode(92);
+    await expect(
+      createImageSequenceZip([{ name: separator + "outside.png", blob: new Blob(["unsafe"]) }]),
+    ).rejects.toThrow(/Unsafe image sequence filename/);
+  });
+
+  it("rejects dot-segment filenames", async () => {
+    await expect(
+      createImageSequenceZip([{ name: "frames/./frame.png", blob: new Blob(["unsafe"]) }]),
+    ).rejects.toThrow(/Unsafe image sequence filename/);
+  });
+
+  it("rejects filenames containing null bytes", async () => {
+    await expect(
+      createImageSequenceZip([{ name: "frame\\0.png", blob: new Blob(["unsafe"]) }]),
+    ).rejects.toThrow(/Unsafe image sequence filename/);
+  });
   it("rejects duplicate filenames", async () => {
     await expect(
       createImageSequenceZip([
