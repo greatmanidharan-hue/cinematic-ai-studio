@@ -3005,7 +3005,26 @@ export const Preview: React.FC = () => {
 
     let isActive = true;
     let nativeCleanup: (() => void) | null = null;
+    let playbackTimeoutId: ReturnType<typeof setTimeout> | null = null;
     const playbackStartPosition = startPositionRef.current;
+
+    const schedulePlaybackFrame = (callback: () => void, delay: number) => {
+      if (!isActive) return;
+      if (playbackTimeoutId !== null) {
+        clearTimeout(playbackTimeoutId);
+        playbackTimeoutId = null;
+      }
+      if (delay <= 0) {
+        animationRef.current = requestAnimationFrame(callback);
+        return;
+      }
+      playbackTimeoutId = setTimeout(() => {
+        playbackTimeoutId = null;
+        if (isActive) {
+          animationRef.current = requestAnimationFrame(callback);
+        }
+      }, delay);
+    };
 
     const findAllClipsAtTime = (time: number) => {
       const tracks = timelineTracksRef.current;
@@ -3348,17 +3367,7 @@ export const Preview: React.FC = () => {
               lastFrameTimestamp = now;
 
               if (isActive) {
-                if (delay > 0) {
-                  setTimeout(() => {
-                    if (isActive) {
-                      animationRef.current =
-                        requestAnimationFrame(processNextFrame);
-                    }
-                  }, delay);
-                } else {
-                  animationRef.current =
-                    requestAnimationFrame(processNextFrame);
-                }
+                schedulePlaybackFrame(processNextFrame, delay);
               }
             } catch (error) {
               console.error("[Preview] Frame error:", error);
@@ -4307,19 +4316,7 @@ export const Preview: React.FC = () => {
           isProcessingFrame = false;
 
           if (isActive) {
-            if (delay > 0) {
-              setTimeout(() => {
-                if (isActive) {
-                  animationRef.current = requestAnimationFrame(
-                    processMultiTrackFrame,
-                  );
-                }
-              }, delay);
-            } else {
-              animationRef.current = requestAnimationFrame(
-                processMultiTrackFrame,
-              );
-            }
+            schedulePlaybackFrame(processMultiTrackFrame, delay);
           }
         } catch (error) {
           isProcessingFrame = false;
@@ -4429,6 +4426,10 @@ export const Preview: React.FC = () => {
     return () => {
       isActive = false;
       nativePlaybackActiveRef.current = false;
+      if (playbackTimeoutId !== null) {
+        clearTimeout(playbackTimeoutId);
+        playbackTimeoutId = null;
+      }
       const masterClock = getMasterClock();
       if (masterClock.isPlaying || masterClock.isPaused) {
         startPositionRef.current = masterClock.currentTime;
