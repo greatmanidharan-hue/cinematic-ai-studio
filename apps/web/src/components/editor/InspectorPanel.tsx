@@ -324,6 +324,8 @@ const LightningEffectsSection: React.FC = () => {
 
 const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
   const project = useProjectStore((state) => state.project);
+  const [presetQuery, setPresetQuery] = useState("");
+  const [presetCategory, setPresetCategory] = useState("all");
   const lightning = (project.timeline.lightningEffects ?? []).find((item) => item.id === effectId);
   const particle = (project.timeline.particleEffects ?? []).find((item) => item.id === effectId);
   const effect = lightning ?? particle;
@@ -390,16 +392,78 @@ const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
       {particle && (
         <div className="space-y-3">
           <p className="text-[10px] text-text-muted">Particle type: {particle.type} · Clip: {particle.clipId}</p>
-          <label className="block space-y-1">
-            <span className="text-[10px] text-text-muted">Preset library</span>
-            <select value="" onFocus={beginEdit} onBlur={endEdit} onChange={(event) => {
-              const preset = PARTICLE_PRESETS.find((item) => item.id === event.target.value);
-              if (preset) update({ config: { ...preset.config }, type: preset.type });
-            }} className="w-full h-8 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary">
-              <option value="" disabled>Apply a particle preset…</option>
-              {PARTICLE_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.name}</option>)}
-            </select>
-          </label>
+          <div className="space-y-2 rounded-lg border border-border bg-background-secondary/40 p-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">VFX Preset Browser</span>
+              <span className="text-[10px] text-text-muted">{PARTICLE_PRESETS.length} presets</span>
+            </div>
+            <input
+              type="search"
+              value={presetQuery}
+              onChange={(event) => setPresetQuery(event.target.value)}
+              placeholder="Search fire, smoke, sparks…"
+              aria-label="Search particle presets"
+              className="h-8 w-full rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary"
+            />
+            <div className="flex flex-wrap gap-1">
+              {[
+                { id: "all", label: "All" },
+                { id: "cinematic", label: "Cinematic" },
+                { id: "atmosphere", label: "Atmosphere" },
+                { id: "impact", label: "Impact" },
+                { id: "transform", label: "Transform" },
+              ].map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  aria-pressed={presetCategory === category.id}
+                  onClick={() => setPresetCategory(category.id)}
+                  className={`rounded px-2 py-1 text-[10px] ${presetCategory === category.id ? "bg-primary/20 text-primary border border-primary/40" : "border border-border text-text-muted hover:text-text-primary"}`}
+                >
+                  {category.label}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {PARTICLE_PRESETS.filter((preset) => {
+                const name = `${preset.name} ${preset.description} ${preset.id}`.toLowerCase();
+                const matchesQuery = name.includes(presetQuery.trim().toLowerCase());
+                const category = /fire|smoke|lightning/.test(preset.id) ? "cinematic"
+                  : /dust|snow|confetti/.test(preset.id) ? "atmosphere"
+                  : /explode|shatter/.test(preset.type) ? "impact"
+                  : /morph|disintegrate|pixelate|dissolve|implode/.test(preset.type) ? "transform"
+                  : "atmosphere";
+                return matchesQuery && (presetCategory === "all" || presetCategory === category);
+              }).map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => {
+                    beginEdit();
+                    const config = {
+                      ...preset.config,
+                      colors: [...preset.config.colors],
+                      size: { ...preset.config.size },
+                      opacity: { ...preset.config.opacity },
+                      lifetime: { ...preset.config.lifetime },
+                      wind: { ...preset.config.wind },
+                    };
+                    update({ config, type: preset.type });
+                    endEdit();
+                  }}
+                  className="min-h-[58px] rounded border border-border bg-background-tertiary p-2 text-left hover:border-primary/60 hover:bg-primary/5"
+                  title={preset.description}
+                >
+                  <span className="block text-[11px] font-medium text-text-primary">{preset.name}</span>
+                  <span className="mt-1 block line-clamp-2 text-[9px] text-text-muted">{preset.description}</span>
+                </button>
+              ))}
+            </div>
+            {PARTICLE_PRESETS.filter((preset) => {
+              const q = presetQuery.trim().toLowerCase();
+              return (!q || `${preset.name} ${preset.description} ${preset.id}`.toLowerCase().includes(q));
+            }).length === 0 && <p className="py-2 text-center text-[10px] text-text-muted">No matching presets</p>}
+          </div>
           <div className="grid grid-cols-2 gap-2">
             {numberField("Particle count", particle.config.particleCount, "particleCount", 10, 1000, 10)}
             {numberField("Speed", particle.config.speed, "speed", 0, 1000, 5)}
