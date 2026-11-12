@@ -453,16 +453,25 @@ export const Toolbar: React.FC = () => {
         let framesDone = false;
         let frameError: Error | null = null;
         const frameSource = async function* () {
-          while (!framesDone || queuedFrames.length > 0) {
-            if (queuedFrames.length === 0) {
-              await new Promise<void>((resolve) => frameWaiters.push(resolve));
-              continue;
+          const wakeOnAbort = () => frameWaiters.splice(0).forEach((wake) => wake());
+          zipController.signal.addEventListener("abort", wakeOnAbort, { once: true });
+          try {
+            while (!framesDone || queuedFrames.length > 0) {
+              if (zipController.signal.aborted) {
+                throw new Error("Image sequence export cancelled.");
+              }
+              if (queuedFrames.length === 0) {
+                await new Promise<void>((resolve) => frameWaiters.push(resolve));
+                continue;
+              }
+              const nextFrame = queuedFrames.shift()!;
+              frameWaiters.shift()?.();
+              yield nextFrame;
             }
-            const nextFrame = queuedFrames.shift()!;
-            frameWaiters.shift()?.();
-            yield nextFrame;
+            if (frameError) throw frameError;
+          } finally {
+            zipController.signal.removeEventListener("abort", wakeOnAbort);
           }
-          if (frameError) throw frameError;
         };
         const archivePromise = createImageSequenceZipFromFrames(frameSource(), expectedFrames, {
           signal: zipController.signal,
