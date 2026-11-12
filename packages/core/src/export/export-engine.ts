@@ -275,7 +275,7 @@ export class ExportEngine {
       fullSettings.height,
     );
 
-    this.videoEngine?.resetExportState();
+    this.videoEngine?.resetExportState(project.timeline.particleEffects ?? []);
     if (this.videoEngine) {
       this.videoEngine.exportMode = true;
     }
