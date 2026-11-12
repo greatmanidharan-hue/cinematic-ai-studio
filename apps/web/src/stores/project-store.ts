@@ -3814,6 +3814,7 @@ export const useProjectStore = create<ProjectState>()(
         const result = await actionExecutor.undo(project);
         if (result.success) {
           set({ project: { ...project } });
+          if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
         }
         return result;
       },
@@ -3976,6 +3977,7 @@ export const useProjectStore = create<ProjectState>()(
         const result = await actionExecutor.redo(project);
         if (result.success) {
           set({ project: { ...project } });
+          if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
         }
         return result;
       },
