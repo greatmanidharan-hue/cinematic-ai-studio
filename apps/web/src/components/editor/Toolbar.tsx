@@ -34,6 +34,8 @@ import {
   type VideoExportSettings,
   type AudioExportSettings,
   type ExportResult,
+  type SequenceExportSettings,
+  createImageSequenceZip,
   type DeviceProfile,
   type TimeEstimate,
 } from "@fairarena/core";
@@ -219,6 +221,7 @@ export const Toolbar: React.FC = () => {
       webm: "video/webm",
       mov: "video/quicktime",
       wav: "audio/wav",
+      zip: "application/zip",
     };
     const mime = mimeMap[ext] || "application/octet-stream";
 
@@ -420,6 +423,60 @@ export const Toolbar: React.FC = () => {
       complete: false,
     });
   }, []);
+
+  const handleSequenceExport = useCallback(
+    async (settings: SequenceExportSettings) => {
+      setIsExportDialogOpen(false);
+      let writable: FileSystemWritableFileStream | null = null;
+      try {
+        writable = await showSavePicker(`${project.name || "image-sequence"}.zip`, "zip");
+        setExportState({ isExporting: true, progress: 0, phase: "Preparing image sequence...", error: null, complete: false });
+        const engine = getExportEngine();
+        await engine.initialize();
+        const generator = engine.exportImageSequence(project, settings);
+        let result: ExportResult | undefined;
+        while (true) {
+          const { value, done } = await generator.next();
+          if (done) {
+            result = value;
+            break;
+          }
+          setExportState((prev) => ({
+            ...prev,
+            progress: value.progress * 100,
+            phase: value.phase === "complete" ? "Packaging ZIP..." : `${value.phase}...`,
+          }));
+        }
+        if (!result?.success || !result.files?.length) {
+          throw new Error(result?.error?.message || "Image sequence export failed");
+        }
+        const archive = await createImageSequenceZip(result.files);
+        await writable.write(archive);
+        await writable.close();
+        setExportState((prev) => ({ ...prev, complete: true, progress: 100, phase: "ZIP saved!" }));
+        track(AnalyticsEvents.PROJECT_EXPORTED, {
+          format: "zip",
+          width: settings.width,
+          height: settings.height,
+          frameRate: project.settings.frameRate,
+          duration: project.timeline?.duration ?? 0,
+          exportType: "image-sequence",
+          frameCount: result.files.length,
+        });
+        setTimeout(() => setExportState({ isExporting: false, progress: 0, phase: "", error: null, complete: false }), 2500);
+      } catch (error) {
+        if (writable) {
+          try { await writable.abort(); } catch {}
+        }
+        setExportState((prev) => ({
+          ...prev,
+          isExporting: false,
+          error: error instanceof Error ? error.message : "Image sequence export failed",
+        }));
+      }
+    },
+    [project, track, showSavePicker],
+  );
 
   const handleCustomExport = useCallback(
     async (settings: VideoExportSettings) => {
@@ -946,6 +1003,8 @@ export const Toolbar: React.FC = () => {
         isOpen={isExportDialogOpen}
         onClose={() => setIsExportDialogOpen(false)}
         onExport={handleCustomExport}
+        onExportSequence={handleSequenceExport}
+        projectFrameRate={project.settings?.frameRate ?? 30}
         duration={project.timeline?.duration ?? 0}
         projectWidth={project.settings?.width ?? 1920}
         projectHeight={project.settings?.height ?? 1080}
