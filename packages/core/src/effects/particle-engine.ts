@@ -13,7 +13,7 @@ function generateId(random: RandomSource): string {
   return random().toString(36).substring(2, 11);
 }
 
-function randomRange(min: number, max: number, random: RandomSource, random): number {
+function randomRange(min: number, max: number, random: RandomSource): number {
   return min + random() * (max - min);
 }
 
