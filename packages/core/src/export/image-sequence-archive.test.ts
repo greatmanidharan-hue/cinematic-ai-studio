@@ -37,6 +37,22 @@ describe("createImageSequenceZip", () => {
     ).rejects.toThrow(/Unsafe image sequence filename/);
   });
 
+  it("rejects traversal paths using Windows separators", async () => {
+    const separator = String.fromCharCode(92);
+    await expect(
+      createImageSequenceZip([{ name: ".." + separator + "outside.png", blob: new Blob(["unsafe"]) }]),
+    ).rejects.toThrow(/Unsafe image sequence filename/);
+  });
+
+  it("rejects duplicate paths after separator normalization", async () => {
+    const separator = String.fromCharCode(92);
+    await expect(
+      createImageSequenceZip([
+        { name: "frames" + separator + "frame.png", blob: new Blob(["one"]) },
+        { name: "frames/frame.png", blob: new Blob(["two"]) },
+      ]),
+    ).rejects.toThrow(/Duplicate image sequence filename/);
+  });
   it("rejects duplicate filenames", async () => {
     await expect(
       createImageSequenceZip([
