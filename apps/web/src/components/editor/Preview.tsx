@@ -3906,6 +3906,13 @@ export const Preview: React.FC = () => {
           }
 
           const activeClipIds = new Set(activeClips.map((c) => c.clip.id));
+          // Keep both transition endpoints alive when transition rendering falls
+          // back to normal compositing; the outgoing clip may be outside its
+          // regular active window but is still needed for the blend.
+          if (transitionInfoMulti) {
+            activeClipIds.add(transitionInfoMulti.clipA.id);
+            activeClipIds.add(transitionInfoMulti.clipB.id);
+          }
           for (const [clipId, resources] of playbackResourcesRef.current) {
             if (!activeClipIds.has(clipId)) {
               resources.input[Symbol.dispose]?.();
