@@ -679,14 +679,9 @@ describe("ExportEngine", () => {
         {},
         cancelledConsumer,
       );
-      let cancelledResult;
-      try {
+      let cancelledResult = await cancelledGenerator.next();
+      while (!cancelledResult.done) {
         cancelledResult = await cancelledGenerator.next();
-        while (!cancelledResult.done) {
-          cancelledResult = await cancelledGenerator.next();
-        }
-      } finally {
-        // The second run below uses the same engine instance.
       }
 
       const nextGenerator = exportEngine.exportImageSequence(project);
@@ -696,15 +691,14 @@ describe("ExportEngine", () => {
         while (!nextResult.done) {
           nextResult = await nextGenerator.next();
         }
+        expect(cancelledResult.value.success).toBe(false);
+        expect(cancelledResult.value.error?.code).toBe("CANCELLED");
+        expect(nextResult.value.success).toBe(true);
+        expect(nextResult.value.files).toHaveLength(1);
+        expect(exportFrameSpy).toHaveBeenCalledTimes(2);
       } finally {
         exportFrameSpy.mockRestore();
       }
-
-      expect(cancelledResult.value.success).toBe(false);
-      expect(cancelledResult.value.error?.code).toBe("CANCELLED");
-      expect(nextResult.value.success).toBe(true);
-      expect(nextResult.value.files).toHaveLength(1);
-      expect(exportFrameSpy).toHaveBeenCalledTimes(2);
     });
 
     it("stops rendering when the streamed frame consumer fails", async () => {
