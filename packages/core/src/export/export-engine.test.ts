@@ -560,6 +560,39 @@ describe("ExportEngine", () => {
       expect(mockRenderFrame).not.toHaveBeenCalled();
     });
 
+    it("should return every frame with sanitized filenames and format extensions", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 2 }),
+      });
+      const firstBlob = new Blob(["frame-0"]);
+      const secondBlob = new Blob(["frame-1"]);
+      vi.spyOn(exportEngine, "exportFrame")
+        .mockResolvedValueOnce({ success: true, blob: firstBlob })
+        .mockResolvedValueOnce({ success: true, blob: secondBlob });
+
+      const generator = exportEngine.exportImageSequence(project, {
+        namingPattern: "../shot:{000}",
+        format: "png",
+      });
+      await generator.next();
+      await generator.next();
+      const result = await generator.next();
+
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected image sequence export to finish");
+      expect(result.value.success).toBe(true);
+      expect(result.value.files?.map((file) => file.name)).toEqual([
+        "_shot_000.png",
+        "_shot_001.png",
+      ]);
+      expect(result.value.files?.map((file) => file.blob)).toEqual([
+        firstBlob,
+        secondBlob,
+      ]);
+    });
+
     it("should reject an empty sequence naming pattern before rendering", async () => {
       await exportEngine.initialize();
       const project = createMockProject({
