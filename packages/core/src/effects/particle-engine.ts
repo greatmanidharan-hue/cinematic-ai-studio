@@ -425,6 +425,33 @@ export class ParticleEngine {
   }
 }
 
+/**
+ * Stable seed shared by editor preview and export for the same VFX setup.
+ */
+export function getParticleEffectsSeed(effects: readonly ParticleEffect[]): number {
+  const signature = JSON.stringify(
+    [...effects]
+      .map((effect) => ({
+        ...effect,
+        config: {
+          ...effect.config,
+          wind: { ...effect.config.wind },
+          colors: [...effect.config.colors],
+          size: { ...effect.config.size },
+          opacity: { ...effect.config.opacity },
+          lifetime: { ...effect.config.lifetime },
+        },
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  );
+  let seed = 0x811c9dc5;
+  for (let index = 0; index < signature.length; index++) {
+    seed ^= signature.charCodeAt(index);
+    seed = Math.imul(seed, 0x01000193);
+  }
+  return seed >>> 0;
+}
+
 let engineInstance: ParticleEngine | null = null;
 
 export function getParticleEngine(): ParticleEngine {
