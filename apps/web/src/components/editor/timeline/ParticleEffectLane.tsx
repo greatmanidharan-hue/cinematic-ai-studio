@@ -12,6 +12,8 @@ interface ParticleEffectLaneProps {
   markerTimes: readonly number[];
   onUpdate: (effectId: string, updates: Partial<ParticleEffect>) => void;
   onSelect?: (effectId: string) => void;
+  onInteractionStart?: () => void;
+  onInteractionEnd?: () => void;
 }
 
 type DragMode = "move" | "trim";
@@ -39,6 +41,8 @@ export const ParticleEffectLane: React.FC<ParticleEffectLaneProps> = ({
   markerTimes,
   onUpdate,
   onSelect,
+  onInteractionStart,
+  onInteractionEnd,
 }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const dragRef = useRef<{
@@ -85,10 +89,11 @@ export const ParticleEffectLane: React.FC<ParticleEffectLaneProps> = ({
   }, [onUpdate, pixelsPerSecond, snapSettings, snapPoints, playheadPosition, markerTimes]);
 
   const handlePointerUp = useCallback(() => {
+    if (dragRef.current) onInteractionEnd?.();
     dragRef.current = null;
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
-  }, []);
+  }, [onInteractionEnd]);
 
   useEffect(() => {
     window.addEventListener("pointermove", handlePointerMove);
@@ -106,6 +111,7 @@ export const ParticleEffectLane: React.FC<ParticleEffectLaneProps> = ({
     event.stopPropagation();
     setSelectedId(effect.id);
     onSelect?.(effect.id);
+    onInteractionStart?.();
     dragRef.current = {
       id: effect.id,
       mode,
