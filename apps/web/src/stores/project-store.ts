@@ -165,6 +165,7 @@ export interface ProjectState {
     moves: Array<{ clipId: string; startTime: number; trackId?: string }>,
   ) => Promise<ActionResult>;
   beginHistoryGroup: (description?: string) => void;
+  updateTimelineVfx: (patch: { lightningEffects?: unknown[]; particleEffects?: unknown[] }) => Promise<ActionResult>;
   endHistoryGroup: () => void;
   closeGapBeforeClip: (clipId: string) => Promise<ActionResult>;
   consolidateTrack: (trackId: string) => Promise<ActionResult>;
@@ -2503,6 +2504,19 @@ export const useProjectStore = create<ProjectState>()(
         if (result.success) {
           set({ project: { ...project } });
         }
+        return result;
+      },
+
+      updateTimelineVfx: async (patch) => {
+        const { project, actionExecutor } = get();
+        const action: Action = {
+          type: "project/updateTimelineVfx",
+          id: uuidv4(),
+          timestamp: Date.now(),
+          params: patch,
+        };
+        const result = await actionExecutor.execute(action, project);
+        if (result.success) set({ project: { ...project } });
         return result;
       },
 
