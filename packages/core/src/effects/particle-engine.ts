@@ -323,8 +323,8 @@ export class ParticleEngine {
         particle.velocity.z += (particle.acceleration.z + config.wind.z) * deltaTime;
 
         if (config.turbulence > 0) {
-          particle.velocity.x += randomRange(-config.turbulence, config.turbulence, random) * deltaTime;
-          particle.velocity.y += randomRange(-config.turbulence, config.turbulence, random) * deltaTime;
+          particle.velocity.x += randomRange(-config.turbulence, config.turbulence, this.nextRandom) * deltaTime;
+          particle.velocity.y += randomRange(-config.turbulence, config.turbulence, this.nextRandom) * deltaTime;
         }
 
         particle.position.x += particle.velocity.x * deltaTime;
