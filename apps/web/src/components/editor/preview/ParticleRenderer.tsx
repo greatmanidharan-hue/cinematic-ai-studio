@@ -169,7 +169,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
 
     let rgb = { r: 1, g: 1, b: 1 };
     const hex = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(value);
-    const match = /^rgb\((\d+),\\s*(\d+),\\s*(\d+)\)$/i.exec(value);
+    const match = /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/i.exec(value);
     if (hex) {
       rgb = {
         r: parseInt(hex[1], 16) / 255,
