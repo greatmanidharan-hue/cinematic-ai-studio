@@ -447,6 +447,7 @@ describe("ExportEngine", () => {
       const result = await generator.next();
 
       expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected validation to stop export");
       expect(result.value.success).toBe(false);
       expect(result.value.error?.code).toBe("INVALID_SETTINGS");
       expect(mockVideoEngine.initializeGPUCompositor).not.toHaveBeenCalled();
