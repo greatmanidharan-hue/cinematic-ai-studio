@@ -1187,6 +1187,7 @@ export const Timeline: React.FC = () => {
                 pixelsPerSecond={pixelsPerSecond}
                 duration={timelineDuration}
                 onUpdate={updateLightningEffect}
+                onSelect={(effectId) => select({ type: "effect", id: effectId })}
               />
 
               <ParticleEffectLane
@@ -1198,6 +1199,7 @@ export const Timeline: React.FC = () => {
                 playheadPosition={playheadPosition}
                 markerTimes={project.timeline.markers.map((marker) => marker.time)}
                 onUpdate={updateParticleEffect}
+                onSelect={(effectId) => select({ type: "effect", id: effectId })}
               />
 
               <BeatMarkerOverlay
