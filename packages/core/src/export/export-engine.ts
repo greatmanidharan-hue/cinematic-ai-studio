@@ -1196,8 +1196,8 @@ export class ExportEngine {
 
     output.addAudioTrack(audioSource);
     await output.start();
-    const audioSamples = AudioSample.fromAudioBuffer(buffer, 0);
     try {
+      const audioSamples = AudioSample.fromAudioBuffer(buffer, 0);
       for (const sample of audioSamples) {
         try {
           await audioSource.add(sample);
