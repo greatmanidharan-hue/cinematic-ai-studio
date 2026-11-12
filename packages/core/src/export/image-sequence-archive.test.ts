@@ -250,6 +250,22 @@ describe("createImageSequenceZip", () => {
     }
   });
 
+  it("rejects file and directory prefix conflicts in either insertion order", async () => {
+    const frame = (name: string) => ({ name, blob: new Blob(["data"]) });
+    await expect(
+      createImageSequenceZip([frame("frames"), frame("frames/shot.png")]),
+    ).rejects.toThrow(/Conflicting image sequence filename/);
+    await expect(
+      createImageSequenceZip([frame("frames/shot.png"), frame("frames")]),
+    ).rejects.toThrow(/Conflicting image sequence filename/);
+  });
+
+  it("rejects Windows device names with spaces before the extension", async () => {
+    await expect(
+      createImageSequenceZip([{ name: "CON .png", blob: new Blob(["unsafe"]) }]),
+    ).rejects.toThrow(/Unsafe image sequence filename/);
+  });
+
   it("rejects case-insensitive duplicate paths for portable extraction", async () => {
     await expect(
       createImageSequenceZip([
