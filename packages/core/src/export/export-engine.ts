@@ -440,6 +440,14 @@ export class ExportEngine {
         fullSettings.height,
       );
 
+      if (controller.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "preparing",
+        );
+      }
+
       this.videoEngine?.resetExportState(project.timeline.particleEffects ?? []);
       if (this.videoEngine) {
         this.videoEngine.exportMode = true;
