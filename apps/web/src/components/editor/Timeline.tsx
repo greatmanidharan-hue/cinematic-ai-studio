@@ -119,7 +119,8 @@ export const Timeline: React.FC = () => {
     [selectedItems],
   );
 
-  const { getTitleEngine, getGraphicsEngine } = useEngineStore();
+  const getTitleEngine = useEngineStore((state) => state.getTitleEngine);
+  const getGraphicsEngine = useEngineStore((state) => state.getGraphicsEngine);
   const titleEngine = getTitleEngine();
   const allTextClips = useMemo(() => {
     return titleEngine?.getAllTextClips() ?? [];
