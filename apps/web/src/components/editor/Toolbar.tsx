@@ -487,6 +487,7 @@ export const Toolbar: React.FC = () => {
         });
         const generator = engine.exportImageSequence(project, settings, async (frame) => {
           if (zipController.signal.aborted) throw new Error("Image sequence export cancelled.");
+          if (frameError) throw frameError;
           queuedFrames.push(frame);
           frameWaiters.shift()?.();
           // Wait until the ZIP consumer takes this frame before rendering another.
