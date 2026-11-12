@@ -146,6 +146,7 @@ describe("createImageSequenceZip", () => {
     const controller = new AbortController();
     let notifyReadStarted: (() => void) | undefined;
     let wasCancelled = false;
+    const progress: number[] = [];
     const readStarted = new Promise<void>((resolve) => {
       notifyReadStarted = resolve;
     });
@@ -162,13 +163,17 @@ describe("createImageSequenceZip", () => {
 
     const packaging = createImageSequenceZip(
       [{ name: "frame.png", blob: pendingBlob }],
-      { signal: controller.signal },
+      {
+        signal: controller.signal,
+        onProgress: (completed) => progress.push(completed),
+      },
     );
 
     await readStarted;
     controller.abort();
     await expect(packaging).rejects.toThrow(/cancelled/i);
     expect(wasCancelled).toBe(true);
+    expect(progress).toEqual([]);
   });
 
   it("propagates errors from the streamed ZIP destination", async () => {
