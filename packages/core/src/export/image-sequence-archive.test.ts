@@ -274,6 +274,15 @@ describe("createImageSequenceZip", () => {
     ).rejects.toThrow(/Unsafe image sequence filename/);
   });
 
+  it("rejects Unicode-equivalent filenames after NFC normalization", async () => {
+    await expect(
+      createImageSequenceZip([
+        { name: "caf\u00e9.png", blob: new Blob(["one"]) },
+        { name: "cafe\u0301.png", blob: new Blob(["two"]) },
+      ]),
+    ).rejects.toThrow(/Duplicate image sequence filename/);
+  });
+
   it("rejects case-insensitive duplicate paths for portable extraction", async () => {
     await expect(
       createImageSequenceZip([
