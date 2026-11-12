@@ -587,12 +587,10 @@ export class ExportEngine {
       };
     }
 
-    this.abortController = new AbortController();
-    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
-
     const { timeline } = project;
     const timelineDuration = this.calculateTimelineDuration(timeline);
 
+    // Reject an empty timeline before creating shared cancellation/export state.
     if (timelineDuration <= 0) {
       return {
         success: false,
@@ -603,6 +601,9 @@ export class ExportEngine {
         ),
       };
     }
+
+    this.abortController = new AbortController();
+    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
 
     try {
       yield this.createProgress("preparing", 0, 1, 0, 0);
