@@ -1174,6 +1174,10 @@ export const Timeline: React.FC = () => {
                 duration={timelineDuration}
                 onUpdate={updateLightningEffect}
                 onSelect={(effectId) => select({ type: "effect", id: effectId })}
+                snapSettings={snapSettings}
+                snapPoints={playheadSnapPoints}
+                playheadPosition={playheadPosition}
+                markerTimes={project.timeline.markers.map((marker) => marker.time)}
                 onInteractionStart={() => useProjectStore.getState().beginHistoryGroup("Move lightning VFX")}
                 onInteractionEnd={() => useProjectStore.getState().endHistoryGroup()}
               />
