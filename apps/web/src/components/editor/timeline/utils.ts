@@ -112,6 +112,25 @@ export const calculateSnap = (
   return { time: rawTime, snapped: false };
 };
 
+/**
+ * Returns a bounded number of filmstrip cells for a timeline clip.
+ * The cap prevents very long or highly zoomed clips from creating excessive DOM.
+ */
+export const getClipFilmstripThumbnailCount = (
+  clipWidth: number,
+  cellWidth: number = 60,
+  maxThumbnails: number = 96,
+): number => {
+  if (!Number.isFinite(clipWidth) || clipWidth <= 0) return 1;
+  if (!Number.isFinite(cellWidth) || cellWidth <= 0) return 1;
+  if (!Number.isFinite(maxThumbnails) || maxThumbnails < 1) return 1;
+
+  return Math.min(
+    Math.floor(maxThumbnails),
+    Math.max(1, Math.floor(clipWidth / cellWidth)),
+  );
+};
+
 export const generateWaveformPath = (
   waveformData: Float32Array | number[],
   width: number,
