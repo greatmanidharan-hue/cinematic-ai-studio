@@ -3551,7 +3551,11 @@ export const Preview: React.FC = () => {
         if (!playbackResourcesRef.current.has(clip.id)) {
           const resources = await initClipResources(clip, trackIndex);
           if (resources) {
-            playbackResourcesRef.current.set(clip.id, resources);
+            if (isActive) {
+              playbackResourcesRef.current.set(clip.id, resources);
+            } else {
+              resources.input[Symbol.dispose]?.();
+            }
           }
         }
       }
@@ -3739,7 +3743,11 @@ export const Preview: React.FC = () => {
             if (!playbackResourcesRef.current.has(clip.id)) {
               const resources = await initClipResources(clip, trackIndex);
               if (resources) {
-                playbackResourcesRef.current.set(clip.id, resources);
+                if (isActive) {
+                  playbackResourcesRef.current.set(clip.id, resources);
+                } else {
+                  resources.input[Symbol.dispose]?.();
+                }
               }
             }
           }
@@ -3774,10 +3782,14 @@ export const Preview: React.FC = () => {
                     lookup.trackIndex,
                   );
                   if (resources) {
-                    playbackResourcesRef.current.set(
-                      lookup.clip.id,
-                      resources,
-                    );
+                    if (isActive) {
+                      playbackResourcesRef.current.set(
+                        lookup.clip.id,
+                        resources,
+                      );
+                    } else {
+                      resources.input[Symbol.dispose]?.();
+                    }
                   }
                 }
               }
