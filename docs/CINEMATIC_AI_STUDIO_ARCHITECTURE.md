@@ -96,3 +96,37 @@ Provide clear capability warnings and fallback paths.
 - Test with small sample media before large or 4K footage.
 - Document unsupported browsers, codecs and device limits honestly.
 - Do not merge changes that break project load/save or undo/redo.
+
+
+
+## Prompt-to-video generation
+
+Add an integrated AI Video Generator workflow to the editor. Users enter a text
+prompt, choose an exact duration of 10, 20 or 30 seconds, select aspect ratio,
+resolution and frame rate, then submit to a configured generation provider.
+A completed result is offered for import into the local media library and
+placement on the active timeline.
+
+- The initial provider-neutral request contract lives in
+  `packages/core/src/ai-video/types.ts`.
+- Duration options are intentionally constrained to 10, 20 and 30 seconds.
+- Prompt text is limited to 2,000 characters; optional negative prompts are
+  limited to 1,000 characters.
+- Generation is an explicit opt-in cloud operation; clearly disclose the
+  selected provider/model, expected cost or credits, and that the prompt is
+  sent to that provider before submission.
+- Provider credentials must never be shipped in browser code. Use a secure
+  server-side adapter or an approved provider integration.
+- Track queued, generating, completed, failed and cancelled job states. Support
+  cancellation where the provider allows it, and never report completion until
+  the provider returns a usable output asset.
+- Keep generated outputs separate from source media until the user chooses to
+  import them. Once imported, editing, effects, audio, transitions and export
+  use the existing local timeline pipeline.
+- Do not imply that generation is browser-only or that every provider supports
+  every duration, aspect ratio, resolution or frame rate. Validate capabilities
+  per provider/model and show unsupported combinations before charging credits.
+
+The provider integration, prompt composer UI, progress/cancellation UI and
+timeline import flow are planned work; the shared request types and validation
+contract are the initial foundation only.
