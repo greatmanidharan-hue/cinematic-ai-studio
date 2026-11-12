@@ -43,6 +43,7 @@ import {
   DropdownMenuSeparator,
 } from "@fairarena/ui";
 import { LightningEffectLane } from "./timeline/LightningEffectLane";
+import { ParticleEffectLane } from "./timeline/ParticleEffectLane";
 import {
   Playhead,
   TimeRuler,
@@ -725,6 +726,25 @@ export const Timeline: React.FC = () => {
     [],
   );
 
+  const updateParticleEffect = useCallback(
+    (effectId: string, updates: Partial<import("@fairarena/core").ParticleEffect>) => {
+      useProjectStore.setState((state) => ({
+        project: {
+          ...state.project,
+          timeline: {
+            ...state.project.timeline,
+            particleEffects: (state.project.timeline.particleEffects ?? []).map((effect) =>
+              effect.id === effectId ? { ...effect, ...updates } : effect,
+            ),
+          },
+          modifiedAt: Date.now(),
+        },
+      }));
+      window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+    },
+    [],
+  );
+
   const visualOrderTracks = useMemo(() => tracks, [tracks]);
 
   return (
@@ -1167,6 +1187,13 @@ export const Timeline: React.FC = () => {
                 pixelsPerSecond={pixelsPerSecond}
                 duration={timelineDuration}
                 onUpdate={updateLightningEffect}
+              />
+
+              <ParticleEffectLane
+                effects={project.timeline.particleEffects ?? []}
+                pixelsPerSecond={pixelsPerSecond}
+                duration={timelineDuration}
+                onUpdate={updateParticleEffect}
               />
 
               <BeatMarkerOverlay
