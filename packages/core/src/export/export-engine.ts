@@ -442,25 +442,34 @@ export class ExportEngine {
         const shouldUpscale = this.shouldApplyUpscaling(project, fullSettings);
         let frameImage = rendered.image;
 
-        if (shouldUpscale && this.upscalingEngine?.isInitialized()) {
-          const upscaled = await this.upscalingEngine.upscaleImageBitmap(
-            frameImage,
-            fullSettings.width,
-            fullSettings.height,
-            fullSettings.upscaling!,
-          );
+        try {
+          if (shouldUpscale && this.upscalingEngine?.isInitialized()) {
+            const sourceImage = frameImage;
+            try {
+              frameImage = await this.upscalingEngine.upscaleImageBitmap(
+                sourceImage,
+                fullSettings.width,
+                fullSettings.height,
+                fullSettings.upscaling!,
+              );
+            } finally {
+              sourceImage.close();
+            }
+          }
+
+          const videoSample = new VideoSample(frameImage, {
+            timestamp: time,
+            duration: 1 / fullSettings.frameRate,
+          });
+
+          try {
+            await videoSource.add(videoSample);
+          } finally {
+            videoSample.close();
+          }
+        } finally {
           frameImage.close();
-          frameImage = upscaled;
         }
-
-        const videoSample = new VideoSample(frameImage, {
-          timestamp: time,
-          duration: 1 / fullSettings.frameRate,
-        });
-
-        await videoSource.add(videoSample);
-        videoSample.close();
-        frameImage.close();
 
         this.currentExport!.framesRendered = frame + 1;
 
@@ -1188,12 +1197,18 @@ export class ExportEngine {
     output.addAudioTrack(audioSource);
     await output.start();
     const audioSamples = AudioSample.fromAudioBuffer(buffer, 0);
-    for (const sample of audioSamples) {
-      await audioSource.add(sample);
-      sample.close();
+    try {
+      for (const sample of audioSamples) {
+        try {
+          await audioSource.add(sample);
+        } finally {
+          sample.close();
+        }
+      }
+    } finally {
+      audioSource.close();
     }
 
-    audioSource.close();
     await output.finalize();
 
     const resultBuffer = target.buffer;
