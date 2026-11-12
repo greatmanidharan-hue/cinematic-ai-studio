@@ -4338,13 +4338,9 @@ export const Preview: React.FC = () => {
     };
 
     const findNextClipStartTime = (afterTime: number): number | null => {
-      const tracks = timelineTracksRef.current;
-      const videoTracks = tracks.filter(
-        (t) => (t.type === "video" || t.type === "image") && !t.hidden,
-      );
       let nextStart: number | null = null;
 
-      for (const track of videoTracks) {
+      for (const { track } of visibleVideoTracksRef.current) {
         for (const clip of track.clips) {
           if (clip.startTime > afterTime) {
             if (nextStart === null || clip.startTime < nextStart) {
@@ -4388,11 +4384,9 @@ export const Preview: React.FC = () => {
     };
 
     const findNextAudioClipStartTime = (afterTime: number): number | null => {
-      const tracks = timelineTracksRef.current;
-      const audioTracks = tracks.filter((t) => t.type === "audio" && !t.hidden);
       let nextStart: number | null = null;
 
-      for (const track of audioTracks) {
+      for (const track of visibleAudioTracksRef.current) {
         for (const clip of track.clips) {
           if (clip.startTime > afterTime) {
             if (nextStart === null || clip.startTime < nextStart) {
