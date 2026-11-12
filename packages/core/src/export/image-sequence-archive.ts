@@ -4,6 +4,7 @@ import type { ExportedImageFrame } from "./types";
 export interface ImageSequenceZipOptions {
   signal?: AbortSignal;
   onProgress?: (completedFrames: number, totalFrames: number) => void;
+  onChunk?: (chunk: Uint8Array) => void | Promise<void>;
 }
 
 function validateEntryName(name: string): string {
@@ -46,6 +47,7 @@ export async function createImageSequenceZip(
   });
 
   const output: Uint8Array[] = [];
+  let outputWriteQueue = Promise.resolve();
   let outputError: Error | null = null;
   let resolveZip: (() => void) | undefined;
   const zipFinished = new Promise<void>((resolve) => {
@@ -61,7 +63,18 @@ export async function createImageSequenceZip(
       resolveZip?.();
       return;
     }
-    if (data.length > 0) output.push(data);
+    if (data.length > 0) {
+      if (options.onChunk) {
+        outputWriteQueue = outputWriteQueue.then(() => options.onChunk?.(data)).then(
+          () => undefined,
+          (error: unknown) => {
+            outputError = error instanceof Error ? error : new Error("Failed to write ZIP output chunk.");
+          },
+        );
+      } else {
+        output.push(data);
+      }
+    }
     if (final) resolveZip?.();
   });
 
@@ -84,6 +97,7 @@ export async function createImageSequenceZip(
           }
           const { value, done } = await reader.read();
           if (done) break;
+          if (outputError) throw outputError;
           if (value?.byteLength) entry.push(value, false);
           // Yield to the browser between chunks so cancellation and UI updates
           // can be processed even while a large frame is being compressed.
@@ -94,6 +108,7 @@ export async function createImageSequenceZip(
         reader.releaseLock();
       }
 
+      if (outputError) throw outputError;
       options.onProgress?.(index + 1, normalizedFrames.length);
     }
 
@@ -102,8 +117,9 @@ export async function createImageSequenceZip(
     }
     zip.end();
     await zipFinished;
+    await outputWriteQueue;
     if (outputError) throw outputError;
-    return new Blob(output, { type: "application/zip" });
+    return options.onChunk ? undefined : new Blob(output, { type: "application/zip" });
   } catch (error) {
     try {
       zip.terminate();
