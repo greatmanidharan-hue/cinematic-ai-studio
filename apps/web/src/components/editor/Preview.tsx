@@ -755,6 +755,19 @@ export const Preview: React.FC = () => {
           (track.type === "video" || track.type === "image") && !track.hidden,
       ),
   );
+  const visibleVideoClipLookupRef = useRef(
+    new Map(
+      timelineTracks
+        .map((track, trackIndex) => ({ track, trackIndex }))
+        .filter(
+          ({ track }) =>
+            (track.type === "video" || track.type === "image") && !track.hidden,
+        )
+        .flatMap(({ track, trackIndex }) =>
+          track.clips.map((clip) => [clip.id, { clip, trackIndex }] as const),
+        ),
+    ),
+  );
   useEffect(() => {
     timelineTracksRef.current = timelineTracks;
     visibleAudioTracksRef.current = timelineTracks.filter(
@@ -766,6 +779,11 @@ export const Preview: React.FC = () => {
         ({ track }) =>
           (track.type === "video" || track.type === "image") && !track.hidden,
       );
+    visibleVideoClipLookupRef.current = new Map(
+      visibleVideoTracksRef.current.flatMap(({ track, trackIndex }) =>
+        track.clips.map((clip) => [clip.id, { clip, trackIndex }] as const),
+      ),
+    );
   }, [timelineTracks]);
 
   // Keep a ref to allTextClips for use in playback effect
@@ -3743,17 +3761,12 @@ export const Preview: React.FC = () => {
           const activeTextClips = currentTextClips;
 
           if (transitionInfoMulti) {
-            const tracks = timelineTracksRef.current;
-            const findClipById = (id: string) => {
-              for (let idx = 0; idx < tracks.length; idx++) {
-                const found = tracks[idx].clips.find((c) => c.id === id);
-                if (found) return { clip: found, trackIndex: idx };
-              }
-              return null;
-            };
-
-            const aLookup = findClipById(transitionInfoMulti.clipA.id);
-            const bLookup = findClipById(transitionInfoMulti.clipB.id);
+            const aLookup =
+              visibleVideoClipLookupRef.current.get(transitionInfoMulti.clipA.id) ??
+              null;
+            const bLookup =
+              visibleVideoClipLookupRef.current.get(transitionInfoMulti.clipB.id) ??
+              null;
 
             if (aLookup && bLookup) {
               for (const lookup of [aLookup, bLookup]) {
