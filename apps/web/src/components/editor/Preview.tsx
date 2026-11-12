@@ -74,6 +74,7 @@ import {
   ParticleRenderer,
 } from "./preview/index";
 import { ProcessingOverlay } from "./ProcessingOverlay";
+import { LightningRenderer } from "./preview/LightningRenderer";
 import {
   getPersonSegmentationEngine,
   getBackgroundRemovalEngine,
@@ -5887,6 +5888,18 @@ export const Preview: React.FC = () => {
                 onPointRemove={handleMotionPathPointRemove}
                 onControlPointMove={handleMotionPathControlPointMove}
                 disabled={isPlaying}
+              />
+            </div>
+          )}
+
+          {/* Lightning VFX Renderer */}
+          {(project.timeline.lightningEffects?.length ?? 0) > 0 && (
+            <div className="absolute inset-0 pointer-events-none z-20">
+              <LightningRenderer
+                effects={project.timeline.lightningEffects ?? []}
+                width={settings.width}
+                height={settings.height}
+                currentTime={playheadPosition}
               />
             </div>
           )}
