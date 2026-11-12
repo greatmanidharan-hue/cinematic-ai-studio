@@ -60,6 +60,17 @@ after tracking stability, privacy UX and performance checks pass.
 Test preview/export parity, codec support, cancellation and memory usage.
 Provide clear capability warnings and fallback paths.
 
+## Current implementation progress
+
+- Added typed capability metadata for VFX, 3D, face AI, color, motion and export.
+- Added three clip-attachable particle presets using the existing particle engine:
+  Fire Plume, Smoke Column and Lightning Impact Sparks.
+- Added Vitest coverage for preset registration, basic configuration bounds and
+  clip-scoped effect creation.
+- Lightning Impact Sparks is a short electric impact burst, not a continuous
+  lightning-bolt generator. A bolt renderer/shader remains planned.
+- No editor panel or render pipeline was replaced in this foundation step.
+
 ## Quality gates
 - Run relevant unit tests, type checks and build checks for each change.
 - Keep all feature work on the development branch.
