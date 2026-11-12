@@ -19,19 +19,21 @@ export async function createImageSequenceZip(
 
   for (const frame of frames) {
     const name = frame.name.trim();
-    const segments = name.replace(/\\/g, "/").split("/");
+    const normalizedName = name.replace(/\\/g, "/");
+    const segments = normalizedName.split("/");
     if (
       !name ||
-      name.startsWith("/") ||
+      normalizedName.startsWith("/") ||
+      /^[A-Za-z]:\//.test(normalizedName) ||
       segments.some((segment) => segment === "." || segment === "..") ||
       name.includes("\0")
     ) {
       throw new Error(`Unsafe image sequence filename: ${frame.name}`);
     }
-    if (Object.prototype.hasOwnProperty.call(entries, name)) {
-      throw new Error(`Duplicate image sequence filename: ${name}`);
+    if (Object.prototype.hasOwnProperty.call(entries, normalizedName)) {
+      throw new Error(`Duplicate image sequence filename: ${normalizedName}`);
     }
-    entries[name] = new Uint8Array(await frame.blob.arrayBuffer());
+    entries[normalizedName] = new Uint8Array(await frame.blob.arrayBuffer());
   }
 
   const zipBytes = zipSync(entries, { level: 6 });
