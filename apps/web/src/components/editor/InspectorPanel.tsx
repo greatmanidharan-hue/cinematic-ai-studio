@@ -132,53 +132,66 @@ const ParticleEffectsSectionWrapper: React.FC<{
   clipDuration: number;
   clipStartTime: number;
 }> = ({ clipId, clipDuration, clipStartTime }) => {
-  const [updateTrigger, setUpdateTrigger] = React.useState(0);
+  const effects = useProjectStore(
+    (state) => state.project.timeline.particleEffects ?? [],
+  ).filter((effect) => effect.clipId === clipId);
   const particleEngine = React.useMemo(() => getParticleEngine(), []);
 
-  const effects = React.useMemo(() => {
-    return particleEngine.getEffectsForClip(clipId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clipId, particleEngine, updateTrigger]);
+  React.useEffect(() => {
+    const runtimeEffects = particleEngine.getAllEffects();
+    const projectEffects = useProjectStore.getState().project.timeline.particleEffects ?? [];
+    const projectIds = new Set(projectEffects.map((effect) => effect.id));
+    for (const runtimeEffect of runtimeEffects) {
+      if (!projectIds.has(runtimeEffect.id)) particleEngine.removeEffect(runtimeEffect.id);
+    }
+    for (const effect of projectEffects) {
+      const runtimeEffect = particleEngine.getEffect(effect.id);
+      if (!runtimeEffect) particleEngine.addEffect(effect);
+      else {
+        particleEngine.updateEffect(effect.id, effect.config);
+        particleEngine.updateEffectTiming(effect.id, effect.startTime, effect.duration);
+        particleEngine.toggleEffect(effect.id, effect.enabled);
+      }
+    }
+  }, [effects, particleEngine]);
 
-  const handleAddEffect = React.useCallback(
-    (effect: ParticleEffect) => {
-      particleEngine.addEffect(effect);
-      setUpdateTrigger((v) => v + 1);
-    },
-    [particleEngine]
-  );
+  const commitEffects = React.useCallback((next: ParticleEffect[]) => {
+    useProjectStore.setState((state) => ({
+      project: {
+        ...state.project,
+        timeline: { ...state.project.timeline, particleEffects: next },
+        modifiedAt: Date.now(),
+      },
+    }));
+    window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+  }, []);
 
-  const handleUpdateEffect = React.useCallback(
-    (effectId: string, config: Partial<ParticleConfig>) => {
-      particleEngine.updateEffect(effectId, config);
-      setUpdateTrigger((v) => v + 1);
-    },
-    [particleEngine]
-  );
+  const updateEffect = React.useCallback((effectId: string, updater: (effect: ParticleEffect) => ParticleEffect) => {
+    const allEffects = useProjectStore.getState().project.timeline.particleEffects ?? [];
+    commitEffects(allEffects.map((effect) => effect.id === effectId ? updater(effect) : effect));
+  }, [commitEffects]);
 
-  const handleRemoveEffect = React.useCallback(
-    (effectId: string) => {
-      particleEngine.removeEffect(effectId);
-      setUpdateTrigger((v) => v + 1);
-    },
-    [particleEngine]
-  );
+  const handleAddEffect = React.useCallback((effect: ParticleEffect) => {
+    const allEffects = useProjectStore.getState().project.timeline.particleEffects ?? [];
+    commitEffects([...allEffects.filter((item) => item.id !== effect.id), effect]);
+  }, [commitEffects]);
 
-  const handleToggleEffect = React.useCallback(
-    (effectId: string, enabled: boolean) => {
-      particleEngine.toggleEffect(effectId, enabled);
-      setUpdateTrigger((v) => v + 1);
-    },
-    [particleEngine]
-  );
+  const handleUpdateEffect = React.useCallback((effectId: string, config: Partial<ParticleConfig>) => {
+    updateEffect(effectId, (effect) => ({ ...effect, config: { ...effect.config, ...config } }));
+  }, [updateEffect]);
 
-  const handleUpdateTiming = React.useCallback(
-    (effectId: string, startTime: number, duration: number) => {
-      particleEngine.updateEffectTiming(effectId, startTime, duration);
-      setUpdateTrigger((v) => v + 1);
-    },
-    [particleEngine]
-  );
+  const handleRemoveEffect = React.useCallback((effectId: string) => {
+    const allEffects = useProjectStore.getState().project.timeline.particleEffects ?? [];
+    commitEffects(allEffects.filter((effect) => effect.id !== effectId));
+  }, [commitEffects]);
+
+  const handleToggleEffect = React.useCallback((effectId: string, enabled: boolean) => {
+    updateEffect(effectId, (effect) => ({ ...effect, enabled }));
+  }, [updateEffect]);
+
+  const handleUpdateTiming = React.useCallback((effectId: string, startTime: number, duration: number) => {
+    updateEffect(effectId, (effect) => ({ ...effect, startTime, duration }));
+  }, [updateEffect]);
 
   return (
     <ParticleEffectsSection
@@ -194,7 +207,6 @@ const ParticleEffectsSectionWrapper: React.FC<{
     />
   );
 };
-
 
 const LightningEffectsSection: React.FC = () => {
   const project = useProjectStore((state) => state.project);
