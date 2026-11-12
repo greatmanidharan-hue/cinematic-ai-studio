@@ -118,6 +118,25 @@ export class ExportEngine {
     }
   }
 
+  private validateAudioSettings(settings: AudioExportSettings): string | null {
+    if (!["mp3", "wav", "aac", "flac", "ogg"].includes(settings.format)) {
+      return "Unsupported audio export format.";
+    }
+    if (![44100, 48000, 96000].includes(settings.sampleRate)) {
+      return "Audio sample rate must be 44100, 48000, or 96000 Hz.";
+    }
+    if (![16, 24, 32].includes(settings.bitDepth)) {
+      return "Audio bit depth must be 16, 24, or 32.";
+    }
+    if (![1, 2].includes(settings.channels)) {
+      return "Audio channel count must be 1 or 2.";
+    }
+    if (!Number.isFinite(settings.bitrate) || settings.bitrate <= 0) {
+      return "Audio bitrate must be a finite positive number.";
+    }
+    return null;
+  }
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private async findSupportedAudioCodec(
     outputFormat: { getSupportedAudioCodecs: () => any[] },
@@ -241,6 +260,14 @@ export class ExportEngine {
       fullSettings.format = "mp4";
       fullSettings.bitrate = 25000;
       fullSettings.quality = 95;
+    }
+
+    const audioSettingsError = this.validateAudioSettings(fullSettings.audioSettings);
+    if (audioSettingsError) {
+      return {
+        success: false,
+        error: this.createError("INVALID_SETTINGS", audioSettingsError, "preparing"),
+      };
     }
 
     const { timeline } = project;
@@ -593,6 +620,14 @@ export class ExportEngine {
       ...DEFAULT_AUDIO_SETTINGS,
       ...settings,
     };
+
+    const audioSettingsError = this.validateAudioSettings(fullSettings);
+    if (audioSettingsError) {
+      return {
+        success: false,
+        error: this.createError("INVALID_SETTINGS", audioSettingsError, "preparing"),
+      };
+    }
 
     if (!this.mediabunny && fullSettings.format !== "wav") {
       return {
