@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { memo, useRef, useState, useEffect } from "react";
 import { Shapes, FileCode, Smile } from "lucide-react";
 import type { ShapeClip, SVGClip, StickerClip } from "@fairarena/core";
 import { ContextMenu, ContextMenuTrigger } from "@fairarena/ui";
@@ -19,7 +19,7 @@ interface ShapeClipComponentProps {
   onMoveClip: (clipId: string, newStartTime: number) => void;
 }
 
-export const ShapeClipComponent: React.FC<ShapeClipComponentProps> = ({
+const ShapeClipComponentInner: React.FC<ShapeClipComponentProps> = ({
   shapeClip,
   pixelsPerSecond,
   isSelected,
@@ -235,3 +235,7 @@ export const ShapeClipComponent: React.FC<ShapeClipComponentProps> = ({
     </ContextMenu>
   );
 };
+
+export const ShapeClipComponent = memo(ShapeClipComponentInner);
+ShapeClipComponent.displayName = "ShapeClipComponent";
+
