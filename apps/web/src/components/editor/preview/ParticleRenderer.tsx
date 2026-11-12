@@ -229,6 +229,8 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     if (isPlaying) {
       playStartTimeRef.current = performance.now();
       playStartPlayheadRef.current = currentTimeRef.current;
+      engine.seekToTime(playStartPlayheadRef.current, 1 / 30, particleSeed);
+      lastSeekRef.current = { time: playStartPlayheadRef.current, seed: particleSeed };
       lastSimulatedTimeRef.current = currentTimeRef.current;
       lastFrameTimeRef.current = performance.now();
 
