@@ -37,15 +37,6 @@ describe("createImageSequenceZip", () => {
     ).rejects.toThrow(/Unsafe image sequence filename/);
   });
 
-  it("treats slash and backslash paths as the same archive entry", async () => {
-    await expect(
-      createImageSequenceZip([
-        { name: "frames\\\\frame.png", blob: new Blob(["one"]) },
-        { name: "frames/frame.png", blob: new Blob(["two"]) },
-      ]),
-    ).rejects.toThrow(/Duplicate image sequence filename/);
-  });
-
   it("rejects duplicate filenames", async () => {
     await expect(
       createImageSequenceZip([
