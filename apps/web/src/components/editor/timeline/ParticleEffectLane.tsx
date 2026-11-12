@@ -1,10 +1,15 @@
 import React, { useCallback, useEffect, useRef, useState } from "react";
 import type { ParticleEffect } from "@fairarena/core";
+import type { SnapSettings } from "../../../stores/ui-store";
 
 interface ParticleEffectLaneProps {
   effects: readonly ParticleEffect[];
   pixelsPerSecond: number;
   duration: number;
+  snapSettings: SnapSettings;
+  snapPoints: readonly number[];
+  playheadPosition: number;
+  markerTimes: readonly number[];
   onUpdate: (effectId: string, updates: Partial<ParticleEffect>) => void;
 }
 
@@ -27,6 +32,10 @@ export const ParticleEffectLane: React.FC<ParticleEffectLaneProps> = ({
   effects,
   pixelsPerSecond,
   duration,
+  snapSettings,
+  snapPoints,
+  playheadPosition,
+  markerTimes,
   onUpdate,
 }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -42,12 +51,36 @@ export const ParticleEffectLane: React.FC<ParticleEffectLaneProps> = ({
     const drag = dragRef.current;
     if (!drag) return;
     const delta = (event.clientX - drag.startX) / Math.max(1, pixelsPerSecond);
-    if (drag.mode === "move") {
-      onUpdate(drag.id, { startTime: Math.max(0, drag.originalStart + delta) });
-    } else {
-      onUpdate(drag.id, { duration: Math.max(0.05, drag.originalDuration + delta) });
+    const rawTime = drag.mode === "move"
+      ? Math.max(0, drag.originalStart + delta)
+      : Math.max(0.05, drag.originalDuration + delta);
+    const rawEdge = drag.mode === "move" ? rawTime : drag.originalStart + rawTime;
+    let snappedEdge = rawEdge;
+    if (snapSettings.enabled) {
+      const candidates: number[] = [];
+      if (snapSettings.snapToGrid && snapSettings.gridSize > 0) {
+        candidates.push(Math.round(rawEdge / snapSettings.gridSize) * snapSettings.gridSize);
+      }
+      if (snapSettings.snapToClips) candidates.push(...snapPoints);
+      if (snapSettings.snapToPlayhead) candidates.push(playheadPosition);
+      if (snapSettings.snapToMarkers) candidates.push(...markerTimes);
+      const threshold = snapSettings.snapThreshold / Math.max(1, pixelsPerSecond);
+      const nearest = candidates
+        .filter((candidate) => Number.isFinite(candidate) && candidate >= 0)
+        .reduce<{ time: number; distance: number } | null>((best, candidate) => {
+          const distance = Math.abs(candidate - rawEdge);
+          return distance <= threshold && (!best || distance < best.distance)
+            ? { time: candidate, distance }
+            : best;
+        }, null);
+      if (nearest) snappedEdge = nearest.time;
     }
-  }, [onUpdate, pixelsPerSecond]);
+    if (drag.mode === "move") {
+      onUpdate(drag.id, { startTime: Math.max(0, snappedEdge) });
+    } else {
+      onUpdate(drag.id, { duration: Math.max(0.05, snappedEdge - drag.originalStart) });
+    }
+  }, [onUpdate, pixelsPerSecond, snapSettings, snapPoints, playheadPosition, markerTimes]);
 
   const handlePointerUp = useCallback(() => {
     dragRef.current = null;
