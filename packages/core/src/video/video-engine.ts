@@ -53,6 +53,7 @@ import {
   isAnimatedGif,
 } from "../media/gif-decoder";
 import { ParticleEngine, getParticleEngine } from "../effects/particle-engine";
+import type { ParticleEffect } from "../effects/particle-types";
 import { renderParticles } from "../effects/particle-renderer";
 import { renderLightningBolt } from "../effects/lightning-bolt-renderer";
 import { getPersonSegmentationEngine } from "../ai/person-segmentation-engine";
@@ -1307,19 +1308,14 @@ export class VideoEngine {
     ctx.restore();
   }
 
-  resetExportState(): void {
+  resetExportState(projectEffects?: readonly ParticleEffect[]): void {
     this.lastExportTime = -1;
     // Export owns a private simulation so resetting/seeding an export cannot
     // disturb the live preview's shared particle engine.
     this.exportParticleEngine?.dispose();
-    const sourceEngine = getParticleEngine();
-    const effects = sourceEngine
-      .getAllEffects()
-      .slice()
-      .sort((a, b) => a.id.localeCompare(b.id));
-    this.exportParticleEngine = new ParticleEngine();
-    for (const effect of effects) {
-      this.exportParticleEngine.addEffect({
+    // Prefer project-serialized effects; retain singleton fallback for older callers.
+    const effects = (projectEffects ?? getParticleEngine().getAllEffects())
+      .map((effect) => ({
         ...effect,
         config: {
           ...effect.config,
@@ -1329,7 +1325,11 @@ export class VideoEngine {
           opacity: { ...effect.config.opacity },
           lifetime: { ...effect.config.lifetime },
         },
-      });
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    this.exportParticleEngine = new ParticleEngine();
+    for (const effect of effects) {
+      this.exportParticleEngine.addEffect(effect);
     }
     // FNV-1a gives each export a stable seed derived from its particle setup.
     const effectsSignature = JSON.stringify(effects);
