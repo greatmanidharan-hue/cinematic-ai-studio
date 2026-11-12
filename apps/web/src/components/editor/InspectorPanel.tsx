@@ -349,7 +349,10 @@ const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
           const bounded = Math.min(max, Math.max(min, next));
           if (particle && patchKey.startsWith("size.")) {
             const key = patchKey.slice(5) as "min" | "max";
-            update({ config: { ...particle.config, size: { ...particle.config.size, [key]: bounded } } });
+            const safeValue = key === "min"
+              ? Math.min(bounded, particle.config.size.max)
+              : Math.max(bounded, particle.config.size.min);
+            update({ config: { ...particle.config, size: { ...particle.config.size, [key]: safeValue } } });
           } else if (particle) {
             update({ config: { ...particle.config, [patchKey]: bounded } });
           } else {
