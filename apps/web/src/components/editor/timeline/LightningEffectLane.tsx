@@ -7,6 +7,8 @@ interface LightningEffectLaneProps {
   duration: number;
   onUpdate: (effectId: string, updates: Partial<LightningEffectClip>) => void;
   onSelect?: (effectId: string) => void;
+  onInteractionStart?: () => void;
+  onInteractionEnd?: () => void;
 }
 
 type DragMode = "move" | "trim";
@@ -17,6 +19,8 @@ export const LightningEffectLane: React.FC<LightningEffectLaneProps> = ({
   duration,
   onUpdate,
   onSelect,
+  onInteractionStart,
+  onInteractionEnd,
 }) => {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const dragRef = useRef<{ id: string; mode: DragMode; startX: number; originalStart: number; originalDuration: number } | null>(null);
@@ -33,10 +37,11 @@ export const LightningEffectLane: React.FC<LightningEffectLaneProps> = ({
   }, [onUpdate, pixelsPerSecond]);
 
   const handlePointerUp = useCallback(() => {
+    if (dragRef.current) onInteractionEnd?.();
     dragRef.current = null;
     document.body.style.cursor = "";
     document.body.style.userSelect = "";
-  }, []);
+  }, [onInteractionEnd]);
 
   useEffect(() => {
     window.addEventListener("pointermove", handlePointerMove);
@@ -52,6 +57,7 @@ export const LightningEffectLane: React.FC<LightningEffectLaneProps> = ({
     event.stopPropagation();
     setSelectedId(effect.id);
     onSelect?.(effect.id);
+    onInteractionStart?.();
     dragRef.current = {
       id: effect.id,
       mode,
