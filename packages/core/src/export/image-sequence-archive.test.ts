@@ -1,6 +1,39 @@
 import { describe, expect, it } from "vitest";
 import { unzipSync } from "fflate";
-import { createImageSequenceZip } from "./image-sequence-archive";
+import { createImageSequenceZip, createImageSequenceZipFromFrames } from "./image-sequence-archive";
+
+describe("createImageSequenceZipFromFrames", () => {
+  it("packages frames from an async source incrementally", async () => {
+    const yielded: string[] = [];
+    async function* frames() {
+      yielded.push("first");
+      yield { name: "frame-1.png", blob: new Blob(["one"]) };
+      yielded.push("second");
+      yield { name: "frame-2.png", blob: new Blob(["two"]) };
+    }
+
+    const archive = await createImageSequenceZipFromFrames(frames(), 2);
+    const files = unzipSync(new Uint8Array(await archive.arrayBuffer()));
+    expect(yielded).toEqual(["first", "second"]);
+    expect(new TextDecoder().decode(files["frame-1.png"])).toBe("one");
+    expect(new TextDecoder().decode(files["frame-2.png"])).toBe("two");
+  });
+
+  it("rejects duplicate filenames across separately yielded frames", async () => {
+    async function* frames() {
+      yield { name: "frame.png", blob: new Blob(["one"]) };
+      yield { name: "frame.png", blob: new Blob(["two"]) };
+    }
+    await expect(createImageSequenceZipFromFrames(frames(), 2)).rejects.toThrow(/Duplicate image sequence filename/);
+  });
+
+  it("rejects an async source that produces fewer frames than declared", async () => {
+    async function* frames() {
+      yield { name: "frame.png", blob: new Blob(["one"]) };
+    }
+    await expect(createImageSequenceZipFromFrames(frames(), 2)).rejects.toThrow(/frame count mismatch/);
+  });
+});
 
 describe("createImageSequenceZip", () => {
   it("packages each frame using its original filename and bytes", async () => {
