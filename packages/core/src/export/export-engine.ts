@@ -909,6 +909,7 @@ export class ExportEngine {
   async *exportImageSequence(
     project: Project,
     settings: Partial<SequenceExportSettings> = {},
+    onFrame?: (frame: { name: string; blob: Blob }) => void | Promise<void>,
   ): AsyncGenerator<ExportProgress, ExportResult> {
     this.ensureRenderingInitialized();
 
@@ -1003,7 +1004,15 @@ export class ExportEngine {
           frameNumber,
           fullSettings.format,
         );
-        files.push({ name: frameName, blob: result.blob });
+        const exportedFrame = { name: frameName, blob: result.blob };
+        // Stream each rendered frame to the caller before rendering the next.
+        // Awaiting the callback applies destination backpressure and avoids
+        // retaining all encoded frame Blobs in memory.
+        if (onFrame) {
+          await onFrame(exportedFrame);
+        } else {
+          files.push(exportedFrame);
+        }
         totalBytes += result.blob.size;
         this.currentExport!.framesRendered = i + 1;
 
@@ -1035,8 +1044,8 @@ export class ExportEngine {
       const totalSize = totalBytes;
       return {
         success: true,
-        blob: files[0]?.blob,
-        files,
+        blob: onFrame ? undefined : files[0]?.blob,
+        files: onFrame ? [] : files,
         stats: this.calculateStats(framesToExport, totalSize),
       };
     } catch (error) {
