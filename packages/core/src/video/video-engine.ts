@@ -52,6 +52,7 @@ import {
   isAnimatedGif,
 } from "../media/gif-decoder";
 import { getParticleEngine } from "../effects/particle-engine";
+import { renderParticles } from "../effects/particle-renderer";
 import { getPersonSegmentationEngine } from "../ai/person-segmentation-engine";
 
 const DEFAULT_CACHE_CONFIG: FrameCacheConfig = {
@@ -1246,27 +1247,13 @@ export class VideoEngine {
 
     if (particles.length === 0) return;
 
+    // ParticleEngine uses a bottom-left origin for its vertical axis, while
+    // canvas coordinates grow downward. Flip the context once, then share the
+    // same glow/rotation renderer used by the rest of the cinematic effects.
     ctx.save();
-
-    for (const particle of particles) {
-      if (!particle.active || particle.opacity <= 0) continue;
-
-      ctx.globalAlpha = particle.opacity;
-      ctx.fillStyle = particle.color;
-
-      const screenY = height - particle.position.y;
-
-      ctx.beginPath();
-      ctx.arc(
-        particle.position.x,
-        screenY,
-        particle.size / 2,
-        0,
-        Math.PI * 2
-      );
-      ctx.fill();
-    }
-
+    ctx.translate(0, height);
+    ctx.scale(1, -1);
+    renderParticles(ctx, particles, { glow: 1.8 });
     ctx.restore();
   }
 
