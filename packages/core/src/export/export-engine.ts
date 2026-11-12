@@ -778,7 +778,7 @@ export class ExportEngine {
       yield this.createProgress("preparing", 0, 1, 0, 0);
       const audioBuffer = await this.renderTimelineAudio(project);
 
-      if (this.abortController?.signal.aborted) {
+      if (controller.signal.aborted) {
         throw this.createError("CANCELLED", "Export cancelled by user", "rendering");
       }
 
@@ -795,7 +795,7 @@ export class ExportEngine {
       // Encode based on format
       let blob: Blob;
 
-      if (this.abortController?.signal.aborted) {
+      if (controller.signal.aborted) {
         throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
       }
 
