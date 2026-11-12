@@ -924,7 +924,7 @@ export class ExportEngine {
     const controller = new AbortController();
     this.abortController = controller;
     this.currentExport = { startTime: Date.now(), framesRendered: 0 };
-    const blobs: Blob[] = [];
+    const files: Array<{ name: string; blob: Blob }> = [];
 
     try {
       yield this.createProgress("preparing", 0, framesToExport, 0, 0);
@@ -953,7 +953,14 @@ export class ExportEngine {
           };
         }
 
-        blobs.push(result.blob);
+        const framePattern = fullSettings.namingPattern.match(/\{(0+)\}/);
+        const frameName = framePattern
+          ? fullSettings.namingPattern.replace(
+              framePattern[0],
+              String(frameNumber).padStart(framePattern[1].length, "0"),
+            )
+          : `${fullSettings.namingPattern}_${frameNumber}`;
+        files.push({ name: frameName, blob: result.blob });
         this.currentExport!.framesRendered = i + 1;
 
         yield this.createProgress(
@@ -961,7 +968,7 @@ export class ExportEngine {
           (i + 1) / framesToExport,
           framesToExport,
           i + 1,
-          blobs.reduce((sum, blob) => sum + blob.size, 0),
+          files.reduce((sum, file) => sum + file.blob.size, 0),
         );
       }
 
@@ -978,13 +985,14 @@ export class ExportEngine {
         1,
         framesToExport,
         framesToExport,
-        blobs.reduce((sum, blob) => sum + blob.size, 0),
+        files.reduce((sum, file) => sum + file.blob.size, 0),
       );
 
-      const totalSize = blobs.reduce((sum, blob) => sum + blob.size, 0);
+      const totalSize = files.reduce((sum, file) => sum + file.blob.size, 0);
       return {
         success: true,
-        blob: blobs[0],
+        blob: files[0]?.blob,
+        files,
         stats: this.calculateStats(framesToExport, totalSize),
       };
     } catch (error) {
