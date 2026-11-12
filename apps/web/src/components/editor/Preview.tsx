@@ -3360,8 +3360,15 @@ export const Preview: React.FC = () => {
 
               const normalTimeAdvance = actualFrameDuration / 1000;
               const mediaTimeAdvance = normalTimeAdvance * currentSpeed;
-              currentPlayheadTime += normalTimeAdvance;
-              currentMediaTime += mediaTimeAdvance;
+              // If decoding/rendering falls behind, skip a small number of stale
+              // frames instead of letting this single-track loop drift behind real time.
+              const missedFrames =
+                targetTime > 0 && Number.isFinite(elapsed)
+                  ? Math.min(5, Math.max(0, Math.floor(elapsed / targetTime) - 1))
+                  : 0;
+              const frameAdvance = 1 + missedFrames;
+              currentPlayheadTime += normalTimeAdvance * frameAdvance;
+              currentMediaTime += mediaTimeAdvance * frameAdvance;
 
               const delay = Math.max(0, targetTime - elapsed);
               lastFrameTimestamp = now;
