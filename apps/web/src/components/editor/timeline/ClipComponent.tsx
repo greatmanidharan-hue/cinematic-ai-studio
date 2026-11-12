@@ -237,69 +237,63 @@ const ClipComponentInner: React.FC<ClipComponentProps> = ({
 
     animationFrameId = requestAnimationFrame(scrollLoop);
 
-    const handleMouseMove = (e: MouseEvent) => {
-      mousePositionRef.current.x = e.clientX;
-      mousePositionRef.current.y = e.clientY;
+    let dragFrameId: number | null = null;
+    let pendingDragPoint: { clientX: number; clientY: number } | null = null;
 
+    const applyDrag = (clientX: number, clientY: number) => {
       const rect = clipRef.current?.parentElement?.getBoundingClientRect();
       const timelineRect = timelineRef.current?.getBoundingClientRect();
       if (!rect || !timelineRect) return;
 
-      const x = e.clientX - rect.left - dragOffset;
+      const x = clientX - rect.left - dragOffset;
       const rawTime = Math.max(0, x / pixelsPerSecond);
-
       const dragSnapSettings = { ...snapSettings, snapToPlayhead: false };
-      const snapResult = calculateSnap(
-        rawTime,
-        clip.id,
-        allTracks,
-        playheadPosition,
-        dragSnapSettings,
-        pixelsPerSecond,
-        clip.duration,
-      );
+      const snapResult = calculateSnap(rawTime, clip.id, allTracks, playheadPosition, dragSnapSettings, pixelsPerSecond, clip.duration);
       const currentScrollTop = timelineRef.current?.scrollTop || 0;
       const scrollDelta = currentScrollTop - dragStartRef.current.scrollTop;
-      const yDelta = (e.clientY - dragStartRef.current.mouseY) + scrollDelta;
-      setDragYOffset(yDelta);
+      setDragYOffset((clientY - dragStartRef.current.mouseY) + scrollDelta);
 
       const scrollTop = timelineRef.current?.scrollTop || 0;
-      const mouseY = e.clientY - timelineRect.top + scrollTop;
+      const mouseY = clientY - timelineRect.top + scrollTop;
       let targetTrackId: string | undefined;
       let hoveredTrackType: string | undefined;
       let cumulativeY = 0;
-
       for (const t of allTracks) {
         const height = trackHeights.get(t.id) || 60;
         if (mouseY >= cumulativeY && mouseY < cumulativeY + height) {
           hoveredTrackType = t.type;
-          if (t.type === track.type && t.id !== track.id) {
-            targetTrackId = t.id;
-          }
+          if (t.type === track.type && t.id !== track.id) targetTrackId = t.id;
           break;
         }
         cumulativeY += height;
       }
 
-      const isOverDifferentTrackType = hoveredTrackType !== undefined && hoveredTrackType !== track.type;
-      setIsInvalidDrop(isOverDifferentTrackType);
-
+      setIsInvalidDrop(hoveredTrackType !== undefined && hoveredTrackType !== track.type);
       pendingDropRef.current = { time: snapResult.time, targetTrackId };
       onMoveClip(clip.id, snapResult.time, undefined);
 
-      // Move every companion clip in the multi-selection by the same
-      // delta. Cross-track moves of the primary don't take any
-      // companions along — that gets too lossy when they live on tracks
-      // of a different type — but same-track drags stay locked.
       if (multiDragSnapshotRef.current.length > 0) {
         const deltaTime = snapResult.time - clip.startTime;
         for (const snap of multiDragSnapshotRef.current) {
-          const newStart = Math.max(0, snap.startTime + deltaTime);
-          onMoveClip(snap.clipId, newStart, undefined);
+          onMoveClip(snap.clipId, Math.max(0, snap.startTime + deltaTime), undefined);
         }
       }
-
       onSnapIndicator(snapResult.snapped && snapResult.snapPoint ? snapResult.snapPoint.time : null);
+    };
+
+    const flushPendingDrag = () => {
+      dragFrameId = null;
+      if (!pendingDragPoint) return;
+      const point = pendingDragPoint;
+      pendingDragPoint = null;
+      applyDrag(point.clientX, point.clientY);
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      mousePositionRef.current.x = e.clientX;
+      mousePositionRef.current.y = e.clientY;
+      pendingDragPoint = { clientX: e.clientX, clientY: e.clientY };
+      if (dragFrameId === null) dragFrameId = requestAnimationFrame(flushPendingDrag);
     };
 
     let groupClosed = false;
@@ -310,6 +304,17 @@ const ClipComponentInner: React.FC<ClipComponentProps> = ({
     };
 
     const handleMouseUp = () => {
+      if (animationFrameId !== null) {
+        cancelAnimationFrame(animationFrameId);
+      }
+
+      if (dragFrameId !== null) cancelAnimationFrame(dragFrameId);
+      dragFrameId = null;
+      if (pendingDragPoint) {
+        const point = pendingDragPoint;
+        pendingDragPoint = null;
+        applyDrag(point.clientX, point.clientY);
+      }
       if (animationFrameId !== null) {
         cancelAnimationFrame(animationFrameId);
       }
@@ -331,9 +336,9 @@ const ClipComponentInner: React.FC<ClipComponentProps> = ({
     window.addEventListener("mouseup", handleMouseUp);
 
     return () => {
-      if (animationFrameId !== null) {
-        cancelAnimationFrame(animationFrameId);
-      }
+      if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
+      if (dragFrameId !== null) cancelAnimationFrame(dragFrameId);
+      pendingDragPoint = null;
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
       closeGroup();
