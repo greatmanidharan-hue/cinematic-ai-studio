@@ -458,7 +458,9 @@ export const Toolbar: React.FC = () => {
               await new Promise<void>((resolve) => frameWaiters.push(resolve));
               continue;
             }
-            yield queuedFrames.shift()!;
+            const nextFrame = queuedFrames.shift()!;
+            frameWaiters.shift()?.();
+            yield nextFrame;
           }
           if (frameError) throw frameError;
         };
