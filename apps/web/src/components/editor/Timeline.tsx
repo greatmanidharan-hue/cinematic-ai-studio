@@ -63,44 +63,40 @@ export const Timeline: React.FC = () => {
   const scrollFrameRef = useRef<number | null>(null);
   const pendingScrollRef = useRef<{ left: number; top: number } | null>(null);
 
-  const {
-    project,
-    undo,
-    redo,
-    canUndo,
-    canRedo,
-    splitClip,
-    removeClip,
-    addTrack,
-    reorderTrack,
-    deleteShapeClip,
-    deleteSVGClip,
-    deleteTextClip,
-    removeMarker,
-    updateMarker,
-    updateClipKeyframes,
-  } = useProjectStore();
+  const project = useProjectStore((state) => state.project);
+  const undo = useProjectStore((state) => state.undo);
+  const redo = useProjectStore((state) => state.redo);
+  const canUndo = useProjectStore((state) => state.canUndo);
+  const canRedo = useProjectStore((state) => state.canRedo);
+  const splitClip = useProjectStore((state) => state.splitClip);
+  const removeClip = useProjectStore((state) => state.removeClip);
+  const addTrack = useProjectStore((state) => state.addTrack);
+  const reorderTrack = useProjectStore((state) => state.reorderTrack);
+  const deleteShapeClip = useProjectStore((state) => state.deleteShapeClip);
+  const deleteSVGClip = useProjectStore((state) => state.deleteSVGClip);
+  const deleteTextClip = useProjectStore((state) => state.deleteTextClip);
+  const removeMarker = useProjectStore((state) => state.removeMarker);
+  const updateMarker = useProjectStore((state) => state.updateMarker);
+  const updateClipKeyframes = useProjectStore((state) => state.updateClipKeyframes);
   const tracks = project.timeline.tracks;
 
   const [draggedTrackId, setDraggedTrackId] = React.useState<string | null>(
     null,
   );
 
-  const {
-    playheadPosition,
-    playbackState,
-    pixelsPerSecond,
-    scrollX,
-    scrollY,
-    viewportWidth,
-    setViewportDimensions,
-    zoomIn,
-    zoomOut,
-    trackHeight,
-    setTrackHeight,
-    setTrackHeightById,
-    getTrackHeight,
-  } = useTimelineStore();
+  const playheadPosition = useTimelineStore((state) => state.playheadPosition);
+  const playbackState = useTimelineStore((state) => state.playbackState);
+  const pixelsPerSecond = useTimelineStore((state) => state.pixelsPerSecond);
+  const scrollX = useTimelineStore((state) => state.scrollX);
+  const scrollY = useTimelineStore((state) => state.scrollY);
+  const viewportWidth = useTimelineStore((state) => state.viewportWidth);
+  const setViewportDimensions = useTimelineStore((state) => state.setViewportDimensions);
+  const zoomIn = useTimelineStore((state) => state.zoomIn);
+  const zoomOut = useTimelineStore((state) => state.zoomOut);
+  const trackHeight = useTimelineStore((state) => state.trackHeight);
+  const setTrackHeight = useTimelineStore((state) => state.setTrackHeight);
+  const setTrackHeightById = useTimelineStore((state) => state.setTrackHeightById);
+  const getTrackHeight = useTimelineStore((state) => state.getTrackHeight);
 
   const [showLayersPanel, setShowLayersPanel] = useState(false);
 
@@ -573,7 +569,7 @@ export const Timeline: React.FC = () => {
     [],
   );
 
-  const { moveClip } = useProjectStore();
+  const moveClip = useProjectStore((state) => state.moveClip);
   const handleMoveClip = useCallback(
     async (clipId: string, newStartTime: number, targetTrackId?: string) => {
       const graphicClip = allShapeClips.find((sc) => sc.id === clipId);
