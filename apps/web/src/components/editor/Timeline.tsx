@@ -102,9 +102,24 @@ export const Timeline: React.FC = () => {
 
   const [showLayersPanel, setShowLayersPanel] = useState(false);
 
-  const { select, selectMultiple, clearSelection, getSelectedClipIds, snapSettings, toggleSnap } =
-    useUIStore();
-  const selectedClipIds = getSelectedClipIds();
+  const selectedItems = useUIStore((state) => state.selectedItems);
+  const select = useUIStore((state) => state.select);
+  const selectMultiple = useUIStore((state) => state.selectMultiple);
+  const clearSelection = useUIStore((state) => state.clearSelection);
+  const snapSettings = useUIStore((state) => state.snapSettings);
+  const toggleSnap = useUIStore((state) => state.toggleSnap);
+  const selectedClipIds = useMemo(
+    () =>
+      selectedItems
+        .filter(
+          (item) =>
+            item.type === "clip" ||
+            item.type === "text-clip" ||
+            item.type === "shape-clip",
+        )
+        .map((item) => item.id),
+    [selectedItems],
+  );
 
   const { getTitleEngine, getGraphicsEngine } = useEngineStore();
   const titleEngine = getTitleEngine();
