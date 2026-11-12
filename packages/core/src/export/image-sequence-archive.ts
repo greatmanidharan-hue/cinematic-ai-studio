@@ -8,8 +8,7 @@ export interface ImageSequenceZipOptions {
 }
 
 function validateEntryName(name: string): string {
-  const trimmedName = name.trim();
-  const normalizedName = trimmedName.replace(/\\/g, "/").normalize("NFC");
+  const normalizedName = name.replace(/\\/g, "/").normalize("NFC");
   const segments = normalizedName.split("/");
   const hasUnsafeSegment = segments.some((segment) => {
     const deviceName = segment.split(".")[0].trimEnd().toUpperCase();
@@ -23,7 +22,7 @@ function validateEntryName(name: string): string {
     );
   });
   if (
-    !trimmedName ||
+    !name ||
     normalizedName.startsWith("/") ||
     /^[A-Za-z]:/.test(normalizedName) ||
     hasUnsafeSegment
