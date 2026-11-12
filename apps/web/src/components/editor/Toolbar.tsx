@@ -461,7 +461,15 @@ export const Toolbar: React.FC = () => {
                 throw new Error("Image sequence export cancelled.");
               }
               if (queuedFrames.length === 0) {
-                await new Promise<void>((resolve) => frameWaiters.push(resolve));
+                await new Promise<void>((resolve) => {
+                  frameWaiters.push(resolve);
+                  // Recheck after registering to close the abort/producer-finish race.
+                  if (zipController.signal.aborted || framesDone || frameError) {
+                    const waiterIndex = frameWaiters.indexOf(resolve);
+                    if (waiterIndex >= 0) frameWaiters.splice(waiterIndex, 1);
+                    resolve();
+                  }
+                });
                 continue;
               }
               const nextFrame = queuedFrames.shift()!;
