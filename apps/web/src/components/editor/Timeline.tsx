@@ -1191,6 +1191,7 @@ export const Timeline: React.FC = () => {
                   onMoveTextClip={handleMoveTextClip}
                   onTrimShapeClip={handleTrimShapeClip}
                   scrollX={scrollX}
+                  viewportWidth={viewportWidth}
                   trackHeight={getTrackHeight(track.id)}
                   onResizeTrack={setTrackHeightById}
                   onKeyframeSelect={handleKeyframeSelect}
