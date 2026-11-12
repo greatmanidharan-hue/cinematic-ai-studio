@@ -132,9 +132,13 @@ const ParticleEffectsSectionWrapper: React.FC<{
   clipDuration: number;
   clipStartTime: number;
 }> = ({ clipId, clipDuration, clipStartTime }) => {
-  const effects = useProjectStore(
+  const projectEffects = useProjectStore(
     (state) => state.project.timeline.particleEffects ?? [],
-  ).filter((effect) => effect.clipId === clipId);
+  );
+  const effects = React.useMemo(
+    () => projectEffects.filter((effect) => effect.clipId === clipId),
+    [projectEffects, clipId],
+  );
   const particleEngine = React.useMemo(() => getParticleEngine(), []);
 
   React.useEffect(() => {
@@ -153,7 +157,7 @@ const ParticleEffectsSectionWrapper: React.FC<{
         particleEngine.toggleEffect(effect.id, effect.enabled);
       }
     }
-  }, [effects, particleEngine]);
+  }, [projectEffects, particleEngine]);
 
   const commitEffects = React.useCallback((next: ParticleEffect[]) => {
     useProjectStore.setState((state) => ({
