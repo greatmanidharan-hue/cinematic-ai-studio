@@ -482,7 +482,6 @@ export const Toolbar: React.FC = () => {
         void archivePromise.catch((error) => {
           frameError = error instanceof Error ? error : new Error("Image sequence ZIP packaging failed.");
           framesDone = true;
-          zipController.abort();
           engine.cancel();
           frameWaiters.splice(0).forEach((wake) => wake());
         });
@@ -491,9 +490,10 @@ export const Toolbar: React.FC = () => {
           queuedFrames.push(frame);
           frameWaiters.shift()?.();
           // Wait until the ZIP consumer takes this frame before rendering another.
-          while (queuedFrames.includes(frame) && !zipController.signal.aborted) {
+          while (queuedFrames.includes(frame) && !zipController.signal.aborted && !frameError) {
             await new Promise<void>((resolve) => frameWaiters.push(resolve));
           }
+          if (frameError) throw frameError;
         });
         let result: ExportResult | undefined;
         try {
