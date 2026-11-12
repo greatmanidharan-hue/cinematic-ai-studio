@@ -48,16 +48,17 @@ export async function createImageSequenceZip(
   const output: Uint8Array[] = [];
   let outputError: Error | null = null;
   let resolveZip: (() => void) | undefined;
-  let rejectZip: ((error: Error) => void) | undefined;
-  const zipFinished = new Promise<void>((resolve, reject) => {
+  const zipFinished = new Promise<void>((resolve) => {
     resolveZip = resolve;
-    rejectZip = reject;
   });
 
   const zip = new Zip((error, data, final) => {
     if (error) {
       outputError = error;
-      rejectZip?.(error);
+      // Resolve rather than reject here: ZIP callbacks may fire before the
+      // async producer reaches its await, which could otherwise create an
+      // unhandled promise rejection during cancellation or compression errors.
+      resolveZip?.();
       return;
     }
     if (data.length > 0) output.push(data);
