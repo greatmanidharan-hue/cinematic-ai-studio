@@ -228,6 +228,14 @@ describe("createImageSequenceZip", () => {
     ).rejects.toThrow(/Unsafe image sequence filename/);
   });
 
+  it("rejects empty path segments and trailing separators", async () => {
+    for (const name of ["frames//shot.png", "frames/shot.png/", "frames\\\\shot.png"]) {
+      await expect(
+        createImageSequenceZip([{ name, blob: new Blob(["unsafe"]) }]),
+      ).rejects.toThrow(/Unsafe image sequence filename/);
+    }
+  });
+
   it("rejects dot-segment filenames", async () => {
     await expect(
       createImageSequenceZip([{ name: "frames/./frame.png", blob: new Blob(["unsafe"]) }]),
