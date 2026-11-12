@@ -539,6 +539,47 @@ describe("ExportEngine", () => {
     });
   });
 
+  describe("image sequence validation", () => {
+    it("should reject an end frame outside the timeline before rendering", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 5 }),
+      });
+
+      const generator = exportEngine.exportImageSequence(project, {
+        startFrame: 0,
+        endFrame: 5,
+      });
+      const result = await generator.next();
+
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected sequence validation to stop export");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockRenderFrame).not.toHaveBeenCalled();
+    });
+
+    it("should reject an empty sequence naming pattern before rendering", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 5 }),
+      });
+
+      const generator = exportEngine.exportImageSequence(project, {
+        namingPattern: "   ",
+      });
+      const result = await generator.next();
+
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected sequence validation to stop export");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockRenderFrame).not.toHaveBeenCalled();
+    });
+  });
+
   describe("video export", () => {
     it("should render long export audio in chunks and clear cached audio", async () => {
       const project = createMockProject({
