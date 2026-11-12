@@ -18,6 +18,10 @@ import { toast } from "../../../stores/notification-store";
 
 type GraphicClipUnion = ShapeClip | SVGClip | StickerClip;
 
+const noopKeyframeSelect = (_keyframeId: string, _addToSelection: boolean) => {};
+const noopKeyframeMove = (_keyframeId: string, _newTime: number) => {};
+const noopKeyframeDelete = (_keyframeId: string) => {};
+
 interface TrackLaneProps {
   track: Track;
   allTracks: Track[];
@@ -96,6 +100,10 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
   const resizeStartY = useRef<number>(0);
   const resizeStartHeight = useRef<number>(0);
 
+  const selectedClipIdSet = useMemo(
+    () => new Set(selectedClipIds),
+    [selectedClipIds],
+  );
   const textClipIds = useMemo(
     () => new Set(textClips.map((clip) => clip.id)),
     [textClips],
@@ -292,7 +300,7 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
               track={track}
               allTracks={allTracks}
               pixelsPerSecond={pixelsPerSecond}
-              isSelected={selectedClipIds.includes(clip.id)}
+              isSelected={selectedClipIdSet.has(clip.id)}
               trackHeights={trackHeights}
               timelineRef={timelineRef}
               onSelect={onSelectClip}
@@ -306,7 +314,7 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
             key={textClip.id}
             textClip={textClip}
             pixelsPerSecond={pixelsPerSecond}
-            isSelected={selectedClipIds.includes(textClip.id)}
+            isSelected={selectedClipIdSet.has(textClip.id)}
             onSelect={onSelectClip}
             onTrim={onTrimTextClip}
             onMoveClip={onMoveTextClip}
@@ -317,7 +325,7 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
             key={shapeClip.id}
             shapeClip={shapeClip}
             pixelsPerSecond={pixelsPerSecond}
-            isSelected={selectedClipIds.includes(shapeClip.id)}
+            isSelected={selectedClipIdSet.has(shapeClip.id)}
             onSelect={onSelectClip}
             onTrim={onTrimShapeClip}
             onMoveClip={onMoveClip}
@@ -348,9 +356,9 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
               <KeyframeTrack
                 clip={clip}
                 pixelsPerSecond={pixelsPerSecond}
-                onKeyframeSelect={onKeyframeSelect ?? (() => {})}
-                onKeyframeMove={onKeyframeMove ?? (() => {})}
-                onKeyframeDelete={onKeyframeDelete ?? (() => {})}
+                onKeyframeSelect={onKeyframeSelect ?? noopKeyframeSelect}
+                onKeyframeMove={onKeyframeMove ?? noopKeyframeMove}
+                onKeyframeDelete={onKeyframeDelete ?? noopKeyframeDelete}
                 selectedKeyframeIds={selectedKeyframeIds}
               />
             </div>
