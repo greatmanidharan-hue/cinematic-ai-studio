@@ -42,6 +42,7 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@fairarena/ui";
+import { LightningEffectLane } from "./timeline/LightningEffectLane";
 import {
   Playhead,
   TimeRuler,
@@ -690,6 +691,26 @@ export const Timeline: React.FC = () => {
     [tracks],
   );
 
+
+  const updateLightningEffect = useCallback(
+    (effectId: string, updates: Partial<import("@fairarena/core").LightningEffectClip>) => {
+      useProjectStore.setState((state) => ({
+        project: {
+          ...state.project,
+          timeline: {
+            ...state.project.timeline,
+            lightningEffects: (state.project.timeline.lightningEffects ?? []).map((effect) =>
+              effect.id === effectId ? { ...effect, ...updates } : effect,
+            ),
+          },
+          modifiedAt: Date.now(),
+        },
+      }));
+      window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+    },
+    [],
+  );
+
   const visualOrderTracks = useMemo(() => tracks, [tracks]);
 
   return (
@@ -990,6 +1011,10 @@ export const Timeline: React.FC = () => {
                   </div>
                 );
               })}
+              <div className="h-11 flex items-center gap-2 px-3 border-t border-border bg-sky-500/5 text-[10px] font-semibold tracking-wide text-sky-300">
+                <span>⚡</span><span>LIGHTNING VFX</span>
+                <span className="ml-auto text-[9px] font-normal text-text-muted">{project.timeline.lightningEffects?.length ?? 0}</span>
+              </div>
             </div>
           </div>
 
@@ -1122,6 +1147,13 @@ export const Timeline: React.FC = () => {
                   selectedKeyframeIds={selectedKeyframeIds}
                 />
               ))}
+
+              <LightningEffectLane
+                effects={project.timeline.lightningEffects ?? []}
+                pixelsPerSecond={pixelsPerSecond}
+                duration={timelineDuration}
+                onUpdate={updateLightningEffect}
+              />
 
               <BeatMarkerOverlay
                 pixelsPerSecond={pixelsPerSecond}
