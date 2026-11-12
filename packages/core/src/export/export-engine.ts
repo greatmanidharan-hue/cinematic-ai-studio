@@ -970,6 +970,16 @@ export class ExportEngine {
         const time = frameNumber / frameRate;
         const result = await this.exportFrame(project, time, fullSettings);
 
+        // Rendering is asynchronous and may finish after the user presses
+        // Cancel. Do not retain or report a frame produced by a cancelled run.
+        if (controller.signal.aborted) {
+          throw this.createError(
+            "CANCELLED",
+            "Export cancelled by user",
+            "rendering",
+          );
+        }
+
         if (!result.success || !result.blob) {
           return {
             success: false,
