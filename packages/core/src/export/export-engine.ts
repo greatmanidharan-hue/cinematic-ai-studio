@@ -1210,9 +1210,17 @@ export class ExportEngine {
     const target = new BufferTarget();
     const output = new Output({ format: outputFormat, target });
 
+    if (this.abortController?.signal.aborted) {
+      throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+    }
+
     const audioCodec = await getFirstEncodableAudioCodec(
       outputFormat.getSupportedAudioCodecs(),
     );
+
+    if (this.abortController?.signal.aborted) {
+      throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+    }
 
     const audioSource = new AudioSampleSource({
       codec: audioCodec || "mp3",
@@ -1225,6 +1233,13 @@ export class ExportEngine {
       const audioSamples = AudioSample.fromAudioBuffer(buffer, 0);
       for (const sample of audioSamples) {
         try {
+          if (this.abortController?.signal.aborted) {
+            throw this.createError(
+              "CANCELLED",
+              "Export cancelled by user",
+              "encoding",
+            );
+          }
           await audioSource.add(sample);
         } finally {
           sample.close();
@@ -1232,6 +1247,10 @@ export class ExportEngine {
       }
     } finally {
       audioSource.close();
+    }
+
+    if (this.abortController?.signal.aborted) {
+      throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
     }
 
     await output.finalize();
