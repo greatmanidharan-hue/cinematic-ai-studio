@@ -50,6 +50,17 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
 
   const prevEffectIdsRef = useRef<Set<string>>(new Set());
 
+  // This component owns only the effect IDs it receives. Remove those IDs
+  // on unmount so a project switch cannot leave stale emitters in the shared engine.
+  useEffect(() => {
+    return () => {
+      for (const effectId of prevEffectIdsRef.current) {
+        engine.removeEffect(effectId);
+      }
+      prevEffectIdsRef.current = new Set();
+    };
+  }, [engine]);
+
   useEffect(() => {
     const currentIds = new Set(effects.map(e => e.id));
     const prevIds = prevEffectIdsRef.current;
@@ -139,9 +150,13 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       geometry.dispose();
       material.dispose();
       renderer.dispose();
-      if (containerRef.current && renderer.domElement) {
+      if (containerRef.current && renderer.domElement.parentElement === containerRef.current) {
         containerRef.current.removeChild(renderer.domElement);
       }
+      if (geometryRef.current === geometry) geometryRef.current = null;
+      if (rendererRef.current === renderer) rendererRef.current = null;
+      if (sceneRef.current === scene) sceneRef.current = null;
+      if (cameraRef.current === camera) cameraRef.current = null;
     };
   }, [width, height]);
 
@@ -153,8 +168,8 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     if (cached) return cached;
 
     let rgb = { r: 1, g: 1, b: 1 };
-    const hex = /^#?([a-f\\d]{2})([a-f\\d]{2})([a-f\\d]{2})$/i.exec(value);
-    const match = /^rgb\\((\\d+),\\s*(\\d+),\\s*(\\d+)\\)$/i.exec(value);
+    const hex = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(value);
+    const match = /^rgb\((\d+),\\s*(\d+),\\s*(\d+)\)$/i.exec(value);
     if (hex) {
       rgb = {
         r: parseInt(hex[1], 16) / 255,
