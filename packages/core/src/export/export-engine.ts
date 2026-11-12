@@ -290,13 +290,13 @@ export class ExportEngine {
       };
     }
 
-    this.abortController = new AbortController();
-    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
-
     await this.initializeGPUForExport(
       fullSettings.width,
       fullSettings.height,
     );
+
+    this.abortController = new AbortController();
+    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
 
     this.videoEngine?.resetExportState(project.timeline.particleEffects ?? []);
     if (this.videoEngine) {
