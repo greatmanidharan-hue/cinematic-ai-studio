@@ -3,6 +3,21 @@ import { unzipSync } from "fflate";
 import { createImageSequenceZip, createImageSequenceZipFromFrames } from "./image-sequence-archive";
 
 describe("createImageSequenceZipFromFrames", () => {
+  it("rejects invalid declared frame counts before reading the source", async () => {
+    let sourceStarted = false;
+    async function* frames() {
+      sourceStarted = true;
+      yield { name: "frame.png", blob: new Blob(["frame"]) };
+    }
+
+    for (const totalFrames of [0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      await expect(
+        createImageSequenceZipFromFrames(frames(), totalFrames),
+      ).rejects.toThrow(/without frames/);
+    }
+    expect(sourceStarted).toBe(false);
+  });
+
   it("packages frames from an async source incrementally", async () => {
     const yielded: string[] = [];
     async function* frames() {
