@@ -11,12 +11,21 @@ function validateEntryName(name: string): string {
   const trimmedName = name.trim();
   const normalizedName = trimmedName.replace(/\\/g, "/");
   const segments = normalizedName.split("/");
+  const hasUnsafeSegment = segments.some((segment) => {
+    const deviceName = segment.split(".")[0].toUpperCase();
+    return (
+      segment === "." ||
+      segment === ".." ||
+      /[. ]$/.test(segment) ||
+      /[:<>"|?*\u0000-\u001f]/.test(segment) ||
+      /^(CON|PRN|AUX|NUL|COM[1-9]|LPT[1-9])$/.test(deviceName)
+    );
+  });
   if (
     !trimmedName ||
     normalizedName.startsWith("/") ||
-    /^[A-Za-z]:\//.test(normalizedName) ||
-    segments.some((segment) => segment === "." || segment === "..") ||
-    trimmedName.includes("\0")
+    /^[A-Za-z]:/.test(normalizedName) ||
+    hasUnsafeSegment
   ) {
     throw new Error(`Unsafe image sequence filename: ${name}`);
   }
@@ -94,8 +103,9 @@ export async function createImageSequenceZipFromFrames(
         throw new Error(`Image sequence frame count mismatch: expected ${totalFrames}, received more than declared.`);
       }
       const name = validateEntryName(frame.name);
-      if (names.has(name)) throw new Error(`Duplicate image sequence filename: ${name}`);
-      names.add(name);
+      const collisionKey = name.toLocaleLowerCase("en-US");
+      if (names.has(collisionKey)) throw new Error(`Duplicate image sequence filename: ${name}`);
+      names.add(collisionKey);
 
       const entry = new ZipDeflate(name, { level: 6 });
       zip.add(entry);
