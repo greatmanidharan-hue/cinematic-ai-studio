@@ -76,8 +76,8 @@ Provide clear capability warnings and fallback paths.
 - The existing Three.js preview renderer is separate from the Canvas renderer. Preview continues to use the established Three.js overlay; no duplicate preview loop was added.
 - `VideoEngine.renderFrame` already advanced the particle engine during export, but drew plain circles. It now delegates particle drawing to the shared Canvas renderer, adding radial glow and rotation while preserving the existing bottom-left particle coordinate convention.
 - Particle simulation now uses a seeded Mulberry32 random source for emission, velocity, turbulence, size, rotation, lifetime and particle IDs. `VideoEngine.resetExportState()` derives a stable FNV-1a seed from the sorted particle-effect configuration before resetting the simulation, so repeated exports with the same effect setup and frame sequence reproduce the same particle pattern.
-- Deterministic simulation tests cover same-seed equality, different-seed variation and reset/replay reproducibility. Tests have been authored but have not yet been executed in this GitHub-only workflow.
-- Export still uses the shared particle-engine singleton also consumed by preview; export/preview concurrency isolation and arbitrary-time seek parity remain open tasks.
+- Deterministic simulation tests cover same-seed equality, different-seed variation and reset/replay reproducibility. Lightning renderer tests cover bolt/branch drawing, deterministic geometry and zero-length endpoints. Tests have been authored but have not yet been executed in this GitHub-only workflow.
+- Export now creates a private `ParticleEngine` snapshot from the shared editor effects when `resetExportState()` runs. Export resets and seeds its own simulation without resetting the live preview engine. The private engine is disposed when the `VideoEngine` is disposed; concurrent exports on the same `VideoEngine` instance and arbitrary-time seek parity still need dedicated handling.
 - No existing editor panel or render pipeline was replaced in this foundation step.
 
 ## Quality gates
