@@ -403,6 +403,55 @@ describe("ExportEngine", () => {
     });
   });
 
+  describe("audio export settings validation", () => {
+    it("should reject a non-finite audio bitrate before starting export", async () => {
+      await exportEngine.initialize();
+
+      const generator = exportEngine.exportAudio(
+        createMockProject(),
+        { bitrate: Number.NaN },
+      );
+      const result = await generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockRenderAudio).not.toHaveBeenCalled();
+    });
+
+    it("should reject invalid nested audio settings before video export setup", async () => {
+      await exportEngine.initialize();
+
+      const project = createMockProject({
+        timeline: createMockTimeline(),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      const generator = exportEngine.exportVideo(
+        project,
+        {
+          ...DEFAULT_VIDEO_SETTINGS,
+          audioSettings: {
+            ...DEFAULT_AUDIO_SETTINGS,
+            sampleRate: 12345 as 44100,
+          },
+        },
+        writableStream,
+      );
+      const result = await generator.next();
+
+      expect(result.done).toBe(true);
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockVideoEngine.initializeGPUCompositor).not.toHaveBeenCalled();
+    });
+  });
+
   describe("video export", () => {
     it("should render long export audio in chunks and clear cached audio", async () => {
       const project = createMockProject({
