@@ -709,38 +709,24 @@ export const Timeline: React.FC = () => {
 
   const updateLightningEffect = useCallback(
     (effectId: string, updates: Partial<import("@fairarena/core").LightningEffectClip>) => {
-      useProjectStore.setState((state) => ({
-        project: {
-          ...state.project,
-          timeline: {
-            ...state.project.timeline,
-            lightningEffects: (state.project.timeline.lightningEffects ?? []).map((effect) =>
-              effect.id === effectId ? { ...effect, ...updates } : effect,
-            ),
-          },
-          modifiedAt: Date.now(),
-        },
-      }));
-      window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+      const current = useProjectStore.getState().project.timeline.lightningEffects ?? [];
+      void useProjectStore.getState().updateTimelineVfx({
+        lightningEffects: current.map((effect) => effect.id === effectId ? { ...effect, ...updates } : effect),
+      }).then((result) => {
+        if (result.success) window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+      });
     },
     [],
   );
 
   const updateParticleEffect = useCallback(
     (effectId: string, updates: Partial<import("@fairarena/core").ParticleEffect>) => {
-      useProjectStore.setState((state) => ({
-        project: {
-          ...state.project,
-          timeline: {
-            ...state.project.timeline,
-            particleEffects: (state.project.timeline.particleEffects ?? []).map((effect) =>
-              effect.id === effectId ? { ...effect, ...updates } : effect,
-            ),
-          },
-          modifiedAt: Date.now(),
-        },
-      }));
-      window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+      const current = useProjectStore.getState().project.timeline.particleEffects ?? [];
+      void useProjectStore.getState().updateTimelineVfx({
+        particleEffects: current.map((effect) => effect.id === effectId ? { ...effect, ...updates } : effect),
+      }).then((result) => {
+        if (result.success) window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+      });
     },
     [],
   );
