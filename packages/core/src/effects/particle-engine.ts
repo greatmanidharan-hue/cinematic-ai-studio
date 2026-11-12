@@ -388,6 +388,37 @@ export class ParticleEngine {
     }
   }
 
+  /**
+   * Rebuild the simulation at an absolute timeline position.
+   * Replaying from zero avoids accumulating stale particles when the editor
+   * playhead is scrubbed, paused, or moved backwards.
+   */
+  seekToTime(
+    targetTime: number,
+    fixedStep = 1 / 30,
+    seed?: number,
+  ): void {
+    const safeTarget = Number.isFinite(targetTime) ? Math.max(0, targetTime) : 0;
+    const safeStep = Number.isFinite(fixedStep) && fixedStep > 0
+      ? Math.min(fixedStep, 1 / 10)
+      : 1 / 30;
+
+    if (seed !== undefined) this.setRandomSeed(seed);
+    else this.setRandomSeed(0x6d2b79f5);
+    this.reset();
+
+    let simulatedTime = 0;
+    while (simulatedTime + safeStep <= safeTarget) {
+      simulatedTime += safeStep;
+      this.update(simulatedTime, safeStep);
+    }
+
+    const remainder = safeTarget - simulatedTime;
+    if (remainder > 1e-8) {
+      this.update(safeTarget, remainder);
+    }
+  }
+
   dispose(): void {
     this.emitters.clear();
     this.effects.clear();
