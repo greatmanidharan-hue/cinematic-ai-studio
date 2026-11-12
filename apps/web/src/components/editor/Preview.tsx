@@ -3862,19 +3862,7 @@ export const Preview: React.FC = () => {
                   lastFrameTimestamp = nowTr;
                   isProcessingFrame = false;
                   if (isActive) {
-                    if (delayTr > 0) {
-                      setTimeout(() => {
-                        if (isActive) {
-                          animationRef.current = requestAnimationFrame(
-                            processMultiTrackFrame,
-                          );
-                        }
-                      }, delayTr);
-                    } else {
-                      animationRef.current = requestAnimationFrame(
-                        processMultiTrackFrame,
-                      );
-                    }
+                    schedulePlaybackFrame(processMultiTrackFrame, delayTr);
                   }
                   return;
                 } catch (error) {
