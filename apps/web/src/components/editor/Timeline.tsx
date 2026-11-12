@@ -1193,6 +1193,10 @@ export const Timeline: React.FC = () => {
                 effects={project.timeline.particleEffects ?? []}
                 pixelsPerSecond={pixelsPerSecond}
                 duration={timelineDuration}
+                snapSettings={snapSettings}
+                snapPoints={playheadSnapPoints}
+                playheadPosition={playheadPosition}
+                markerTimes={project.timeline.markers.map((marker) => marker.time)}
                 onUpdate={updateParticleEffect}
               />
 
