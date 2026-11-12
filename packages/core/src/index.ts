@@ -16,6 +16,7 @@ export * from "./ai";
 export * from "./ai-video";
 export * from "./animation";
 export * from "./effects";
+export { createImageSequenceZip } from "./export/image-sequence-archive";
 export * from "./device";
 export {
   ExportEngine,
