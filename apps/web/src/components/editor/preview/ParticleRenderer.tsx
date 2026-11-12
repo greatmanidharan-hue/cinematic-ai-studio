@@ -2,6 +2,7 @@ import React, { useRef, useEffect, useCallback, useMemo } from "react";
 import * as THREE from "three";
 import {
   getParticleEngine,
+  getParticleEffectsSeed,
   type Particle,
   type ParticleEffect,
 } from "@fairarena/core";
@@ -31,6 +32,9 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   const lastFrameTimeRef = useRef<number>(performance.now());
   const playStartTimeRef = useRef<number>(0);
   const playStartPlayheadRef = useRef<number>(0);
+  const lastSimulatedTimeRef = useRef<number>(currentTime);
+  const lastSeekRef = useRef<{ time: number; seed: number }>({ time: -1, seed: -1 });
+  const particleSeed = useMemo(() => getParticleEffectsSeed(effects), [effects]);
   const isPlayingRef = useRef<boolean>(isPlaying);
   const [isReady, setIsReady] = React.useState(false);
 
@@ -225,6 +229,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     if (isPlaying) {
       playStartTimeRef.current = performance.now();
       playStartPlayheadRef.current = currentTimeRef.current;
+      lastSimulatedTimeRef.current = currentTimeRef.current;
       lastFrameTimeRef.current = performance.now();
 
       const animate = () => {
@@ -233,12 +238,18 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         const now = performance.now();
         const deltaMs = now - lastFrameTimeRef.current;
         lastFrameTimeRef.current = now;
-        const deltaTime = deltaMs / 1000;
-
         const elapsedSinceStart = (now - playStartTimeRef.current) / 1000;
         const estimatedCurrentTime = playStartPlayheadRef.current + elapsedSinceStart;
-
-        engine.update(estimatedCurrentTime, deltaTime);
+        const fixedStep = 1 / 30;
+        if (deltaMs > 500) {
+          engine.seekToTime(estimatedCurrentTime, fixedStep, particleSeed);
+          lastSimulatedTimeRef.current = estimatedCurrentTime;
+        } else {
+          while (lastSimulatedTimeRef.current + fixedStep <= estimatedCurrentTime) {
+            lastSimulatedTimeRef.current += fixedStep;
+            engine.update(lastSimulatedTimeRef.current, fixedStep);
+          }
+        }
         const particles = engine.getParticles();
         updateParticles(particles);
         render();
@@ -255,12 +266,16 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         }
       };
     } else {
-      engine.update(currentTime, 1 / 30);
+      if (lastSeekRef.current.time !== currentTime || lastSeekRef.current.seed !== particleSeed) {
+        engine.seekToTime(currentTime, 1 / 30, particleSeed);
+        lastSeekRef.current = { time: currentTime, seed: particleSeed };
+        lastSimulatedTimeRef.current = currentTime;
+      }
       const particles = engine.getParticles();
       updateParticles(particles);
       render();
     }
-  }, [isPlaying, isReady, currentTime, engine, updateParticles, render, effects]);
+  }, [isPlaying, isReady, currentTime, engine, updateParticles, render, effects, particleSeed]);
 
   useEffect(() => {
     if (cameraRef.current) {
