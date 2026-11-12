@@ -58,6 +58,8 @@ import {
 export const Timeline: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const tracksRef = useRef<HTMLDivElement>(null);
+  const scrollFrameRef = useRef<number | null>(null);
+  const pendingScrollRef = useRef<{ left: number; top: number } | null>(null);
 
   const {
     project,
@@ -222,6 +224,32 @@ export const Timeline: React.FC = () => {
     },
     [tracks, reorderTrack],
   );
+
+  const handleTimelineScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    pendingScrollRef.current = {
+      left: event.currentTarget.scrollLeft,
+      top: event.currentTarget.scrollTop,
+    };
+    if (scrollFrameRef.current !== null) return;
+
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      const next = pendingScrollRef.current;
+      if (!next) return;
+      const state = useTimelineStore.getState();
+      if (state.scrollX !== next.left) state.setScrollX(next.left);
+      if (state.scrollY !== next.top) state.setScrollY(next.top);
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (scrollFrameRef.current !== null) {
+        cancelAnimationFrame(scrollFrameRef.current);
+        scrollFrameRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -1050,10 +1078,7 @@ export const Timeline: React.FC = () => {
           <div
             ref={tracksRef}
             className="flex-1 bg-background relative overflow-auto custom-scrollbar"
-            onScroll={(e) => {
-              setScrollX(e.currentTarget.scrollLeft);
-              setScrollY(e.currentTarget.scrollTop);
-            }}
+            onScroll={handleTimelineScroll}
             onMouseDown={handleBoxSelectionStart}
             onMouseMove={handleBoxSelectionMove}
             onDragOver={(e) => {
