@@ -52,7 +52,7 @@ import {
   getGifFrameAtTime,
   isAnimatedGif,
 } from "../media/gif-decoder";
-import { ParticleEngine, getParticleEngine } from "../effects/particle-engine";
+import { ParticleEngine, getParticleEngine, getParticleEffectsSeed } from "../effects/particle-engine";
 import type { ParticleEffect } from "../effects/particle-types";
 import { renderParticles } from "../effects/particle-renderer";
 import { renderLightningBolt } from "../effects/lightning-bolt-renderer";
@@ -1331,14 +1331,7 @@ export class VideoEngine {
     for (const effect of effects) {
       this.exportParticleEngine.addEffect(effect);
     }
-    // FNV-1a gives each export a stable seed derived from its particle setup.
-    const effectsSignature = JSON.stringify(effects);
-    let seed = 0x811c9dc5;
-    for (let index = 0; index < effectsSignature.length; index++) {
-      seed ^= effectsSignature.charCodeAt(index);
-      seed = Math.imul(seed, 0x01000193);
-    }
-    this.exportParticleEngine.setRandomSeed(seed >>> 0);
+    this.exportParticleEngine.setRandomSeed(getParticleEffectsSeed(effects));
     this.exportParticleEngine.reset();
   }
 
