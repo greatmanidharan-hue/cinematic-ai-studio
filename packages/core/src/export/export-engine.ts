@@ -892,17 +892,45 @@ export class ExportEngine {
       ...settings,
     };
 
-    this.abortController = new AbortController();
-    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
+    const imageSettingsError = this.validateImageSettings(fullSettings);
+    const sequenceSettingsError =
+      !Number.isFinite(frameRate) || frameRate <= 0 || frameRate > 120
+        ? "Sequence frame rate must be finite and between 1 and 120 fps."
+        : !Number.isFinite(timeline.duration) || timeline.duration <= 0
+          ? "Sequence duration must be finite and positive."
+          : !Number.isInteger(fullSettings.startFrame) || fullSettings.startFrame < 0
+            ? "Sequence start frame must be a non-negative integer."
+            : !Number.isInteger(fullSettings.endFrame) ||
+                fullSettings.endFrame < fullSettings.startFrame ||
+                fullSettings.endFrame >= totalFrames
+              ? "Sequence end frame must be an integer within the timeline and not before the start frame."
+              : typeof fullSettings.namingPattern !== "string" ||
+                  fullSettings.namingPattern.trim().length === 0
+                ? "Sequence naming pattern must not be empty."
+                : null;
+
+    if (imageSettingsError || sequenceSettingsError) {
+      return {
+        success: false,
+        error: this.createError(
+          "INVALID_SETTINGS",
+          imageSettingsError ?? sequenceSettingsError!,
+          "preparing",
+        ),
+      };
+    }
 
     const framesToExport = fullSettings.endFrame - fullSettings.startFrame + 1;
+    const controller = new AbortController();
+    this.abortController = controller;
+    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
     const blobs: Blob[] = [];
 
     try {
       yield this.createProgress("preparing", 0, framesToExport, 0, 0);
 
       for (let i = 0; i < framesToExport; i++) {
-        if (this.abortController.signal.aborted) {
+        if (controller.signal.aborted) {
           throw this.createError(
             "CANCELLED",
             "Export cancelled by user",
@@ -912,12 +940,20 @@ export class ExportEngine {
 
         const frameNumber = fullSettings.startFrame + i;
         const time = frameNumber / frameRate;
-
         const result = await this.exportFrame(project, time, fullSettings);
-        if (result.success && result.blob) {
-          blobs.push(result.blob);
+
+        if (!result.success || !result.blob) {
+          return {
+            success: false,
+            error: result.error ?? this.createError(
+              "FRAME_ENCODE_FAILED",
+              "Unable to export image sequence frame.",
+              "rendering",
+            ),
+          };
         }
 
+        blobs.push(result.blob);
         this.currentExport!.framesRendered = i + 1;
 
         yield this.createProgress(
@@ -925,7 +961,15 @@ export class ExportEngine {
           (i + 1) / framesToExport,
           framesToExport,
           i + 1,
-          blobs.reduce((sum, b) => sum + b.size, 0),
+          blobs.reduce((sum, blob) => sum + blob.size, 0),
+        );
+      }
+
+      if (controller.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "rendering",
         );
       }
 
@@ -934,11 +978,10 @@ export class ExportEngine {
         1,
         framesToExport,
         framesToExport,
-        0,
+        blobs.reduce((sum, blob) => sum + blob.size, 0),
       );
 
-      const totalSize = blobs.reduce((sum, b) => sum + b.size, 0);
-
+      const totalSize = blobs.reduce((sum, blob) => sum + blob.size, 0);
       return {
         success: true,
         blob: blobs[0],
@@ -957,8 +1000,10 @@ export class ExportEngine {
         ),
       };
     } finally {
-      this.abortController = null;
-      this.currentExport = null;
+      if (this.abortController === controller) {
+        this.abortController = null;
+        this.currentExport = null;
+      }
     }
   }
 
