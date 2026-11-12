@@ -674,23 +674,23 @@ describe("ExportEngine", () => {
         exportEngine.cancel();
       });
 
-      const cancelledGenerator = exportEngine.exportImageSequence(
-        project,
-        {},
-        cancelledConsumer,
-      );
-      let cancelledResult = await cancelledGenerator.next();
-      while (!cancelledResult.done) {
-        cancelledResult = await cancelledGenerator.next();
-      }
-
-      const nextGenerator = exportEngine.exportImageSequence(project);
-      let nextResult;
       try {
-        nextResult = await nextGenerator.next();
+        const cancelledGenerator = exportEngine.exportImageSequence(
+          project,
+          {},
+          cancelledConsumer,
+        );
+        let cancelledResult = await cancelledGenerator.next();
+        while (!cancelledResult.done) {
+          cancelledResult = await cancelledGenerator.next();
+        }
+
+        const nextGenerator = exportEngine.exportImageSequence(project);
+        let nextResult = await nextGenerator.next();
         while (!nextResult.done) {
           nextResult = await nextGenerator.next();
         }
+
         expect(cancelledResult.value.success).toBe(false);
         expect(cancelledResult.value.error?.code).toBe("CANCELLED");
         expect(nextResult.value.success).toBe(true);
