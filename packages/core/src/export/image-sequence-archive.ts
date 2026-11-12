@@ -92,6 +92,14 @@ export async function createImageSequenceZip(
       zip.add(entry);
 
       const reader = frame.blob.stream().getReader();
+      // Abort can happen while a stream read is pending. Cancel the reader
+      // immediately so packaging does not wait for another chunk to arrive.
+      const cancelReaderOnAbort = () => {
+        void reader.cancel().catch(() => {
+          // The reader may already be closed or errored.
+        });
+      };
+      options.signal?.addEventListener("abort", cancelReaderOnAbort, { once: true });
       try {
         while (true) {
           if (options.signal?.aborted) {
@@ -115,9 +123,13 @@ export async function createImageSequenceZip(
         await outputWriteQueue;
         if (outputError) throw outputError;
       } finally {
+        options.signal?.removeEventListener("abort", cancelReaderOnAbort);
         reader.releaseLock();
       }
 
+      if (options.signal?.aborted) {
+        throw new Error("Image sequence ZIP packaging cancelled.");
+      }
       if (outputError) throw outputError;
       options.onProgress?.(index + 1, normalizedFrames.length);
     }
