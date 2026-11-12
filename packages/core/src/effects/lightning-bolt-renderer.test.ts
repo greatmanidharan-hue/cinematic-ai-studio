@@ -3,14 +3,16 @@ import { renderLightningBolt } from "./lightning-bolt-renderer";
 
 function createContext() {
   const lineTo = vi.fn();
+  const stroke = vi.fn();
   return {
     lineToMock: lineTo,
+    strokeMock: stroke,
     save: vi.fn(),
     restore: vi.fn(),
     beginPath: vi.fn(),
     moveTo: vi.fn(),
     lineTo,
-    stroke: vi.fn(),
+    stroke,
     set globalCompositeOperation(_value: string) {},
     set lineCap(_value: string) {},
     set lineJoin(_value: string) {},
@@ -18,7 +20,7 @@ function createContext() {
     set shadowColor(_value: string) {},
     set shadowBlur(_value: number) {},
     set lineWidth(_value: number) {},
-  } as unknown as CanvasRenderingContext2D & { lineToMock: ReturnType<typeof vi.fn> };
+  } as unknown as CanvasRenderingContext2D & { lineToMock: ReturnType<typeof vi.fn>; strokeMock: ReturnType<typeof vi.fn> };
 }
 
 describe("lightning bolt renderer", () => {
@@ -32,7 +34,7 @@ describe("lightning bolt renderer", () => {
     });
 
     expect(context.save).toHaveBeenCalledOnce();
-    expect(context.stroke).toHaveBeenCalledTimes(5);
+    expect(context.strokeMock).toHaveBeenCalledTimes(5);
     expect(context.restore).toHaveBeenCalledOnce();
   });
 
@@ -59,6 +61,6 @@ describe("lightning bolt renderer", () => {
       end: { x: 5, y: 5 },
     });
 
-    expect(context.stroke).not.toHaveBeenCalled();
+    expect(context.strokeMock).not.toHaveBeenCalled();
   });
 });
