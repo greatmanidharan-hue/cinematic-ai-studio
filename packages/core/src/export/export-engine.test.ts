@@ -485,6 +485,45 @@ describe("ExportEngine", () => {
       expect(result.value.error?.code).toBe("CANCELLED");
     });
 
+    it("clears audio export state after a rendering failure so a retry can start", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({
+          tracks: [
+            createMockTrack({
+              type: "audio",
+              clips: [createMockClip({ duration: 1, outPoint: 1 })],
+            }),
+          ],
+          duration: 1,
+        }),
+      });
+      const renderSpy = vi.spyOn(exportEngine, "renderTimelineAudio")
+        .mockRejectedValueOnce(new Error("temporary audio render failure"))
+        .mockResolvedValueOnce({ duration: 1 } as AudioBuffer);
+
+      try {
+        const failedGenerator = exportEngine.exportAudio(project, { format: "wav" });
+        const preparing = await failedGenerator.next();
+        expect(preparing.done).toBe(false);
+        const failedResult = await failedGenerator.next();
+
+        expect(failedResult.done).toBe(true);
+        if (!failedResult.done) throw new Error("Expected failed audio export to finish");
+        expect(failedResult.value.success).toBe(false);
+        expect(failedResult.value.error?.code).toBe("AUDIO_ENCODE_FAILED");
+
+        const retryGenerator = exportEngine.exportAudio(project, { format: "wav" });
+        let retryResult = await retryGenerator.next();
+        while (!retryResult.done) retryResult = await retryGenerator.next();
+
+        expect(retryResult.value.success).toBe(true);
+        expect(renderSpy).toHaveBeenCalledTimes(2);
+      } finally {
+        renderSpy.mockRestore();
+      }
+    });
+
     it("reports cancellation when audio rendering rejects after cancellation", async () => {
       await exportEngine.initialize();
       const project = createMockProject();
