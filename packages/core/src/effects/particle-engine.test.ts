@@ -39,6 +39,21 @@ describe("deterministic particle simulation", () => {
     expect(simulate(123456)).toEqual(simulate(123456));
   });
 
+  it("copies the emitter blend mode onto every emitted particle", () => {
+    const engine = createEngine(246);
+    engine.updateEffect("fire-test", {
+      particleCount: 24,
+      emissionRate: 30,
+      blendMode: "screen",
+    });
+
+    engine.update(0.5, 0.5);
+
+    const particles = engine.getParticles();
+    expect(particles.length).toBeGreaterThan(0);
+    expect(particles.every((particle) => particle.blendMode === "screen")).toBe(true);
+  });
+
   it("changes the particle pattern when the seed changes", () => {
     expect(simulate(123456)).not.toEqual(simulate(654321));
   });
