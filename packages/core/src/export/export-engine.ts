@@ -862,6 +862,12 @@ export class ExportEngine {
 
       yield this.createProgress("complete", 1, 1, 1, blob.size);
 
+      // The consumer can pause the generator on the completion update and
+      // cancel before requesting the final result.
+      if (controller.signal.aborted) {
+        throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+      }
+
       return {
         success: true,
         blob,
@@ -1149,6 +1155,15 @@ export class ExportEngine {
         framesToExport,
         totalBytes,
       );
+
+      // Respect cancellation while the caller is paused on the final update.
+      if (controller.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "rendering",
+        );
+      }
 
       const totalSize = totalBytes;
       return {
