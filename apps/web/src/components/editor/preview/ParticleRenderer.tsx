@@ -180,9 +180,18 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     for (const blendMode of blendModes) {
       const geometry = new THREE.BufferGeometry();
       const initialCapacity = 256;
-      geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(initialCapacity * 3), 3));
-      geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(initialCapacity * 3), 3));
-      geometry.setAttribute("size", new THREE.BufferAttribute(new Float32Array(initialCapacity), 1));
+      geometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(new Float32Array(initialCapacity * 3), 3).setUsage(THREE.DynamicDrawUsage)
+      );
+      geometry.setAttribute(
+        "color",
+        new THREE.BufferAttribute(new Float32Array(initialCapacity * 3), 3).setUsage(THREE.DynamicDrawUsage)
+      );
+      geometry.setAttribute(
+        "size",
+        new THREE.BufferAttribute(new Float32Array(initialCapacity), 1).setUsage(THREE.DynamicDrawUsage)
+      );
       geometry.setDrawRange(0, 0);
       geometries.set(blendMode, geometry);
       scene.add(new THREE.Points(geometry, createMaterial(blendMode)));
@@ -260,9 +269,18 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         const currentCapacity = currentPosition.array.length / 3;
         if (count > currentCapacity) {
           const capacity = Math.min(10000, 2 ** Math.ceil(Math.log2(count)));
-          geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(capacity * 3), 3));
-          geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(capacity * 3), 3));
-          geometry.setAttribute("size", new THREE.BufferAttribute(new Float32Array(capacity), 1));
+          geometry.setAttribute(
+            "position",
+            new THREE.BufferAttribute(new Float32Array(capacity * 3), 3).setUsage(THREE.DynamicDrawUsage)
+          );
+          geometry.setAttribute(
+            "color",
+            new THREE.BufferAttribute(new Float32Array(capacity * 3), 3).setUsage(THREE.DynamicDrawUsage)
+          );
+          geometry.setAttribute(
+            "size",
+            new THREE.BufferAttribute(new Float32Array(capacity), 1).setUsage(THREE.DynamicDrawUsage)
+          );
         }
 
         const positions = (geometry.getAttribute("position") as THREE.BufferAttribute).array as Float32Array;
