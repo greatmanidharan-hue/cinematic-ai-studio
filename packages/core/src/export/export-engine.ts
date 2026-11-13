@@ -1580,7 +1580,7 @@ export class ExportEngine {
       outputFormat.getSupportedAudioCodecs(),
     );
 
-    if (this.abortController?.signal.aborted) {
+    if (signal.aborted) {
       throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
     }
 
@@ -1598,7 +1598,7 @@ export class ExportEngine {
       const audioSamples = AudioSample.fromAudioBuffer(buffer, 0);
       for (const sample of audioSamples) {
         try {
-          if (this.abortController?.signal.aborted) {
+          if (signal.aborted) {
             throw this.createError(
               "CANCELLED",
               "Export cancelled by user",
@@ -1617,7 +1617,7 @@ export class ExportEngine {
       audioSource.close();
     }
 
-    if (this.abortController?.signal.aborted) {
+    if (signal.aborted) {
       throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
     }
 
