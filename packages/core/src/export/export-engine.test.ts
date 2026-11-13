@@ -24,6 +24,7 @@ const {
     initializeGPUCompositor: vi.fn().mockResolvedValue(undefined),
     getGPUCompositor: vi.fn().mockReturnValue(null),
     renderFrame: mockRenderFrame,
+    setExportFrameRate: vi.fn(),
     resetExportState: vi.fn(),
     clearVideoElementCache: vi.fn(),
     clearCache: vi.fn(),
