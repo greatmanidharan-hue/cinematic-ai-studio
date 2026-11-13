@@ -127,6 +127,8 @@ export const Toolbar: React.FC = () => {
   const [deviceProfile, setDeviceProfile] = useState<DeviceProfile | null>(null);
   const [exportEstimates, setExportEstimates] = useState<Map<string, TimeEstimate>>(new Map());
   const sequenceZipAbortController = useRef<AbortController | null>(null);
+  // The core engine is only owned by this sequence while its frame producer is active.
+  const sequenceProducerActive = useRef(false);
   // Prevent rapid repeated clicks while a save picker or export is starting.
   const exportStartLock = useRef(false);
 
@@ -421,9 +423,13 @@ export const Toolbar: React.FC = () => {
   );
 
   const handleCancelExport = useCallback(() => {
-    const engine = getExportEngine();
-    engine.cancel();
-    sequenceZipAbortController.current?.abort();
+    const sequenceController = sequenceZipAbortController.current;
+    // ZIP packaging can outlive frame rendering. Do not cancel a different export
+    // that may have started on the shared engine after this sequence producer ended.
+    if (!sequenceController || sequenceProducerActive.current) {
+      getExportEngine().cancel();
+    }
+    sequenceController?.abort();
     setExportState({
       isExporting: false,
       progress: 0,
@@ -507,7 +513,7 @@ export const Toolbar: React.FC = () => {
         void archivePromise.catch((error) => {
           frameError = error instanceof Error ? error : new Error("Image sequence ZIP packaging failed.");
           framesDone = true;
-          engine.cancel();
+          if (sequenceProducerActive.current) engine.cancel();
           frameWaiters.splice(0).forEach((wake) => wake());
         });
         const generator = engine.exportImageSequence(project, settings, async (frame) => {
@@ -522,6 +528,7 @@ export const Toolbar: React.FC = () => {
           if (frameError) throw frameError;
         });
         let result: ExportResult | undefined;
+        sequenceProducerActive.current = true;
         try {
           while (true) {
             const { value, done } = await generator.next();
@@ -541,6 +548,7 @@ export const Toolbar: React.FC = () => {
           frameError = error instanceof Error ? error : new Error("Image sequence export failed");
           throw error;
         } finally {
+          sequenceProducerActive.current = false;
           framesDone = true;
           frameWaiters.splice(0).forEach((wake) => wake());
         }
