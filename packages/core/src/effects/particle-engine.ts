@@ -10,6 +10,7 @@ import {
 type RandomSource = () => number;
 
 const MAX_PARTICLES_PER_EFFECT = 10_000;
+const MAX_PARTICLES_TOTAL = 20_000;
 
 function generateId(random: RandomSource): string {
   return random().toString(36).substring(2, 11);
@@ -292,15 +293,21 @@ export class ParticleEngine {
     }
 
     for (const [effectId, emitter] of this.emitters) {
+      let totalParticleCount = Array.from(this.emitters.values()).reduce(
+        (total, state) => total + state.particles.length,
+        0,
+      );
       const effect = this.effects.get(effectId);
       if (!effect) {
         emitter.active = false;
+        totalParticleCount -= emitter.particles.length;
         emitter.particles = [];
         emitter.emissionAccumulator = 0;
         continue;
       }
       if (!effect.enabled) {
         emitter.active = false;
+        totalParticleCount -= emitter.particles.length;
         emitter.particles = [];
         emitter.emissionAccumulator = 0;
         continue;
@@ -334,13 +341,18 @@ export class ParticleEngine {
         emitter.emissionAccumulator += emissionRate * deltaTime;
         while (
           emitter.emissionAccumulator >= 1 &&
-          emitter.particles.length < particleLimit
+          emitter.particles.length < particleLimit &&
+          totalParticleCount < MAX_PARTICLES_TOTAL
         ) {
           emitter.particles.push(this.createParticle(effect, center));
           emitter.emissionAccumulator -= 1;
+          totalParticleCount++;
         }
-        // Do not accumulate a burst backlog while the emitter is at capacity.
-        if (emitter.particles.length >= particleLimit) {
+        // Do not accumulate a burst backlog while either capacity is reached.
+        if (
+          emitter.particles.length >= particleLimit ||
+          totalParticleCount >= MAX_PARTICLES_TOTAL
+        ) {
           emitter.emissionAccumulator %= 1;
         }
       }
@@ -392,7 +404,9 @@ export class ParticleEngine {
         }
       }
 
+      const previousParticleCount = emitter.particles.length;
       emitter.particles = emitter.particles.filter((p) => p.active);
+      totalParticleCount -= previousParticleCount - emitter.particles.length;
       if (effectEnded && emitter.particles.length === 0) {
         emitter.active = false;
         emitter.emissionAccumulator = 0;
