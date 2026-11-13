@@ -128,24 +128,26 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     const geometries = new Map<Particle["blendMode"], THREE.BufferGeometry>();
 
     const createMaterial = (blendMode: ParticleBlendMode) => {
+      // The fragment shader outputs premultiplied RGB. Use matching blend
+      // factors for every mode so alpha is applied exactly once.
+      const blendFactors = blendMode === "add"
+        ? { source: THREE.OneFactor, destination: THREE.OneFactor }
+        : blendMode === "multiply"
+          ? { source: THREE.DstColorFactor, destination: THREE.OneMinusSrcAlphaFactor }
+          : blendMode === "screen"
+            ? { source: THREE.OneFactor, destination: THREE.OneMinusSrcColorFactor }
+            : { source: THREE.OneFactor, destination: THREE.OneMinusSrcAlphaFactor };
+
       const material = new THREE.ShaderMaterial({
         transparent: true,
         vertexColors: true,
-        blending: blendMode === "add"
-          ? THREE.AdditiveBlending
-          : blendMode === "multiply"
-            ? THREE.MultiplyBlending
-            : blendMode === "screen"
-              ? THREE.CustomBlending
-              : THREE.NormalBlending,
-        ...(blendMode === "screen" ? {
-          blendEquation: THREE.AddEquation,
-          blendSrc: THREE.OneFactor,
-          blendDst: THREE.OneMinusSrcColorFactor,
-          blendEquationAlpha: THREE.AddEquation,
-          blendSrcAlpha: THREE.OneFactor,
-          blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
-        } : {}),
+        blending: THREE.CustomBlending,
+        blendEquation: THREE.AddEquation,
+        blendSrc: blendFactors.source,
+        blendDst: blendFactors.destination,
+        blendEquationAlpha: THREE.AddEquation,
+        blendSrcAlpha: THREE.OneFactor,
+        blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
         depthWrite: false,
         toneMapped: false,
         vertexShader: `
