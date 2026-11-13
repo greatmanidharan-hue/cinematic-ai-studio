@@ -244,6 +244,7 @@ export class ParticleEngine {
 
     return {
       id: generateId(),
+      blendMode: config.blendMode,
       position,
       velocity,
       acceleration: { x: 0, y: config.gravity, z: 0 },
