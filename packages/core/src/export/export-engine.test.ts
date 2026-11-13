@@ -456,6 +456,7 @@ describe("ExportEngine", () => {
 
   describe("audio export cancellation", () => {
     it("honors cancellation after the final progress update", async () => {
+      await exportEngine.initialize();
       const project = createMockProject({
         timeline: createMockTimeline({
           tracks: [
