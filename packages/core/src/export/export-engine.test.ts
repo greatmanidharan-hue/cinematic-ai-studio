@@ -1362,6 +1362,30 @@ describe("ExportEngine", () => {
       expect(exportEngine.isMediaBunnyAvailable()).toBe(false);
     });
 
+    it("disposes device-bound upscaling resources when the WebGPU device is lost", async () => {
+      await exportEngine.initialize();
+      let handleDeviceLost: (() => void) | undefined;
+      const renderer = {
+        onDeviceLost: vi.fn((callback: () => void) => {
+          handleDeviceLost = callback;
+        }),
+      };
+      mockVideoEngine.getGPUCompositor.mockReturnValueOnce({
+        getRenderer: () => renderer,
+        getDevice: () => ({}),
+      });
+
+      await expect(
+        exportEngine.initializeGPUForExport(1280, 720),
+      ).resolves.toBe(true);
+      expect(renderer.onDeviceLost).toHaveBeenCalledTimes(1);
+      expect(mockUpscalingEngine.initialize).toHaveBeenCalledTimes(1);
+
+      handleDeviceLost?.();
+
+      expect(mockUpscalingEngine.dispose).toHaveBeenCalledTimes(1);
+    });
+
     it("fails GPU setup and disposes partial upscaling resources when pipeline initialization fails", async () => {
       await exportEngine.initialize();
       mockVideoEngine.getGPUCompositor.mockReturnValueOnce({
