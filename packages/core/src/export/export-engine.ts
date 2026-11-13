@@ -717,6 +717,16 @@ export class ExportEngine {
 
       await writableStream.close();
 
+      // Closing the destination is asynchronous; cancellation while it is
+      // pending must not be followed by a success notification.
+      if (controller.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "muxing",
+        );
+      }
+
       yield this.createProgress(
         "complete",
         1,
@@ -724,6 +734,15 @@ export class ExportEngine {
         totalFrames,
         bytesWritten,
       );
+
+      // The consumer can cancel while paused on the final progress update.
+      if (controller.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "muxing",
+        );
+      }
 
       return {
         success: true,
