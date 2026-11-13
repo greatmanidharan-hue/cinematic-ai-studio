@@ -130,15 +130,16 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     const geometries = new Map<Particle["blendMode"], THREE.BufferGeometry>();
 
     const createMaterial = (blendMode: ParticleBlendMode) => {
-      // The fragment shader outputs premultiplied RGB. Use matching blend
-      // factors for every mode so alpha is applied exactly once.
+      // The fragment shader outputs straight (un-premultiplied) RGB.
+      // SRC_ALPHA applies particle opacity once; the destination factors then
+      // implement the corresponding Canvas2D blend operation.
       const blendFactors = blendMode === "add"
-        ? { source: THREE.OneFactor, destination: THREE.OneFactor }
+        ? { source: THREE.SrcAlphaFactor, destination: THREE.OneFactor }
         : blendMode === "multiply"
           ? { source: THREE.DstColorFactor, destination: THREE.OneMinusSrcAlphaFactor }
           : blendMode === "screen"
-            ? { source: THREE.OneFactor, destination: THREE.OneMinusSrcColorFactor }
-            : { source: THREE.OneFactor, destination: THREE.OneMinusSrcAlphaFactor };
+            ? { source: THREE.SrcAlphaFactor, destination: THREE.OneMinusSrcColorFactor }
+            : { source: THREE.SrcAlphaFactor, destination: THREE.OneMinusSrcAlphaFactor };
 
       const material = new THREE.ShaderMaterial({
         transparent: true,
@@ -176,7 +177,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
             float glow = exp(-distanceFromCenter * distanceFromCenter * 4.5);
             float core = 1.0 - smoothstep(0.0, 0.45, distanceFromCenter);
             float alpha = max(glow * 0.72, core) * vOpacity;
-            gl_FragColor = vec4(vColor * alpha, alpha);
+            gl_FragColor = vec4(vColor, alpha);
           }
         `,
       });
