@@ -1047,6 +1047,79 @@ describe("ExportEngine", () => {
       expect(writableStream.abort).toHaveBeenCalled();
     });
 
+    it("honors cancellation while closing the completed video destination", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      let finishClose!: () => void;
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn(() => new Promise<void>((resolve) => {
+          finishClose = resolve;
+        })),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 1, width: 640, height: 360 },
+        writableStream,
+      );
+
+      let step = await generator.next();
+      while (!step.done) {
+        const pendingStep = generator.next();
+        await vi.waitFor(() => expect(writableStream.close).toHaveBeenCalled());
+        exportEngine.cancel();
+        finishClose();
+        step = await pendingStep;
+        break;
+      }
+
+      expect(step.done).toBe(true);
+      if (!step.done) throw new Error("Expected cancelled export to finish");
+      expect(step.value.success).toBe(false);
+      expect(step.value.error?.code).toBe("CANCELLED");
+      expect(writableStream.abort).toHaveBeenCalled();
+    });
+
+    it("honors cancellation after the final video progress update", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 1, width: 640, height: 360 },
+        writableStream,
+      );
+
+      let step = await generator.next();
+      while (!step.done && step.value.phase !== "complete") {
+        step = await generator.next();
+      }
+      expect(step.done).toBe(false);
+      expect(step.value.phase).toBe("complete");
+
+      exportEngine.cancel();
+      const result = await generator.next();
+
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected cancelled export to finish");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("CANCELLED");
+      expect(writableStream.abort).toHaveBeenCalled();
+    });
+
     it("honors cancellation while GPU initialization is pending", async () => {
       await exportEngine.initialize();
       const project = createMockProject({
