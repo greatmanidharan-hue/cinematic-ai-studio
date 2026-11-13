@@ -874,18 +874,20 @@ describe("ExportEngine", () => {
       );
 
       let step = await generator.next();
-      while (!step.done && mockOutputFinalize.mock.calls.length === 0) {
+      while (!step.done) {
         const pendingStep = generator.next();
-        // Allow the export pipeline to reach the deliberately pending finalize.
-        await Promise.resolve();
-        await Promise.resolve();
-        if (mockOutputFinalize.mock.calls.length > 0) {
+        try {
+          await vi.waitFor(
+            () => expect(mockOutputFinalize).toHaveBeenCalled(),
+            { timeout: 100 },
+          );
           exportEngine.cancel();
           finishFinalize();
           step = await pendingStep;
           break;
+        } catch {
+          step = await pendingStep;
         }
-        step = await pendingStep;
       }
 
       expect(mockOutputFinalize).toHaveBeenCalledTimes(1);
