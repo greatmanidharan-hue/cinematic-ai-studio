@@ -52,7 +52,7 @@ export interface Particle {
   velocity: Vector3;
   acceleration: Vector3;
   color: string;
-  blendMode: ParticleConfig["blendMode"];
+  blendMode?: ParticleConfig["blendMode"];
   size: number;
   opacity: number;
   rotation: number;
