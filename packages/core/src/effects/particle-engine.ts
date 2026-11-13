@@ -162,6 +162,7 @@ export class ParticleEngine {
   private changeVersion: number = 0;
   private randomState = 0x6d2b79f5;
   private particleSequence = 0;
+  private lastUpdateTime: number | null = null;
 
   /**
    * Set the deterministic random seed before resetting and simulating an export.
@@ -286,11 +287,17 @@ export class ParticleEngine {
   }
 
   update(currentTime: number, deltaTime: number): void {
-    // Ignore invalid or backwards simulation steps. Timeline scrubbing must use
-    // seekToTime(), which rebuilds the deterministic state from the start.
-    if (!Number.isFinite(currentTime) || !Number.isFinite(deltaTime) || deltaTime <= 0) {
+    // Ignore invalid, duplicate, or backwards simulation steps. Timeline
+    // scrubbing must use seekToTime(), which rebuilds state from the start.
+    if (
+      !Number.isFinite(currentTime) ||
+      !Number.isFinite(deltaTime) ||
+      deltaTime <= 0 ||
+      (this.lastUpdateTime !== null && currentTime <= this.lastUpdateTime)
+    ) {
       return;
     }
+    this.lastUpdateTime = currentTime;
 
     let totalParticleCount = Array.from(this.emitters.values()).reduce(
       (total, state) => total + state.particles.length,
@@ -441,6 +448,7 @@ export class ParticleEngine {
   }
 
   reset(): void {
+    this.lastUpdateTime = null;
     for (const emitter of this.emitters.values()) {
       emitter.particles = [];
       emitter.elapsedTime = 0;
