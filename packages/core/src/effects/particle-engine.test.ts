@@ -79,6 +79,18 @@ describe("deterministic particle simulation", () => {
     expect(engine.getActiveEffectIds()).toEqual([]);
   });
 
+  it("clears active particles immediately when an effect is disabled", () => {
+    const engine = createEngine(88);
+    engine.update(0.5, 0.5);
+    expect(engine.getParticles().length).toBeGreaterThan(0);
+
+    engine.toggleEffect("fire-test", false);
+    engine.update(0.6, 0.1);
+
+    expect(engine.getActiveEffectIds()).toEqual([]);
+    expect(engine.getParticles()).toEqual([]);
+  });
+
   it("keeps opacity finite when fade ranges meet or overlap", () => {
     const engine = createEngine(55);
     engine.updateEffect("fire-test", {
