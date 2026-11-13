@@ -159,7 +159,9 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
           float glow = exp(-distanceFromCenter * distanceFromCenter * 4.5);
           float core = 1.0 - smoothstep(0.0, 0.45, distanceFromCenter);
           float alpha = max(glow * 0.72, core);
-          gl_FragColor = vec4(vColor, alpha);
+          // The vertex color already contains particle opacity. Keep the
+          // fragment output premultiplied to avoid bright fringes on mobile GPUs.
+          gl_FragColor = vec4(vColor * alpha, alpha);
         }
       `,
     });
