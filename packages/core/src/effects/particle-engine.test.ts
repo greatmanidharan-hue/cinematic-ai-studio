@@ -68,15 +68,37 @@ describe("deterministic particle simulation", () => {
     expect(engine.getParticles()).toEqual(laterParticles);
   });
 
-  it("deactivates an effect at its exact end time", () => {
+  it("stops an emitter at its exact end time when no particles remain", () => {
     const engine = createEngine(321);
     engine.updateEffectTiming("fire-test", 1, 1);
 
     engine.update(1, 1 / 30);
-    expect(engine.getActiveEffectIds()).toEqual([]);
+    expect(engine.getActiveEffectIds()).toEqual(["fire-test"]);
 
     engine.update(2, 1 / 30);
     expect(engine.getActiveEffectIds()).toEqual([]);
+  });
+
+  it("lets existing particles finish after the effect stops emitting", () => {
+    const engine = createEngine(654);
+    engine.updateEffectTiming("fire-test", 0, 0.5);
+    engine.updateEffect("fire-test", {
+      particleCount: 24,
+      emissionRate: 30,
+      turbulence: 0,
+      lifetime: { min: 1, max: 1 },
+    });
+
+    engine.update(0.4, 0.4);
+    expect(engine.getParticles().length).toBeGreaterThan(0);
+
+    engine.update(0.6, 0.2);
+    expect(engine.getActiveEffectIds()).toEqual(["fire-test"]);
+    expect(engine.getParticles().length).toBeGreaterThan(0);
+
+    engine.update(1.1, 0.5);
+    expect(engine.getActiveEffectIds()).toEqual([]);
+    expect(engine.getParticles()).toEqual([]);
   });
 
   it("clears active particles immediately when an effect is disabled", () => {
