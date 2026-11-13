@@ -126,6 +126,24 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
+    // Keep drawing-buffer resolution and shader point sizes in sync when the
+    // browser moves this preview between displays with different DPR values.
+    const syncPixelRatio = () => {
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      if (renderer.getPixelRatio() === pixelRatio) return;
+
+      renderer.setPixelRatio(pixelRatio);
+      renderer.setSize(width, height, false);
+      for (const child of scene.children) {
+        if (child instanceof THREE.Points && child.material instanceof THREE.ShaderMaterial) {
+          const pixelRatioUniform = child.material.uniforms.uPixelRatio;
+          if (pixelRatioUniform) pixelRatioUniform.value = pixelRatio;
+        }
+      }
+      renderer.render(scene, camera);
+    };
+    window.addEventListener("resize", syncPixelRatio);
+
     const blendModes: ParticleBlendMode[] = ["normal", "add", "multiply", "screen"];
     const geometries = new Map<Particle["blendMode"], THREE.BufferGeometry>();
     const gl = renderer.getContext();
@@ -234,6 +252,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
 
     return () => {
       setIsReady(false);
+      window.removeEventListener("resize", syncPixelRatio);
       for (const child of [...scene.children]) {
         if (child instanceof THREE.Points) {
           child.geometry.dispose();
