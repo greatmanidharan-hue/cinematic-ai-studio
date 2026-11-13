@@ -7,12 +7,17 @@ import {
   DEFAULT_PARTICLE_CONFIG,
 } from "./particle-types";
 
-function generateId(): string {
-  return Math.random().toString(36).substring(2, 11);
+type RandomSource = () => number;
+
+const MAX_PARTICLES_PER_EFFECT = 10_000;
+const MAX_PARTICLES_TOTAL = 20_000;
+
+function generateId(random: RandomSource): string {
+  return random().toString(36).substring(2, 11);
 }
 
-function randomRange(min: number, max: number): number {
-  return min + Math.random() * (max - min);
+function randomRange(min: number, max: number, random: RandomSource): number {
+  return min + random() * (max - min);
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
@@ -34,11 +39,11 @@ function lerpColor(color1: string, color2: string, t: number): string {
   return `rgb(${r},${g},${b})`;
 }
 
-function getEmissionPosition(config: ParticleConfig, center: Vector3): Vector3 {
+function getEmissionPosition(config: ParticleConfig, center: Vector3, random: RandomSource): Vector3 {
   switch (config.emissionShape) {
     case "circle": {
-      const angle = Math.random() * Math.PI * 2;
-      const r = Math.random() * config.emissionRadius;
+      const angle = random() * Math.PI * 2;
+      const r = random() * config.emissionRadius;
       return {
         x: center.x + Math.cos(angle) * r,
         y: center.y + Math.sin(angle) * r,
@@ -46,9 +51,9 @@ function getEmissionPosition(config: ParticleConfig, center: Vector3): Vector3 {
       };
     }
     case "sphere": {
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      const r = Math.random() * config.emissionRadius;
+      const theta = random() * Math.PI * 2;
+      const phi = Math.acos(2 * random() - 1);
+      const r = random() * config.emissionRadius;
       return {
         x: center.x + r * Math.sin(phi) * Math.cos(theta),
         y: center.y + r * Math.sin(phi) * Math.sin(theta),
@@ -57,14 +62,14 @@ function getEmissionPosition(config: ParticleConfig, center: Vector3): Vector3 {
     }
     case "rectangle": {
       return {
-        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius),
-        y: center.y + randomRange(-config.emissionRadius, config.emissionRadius),
+        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius, random),
+        y: center.y + randomRange(-config.emissionRadius, config.emissionRadius, random),
         z: center.z,
       };
     }
     case "line": {
       return {
-        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius),
+        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius, random),
         y: center.y,
         z: center.z,
       };
@@ -79,9 +84,10 @@ function getInitialVelocity(
   config: ParticleConfig,
   effectType: string,
   center: Vector3,
-  position: Vector3
+  position: Vector3,
+  random: RandomSource
 ): Vector3 {
-  const speed = config.speed + randomRange(-config.speedVariance, config.speedVariance);
+  const speed = config.speed + randomRange(-config.speedVariance, config.speedVariance, random);
 
   switch (effectType) {
     case "explode": {
@@ -89,9 +95,9 @@ function getInitialVelocity(
       const dy = position.y - center.y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
       return {
-        x: (dx / dist) * speed + randomRange(-20, 20),
-        y: (dy / dist) * speed + randomRange(-20, 20),
-        z: randomRange(-speed * 0.5, speed * 0.5),
+        x: (dx / dist) * speed + randomRange(-20, 20, random),
+        y: (dy / dist) * speed + randomRange(-20, 20, random),
+        z: randomRange(-speed * 0.5, speed * 0.5, random),
       };
     }
     case "implode": {
@@ -106,38 +112,38 @@ function getInitialVelocity(
     }
     case "confetti": {
       return {
-        x: randomRange(-speed, speed),
-        y: -Math.abs(speed) * randomRange(0.5, 1.5),
-        z: randomRange(-speed * 0.3, speed * 0.3),
+        x: randomRange(-speed, speed, random),
+        y: -Math.abs(speed) * randomRange(0.5, 1.5, random),
+        z: randomRange(-speed * 0.3, speed * 0.3, random),
       };
     }
     case "dust":
     case "sparkle": {
-      const angle = Math.random() * Math.PI * 2;
+      const angle = random() * Math.PI * 2;
       return {
         x: Math.cos(angle) * speed * 0.3,
         y: Math.sin(angle) * speed * 0.3 - speed * 0.2,
-        z: randomRange(-10, 10),
+        z: randomRange(-10, 10, random),
       };
     }
     case "disintegrate": {
       return {
-        x: randomRange(-speed * 0.5, speed * 0.5),
-        y: -speed * randomRange(0.3, 0.8),
-        z: randomRange(-speed * 0.2, speed * 0.2),
+        x: randomRange(-speed * 0.5, speed * 0.5, random),
+        y: -speed * randomRange(0.3, 0.8, random),
+        z: randomRange(-speed * 0.2, speed * 0.2, random),
       };
     }
     case "shatter": {
-      const angle = Math.random() * Math.PI * 2;
+      const angle = random() * Math.PI * 2;
       return {
         x: Math.cos(angle) * speed,
         y: Math.sin(angle) * speed - speed * 0.5,
-        z: randomRange(-speed * 0.5, speed * 0.5),
+        z: randomRange(-speed * 0.5, speed * 0.5, random),
       };
     }
     case "dissolve":
     default: {
-      const angle = Math.random() * Math.PI * 2;
+      const angle = random() * Math.PI * 2;
       return {
         x: Math.cos(angle) * speed * 0.5,
         y: Math.sin(angle) * speed * 0.5,
@@ -154,6 +160,26 @@ export class ParticleEngine {
   private canvasHeight: number = 1080;
   private changeListeners: Set<() => void> = new Set();
   private changeVersion: number = 0;
+  private randomState = 0x6d2b79f5;
+  private particleSequence = 0;
+  private lastUpdateTime: number | null = null;
+
+  /**
+   * Set the deterministic random seed before resetting and simulating an export.
+   * The same seed and update sequence produce the same particle simulation.
+   */
+  setRandomSeed(seed: number): void {
+    this.randomState = (seed >>> 0) || 0x6d2b79f5;
+    this.particleSequence = 0;
+  }
+
+  private nextRandom = (): number => {
+    // Mulberry32: compact, fast, deterministic, and independent of Math.random.
+    let value = (this.randomState += 0x6d2b79f5);
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
 
   onEffectsChange(listener: () => void): () => void {
     this.changeListeners.add(listener);
@@ -238,43 +264,70 @@ export class ParticleEngine {
     center: Vector3
   ): Particle {
     const config = effect.config;
-    const position = getEmissionPosition(config, center);
-    const velocity = getInitialVelocity(config, effect.type, center, position);
-    const colorIndex = Math.floor(Math.random() * config.colors.length);
+    const random = this.nextRandom;
+    const position = getEmissionPosition(config, center, random);
+    const velocity = getInitialVelocity(config, effect.type, center, position, random);
+    const colorIndex = Math.floor(random() * config.colors.length);
 
     return {
-      id: generateId(),
+      id: `particle-${++this.particleSequence}-${generateId(random)}`,
       position,
       velocity,
       acceleration: { x: 0, y: config.gravity, z: 0 },
       color: config.colors[colorIndex],
-      size: randomRange(config.size.min, config.size.max),
+      blendMode: config.blendMode,
+      size: randomRange(config.size.min, config.size.max, random),
       opacity: config.opacity.start,
-      rotation: Math.random() * Math.PI * 2,
-      rotationSpeed: randomRange(-config.rotationSpeed, config.rotationSpeed),
-      lifetime: randomRange(config.lifetime.min, config.lifetime.max),
+      rotation: random() * Math.PI * 2,
+      rotationSpeed: randomRange(-config.rotationSpeed, config.rotationSpeed, random),
+      lifetime: randomRange(config.lifetime.min, config.lifetime.max, random),
       age: 0,
       active: true,
     };
   }
 
   update(currentTime: number, deltaTime: number): void {
+    // Ignore invalid, duplicate, or backwards simulation steps. Timeline
+    // scrubbing must use seekToTime(), which rebuilds state from the start.
+    if (
+      !Number.isFinite(currentTime) ||
+      !Number.isFinite(deltaTime) ||
+      deltaTime <= 0 ||
+      (this.lastUpdateTime !== null && currentTime <= this.lastUpdateTime)
+    ) {
+      return;
+    }
+    this.lastUpdateTime = currentTime;
+
+    let totalParticleCount = Array.from(this.emitters.values()).reduce(
+      (total, state) => total + state.particles.length,
+      0,
+    );
+
     for (const [effectId, emitter] of this.emitters) {
       const effect = this.effects.get(effectId);
-      if (!effect || !effect.enabled) {
+      if (!effect) {
+        emitter.active = false;
+        totalParticleCount -= emitter.particles.length;
+        emitter.particles = [];
+        emitter.emissionAccumulator = 0;
+        continue;
+      }
+      if (!effect.enabled) {
+        emitter.active = false;
+        totalParticleCount -= emitter.particles.length;
+        emitter.particles = [];
+        emitter.emissionAccumulator = 0;
         continue;
       }
 
       const effectStarted = currentTime >= effect.startTime;
-      const effectEnded = currentTime > effect.startTime + effect.duration;
+      const effectEnded = currentTime >= effect.startTime + effect.duration;
 
-      if (!effectStarted || effectEnded) {
+      if (!effectStarted) {
         emitter.active = false;
         continue;
       }
-
-      emitter.active = true;
-      emitter.elapsedTime = currentTime - effect.startTime;
 
       const config = effect.config;
       const center: Vector3 = {
@@ -283,14 +336,35 @@ export class ParticleEngine {
         z: 0,
       };
 
-      emitter.emissionAccumulator += config.emissionRate * deltaTime;
-      while (
-        emitter.emissionAccumulator >= 1 &&
-        emitter.particles.length < config.particleCount
-      ) {
-        emitter.particles.push(this.createParticle(effect, center));
-        emitter.emissionAccumulator -= 1;
+      // Stop emitting at the clip boundary, but keep simulating existing
+      // particles so flames, smoke and sparks can finish their lifetimes.
+      if (!effectEnded) {
+        emitter.elapsedTime = currentTime - effect.startTime;
+        const particleLimit = Number.isFinite(config.particleCount)
+          ? Math.min(MAX_PARTICLES_PER_EFFECT, Math.max(0, Math.floor(config.particleCount)))
+          : 0;
+        const emissionRate = Number.isFinite(config.emissionRate)
+          ? Math.max(0, config.emissionRate)
+          : 0;
+        emitter.emissionAccumulator += emissionRate * deltaTime;
+        while (
+          emitter.emissionAccumulator >= 1 &&
+          emitter.particles.length < particleLimit &&
+          totalParticleCount < MAX_PARTICLES_TOTAL
+        ) {
+          emitter.particles.push(this.createParticle(effect, center));
+          emitter.emissionAccumulator -= 1;
+          totalParticleCount++;
+        }
+        // Do not accumulate a burst backlog while either capacity is reached.
+        if (
+          emitter.particles.length >= particleLimit ||
+          totalParticleCount >= MAX_PARTICLES_TOTAL
+        ) {
+          emitter.emissionAccumulator %= 1;
+        }
       }
+      emitter.active = !effectEnded || emitter.particles.length > 0;
 
       for (const particle of emitter.particles) {
         if (!particle.active) continue;
@@ -300,8 +374,8 @@ export class ParticleEngine {
         particle.velocity.z += (particle.acceleration.z + config.wind.z) * deltaTime;
 
         if (config.turbulence > 0) {
-          particle.velocity.x += randomRange(-config.turbulence, config.turbulence) * deltaTime;
-          particle.velocity.y += randomRange(-config.turbulence, config.turbulence) * deltaTime;
+          particle.velocity.x += randomRange(-config.turbulence, config.turbulence, this.nextRandom) * deltaTime;
+          particle.velocity.y += randomRange(-config.turbulence, config.turbulence, this.nextRandom) * deltaTime;
         }
 
         particle.position.x += particle.velocity.x * deltaTime;
@@ -311,23 +385,40 @@ export class ParticleEngine {
         particle.rotation += particle.rotationSpeed * deltaTime;
         particle.age += deltaTime;
 
-        const lifeProgress = particle.age / particle.lifetime;
-        if (lifeProgress < config.fadeIn) {
-          particle.opacity = config.opacity.start * (lifeProgress / config.fadeIn);
-        } else if (lifeProgress > 1 - config.fadeOut) {
-          const fadeProgress = (1 - lifeProgress) / config.fadeOut;
+        const lifeProgress = particle.lifetime > 0
+          ? Math.max(0, Math.min(1, particle.age / particle.lifetime))
+          : 1;
+        const fadeIn = Math.max(0, Math.min(1, Number.isFinite(config.fadeIn) ? config.fadeIn : 0));
+        const fadeOut = Math.max(0, Math.min(1, Number.isFinite(config.fadeOut) ? config.fadeOut : 0));
+
+        if (fadeIn > 0 && lifeProgress <= fadeIn) {
+          particle.opacity = config.opacity.start * (lifeProgress / fadeIn);
+        } else if (fadeOut > 0 && lifeProgress >= 1 - fadeOut) {
+          const fadeProgress = (1 - lifeProgress) / fadeOut;
           particle.opacity = config.opacity.end + (config.opacity.start - config.opacity.end) * fadeProgress;
         } else {
-          const midProgress = (lifeProgress - config.fadeIn) / (1 - config.fadeIn - config.fadeOut);
+          const middleDuration = 1 - fadeIn - fadeOut;
+          const midProgress = middleDuration > 0
+            ? (lifeProgress - fadeIn) / middleDuration
+            : 1;
           particle.opacity = config.opacity.start + (config.opacity.end - config.opacity.start) * midProgress;
         }
+        particle.opacity = Number.isFinite(particle.opacity)
+          ? Math.max(0, Math.min(1, particle.opacity))
+          : 0;
 
         if (particle.age >= particle.lifetime) {
           particle.active = false;
         }
       }
 
+      const previousParticleCount = emitter.particles.length;
       emitter.particles = emitter.particles.filter((p) => p.active);
+      totalParticleCount -= previousParticleCount - emitter.particles.length;
+      if (effectEnded && emitter.particles.length === 0) {
+        emitter.active = false;
+        emitter.emissionAccumulator = 0;
+      }
     }
   }
 
@@ -357,6 +448,7 @@ export class ParticleEngine {
   }
 
   reset(): void {
+    this.lastUpdateTime = null;
     for (const emitter of this.emitters.values()) {
       emitter.particles = [];
       emitter.elapsedTime = 0;
@@ -365,10 +457,68 @@ export class ParticleEngine {
     }
   }
 
+  /**
+   * Rebuild the simulation at an absolute timeline position.
+   * Replaying from zero avoids accumulating stale particles when the editor
+   * playhead is scrubbed, paused, or moved backwards.
+   */
+  seekToTime(
+    targetTime: number,
+    fixedStep = 1 / 30,
+    seed?: number,
+  ): void {
+    const safeTarget = Number.isFinite(targetTime) ? Math.max(0, targetTime) : 0;
+    const safeStep = Number.isFinite(fixedStep) && fixedStep > 0
+      ? Math.min(fixedStep, 1 / 10)
+      : 1 / 30;
+
+    if (seed !== undefined) this.setRandomSeed(seed);
+    else this.setRandomSeed(0x6d2b79f5);
+    this.reset();
+
+    let simulatedTime = 0;
+    while (simulatedTime + safeStep <= safeTarget) {
+      simulatedTime += safeStep;
+      this.update(simulatedTime, safeStep);
+    }
+
+    const remainder = safeTarget - simulatedTime;
+    if (remainder > 1e-8) {
+      this.update(safeTarget, remainder);
+    }
+  }
+
   dispose(): void {
     this.emitters.clear();
     this.effects.clear();
   }
+}
+
+/**
+ * Stable seed shared by editor preview and export for the same VFX setup.
+ */
+export function getParticleEffectsSeed(effects: readonly ParticleEffect[]): number {
+  const signature = JSON.stringify(
+    [...effects]
+      .map((effect) => ({
+        ...effect,
+        config: {
+          ...effect.config,
+          wind: { ...effect.config.wind },
+          colors: [...effect.config.colors],
+          size: { ...effect.config.size },
+          opacity: { ...effect.config.opacity },
+          lifetime: { ...effect.config.lifetime },
+        },
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  );
+  let seed = 0x811c9dc5;
+  for (let index = 0; index < signature.length; index++) {
+    seed ^= signature.charCodeAt(index);
+    seed = Math.imul(seed, 0x01000193);
+  }
+  return seed >>> 0;
 }
 
 let engineInstance: ParticleEngine | null = null;

@@ -18,6 +18,10 @@ import { toast } from "../../../stores/notification-store";
 
 type GraphicClipUnion = ShapeClip | SVGClip | StickerClip;
 
+const noopKeyframeSelect = (_keyframeId: string, _addToSelection: boolean) => {};
+const noopKeyframeMove = (_keyframeId: string, _newTime: number) => {};
+const noopKeyframeDelete = (_keyframeId: string) => {};
+
 interface TrackLaneProps {
   track: Track;
   allTracks: Track[];
@@ -52,6 +56,7 @@ interface TrackLaneProps {
     newTime: number,
   ) => void;
   scrollX: number;
+  viewportWidth: number;
   trackHeight: number;
   onResizeTrack: (trackId: string, newHeight: number) => void;
   onKeyframeSelect?: (keyframeId: string, addToSelection: boolean) => void;
@@ -78,6 +83,7 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
   onTrimTextClip,
   onTrimShapeClip,
   scrollX,
+  viewportWidth,
   trackHeight,
   onResizeTrack,
   onKeyframeSelect,
@@ -85,23 +91,72 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
   onKeyframeDelete,
   selectedKeyframeIds = [],
 }) => {
-  const { isTrackExpanded, playheadPosition } = useTimelineStore();
-  const isExpanded = isTrackExpanded(track.id);
-  const { snapSettings } = useUIStore();
+  const isExpanded = useTimelineStore((state) => state.isTrackExpanded(track.id));
+  const playheadPosition = useTimelineStore((state) => state.playheadPosition);
+  const snapSettings = useUIStore((state) => state.snapSettings);
   const [isDragOver, setIsDragOver] = useState(false);
   const [isResizing, setIsResizing] = useState(false);
   const laneRef = useRef<HTMLDivElement>(null);
   const resizeStartY = useRef<number>(0);
   const resizeStartHeight = useRef<number>(0);
 
+  const selectedClipIdSet = useMemo(
+    () => new Set(selectedClipIds),
+    [selectedClipIds],
+  );
+  const textClipIds = useMemo(
+    () => new Set(textClips.map((clip) => clip.id)),
+    [textClips],
+  );
+  const shapeClipIds = useMemo(
+    () => new Set(shapeClips.map((clip) => clip.id)),
+    [shapeClips],
+  );
+  // Keep a modest horizontal overscan so clips mount just before entering view.
+  // The lane remains full-width; only off-screen clip components are omitted.
+  const visibleTimeRange = useMemo(() => {
+    const overscanPixels = Math.max(500, viewportWidth * 0.5);
+    return {
+      start: Math.max(0, (scrollX - overscanPixels) / pixelsPerSecond),
+      end: (scrollX + viewportWidth + overscanPixels) / pixelsPerSecond,
+    };
+  }, [scrollX, viewportWidth, pixelsPerSecond]);
+
+  const intersectsViewport = useCallback(
+    (clip: { startTime: number; duration: number }) =>
+      clip.startTime + clip.duration >= visibleTimeRange.start &&
+      clip.startTime <= visibleTimeRange.end,
+    [visibleTimeRange],
+  );
+
+  const visibleTrackClips = useMemo(
+    () => track.clips.filter(
+      (clip) =>
+        !textClipIds.has(clip.id) &&
+        !shapeClipIds.has(clip.id) &&
+        intersectsViewport(clip),
+    ),
+    [track.clips, textClipIds, shapeClipIds, intersectsViewport],
+  );
+
+  const visibleTextClips = useMemo(
+    () => textClips.filter(intersectsViewport),
+    [textClips, intersectsViewport],
+  );
+
+  const visibleShapeClips = useMemo(
+    () => shapeClips.filter(intersectsViewport),
+    [shapeClips, intersectsViewport],
+  );
+
   const clipsWithKeyframes = useMemo(() => {
-    return track.clips.filter((clip) => clip.keyframes && clip.keyframes.length > 0);
-  }, [track.clips]);
+    return track.clips.filter((clip) => clip.keyframes && clip.keyframes.length > 0 && intersectsViewport(clip));
+  }, [track.clips, intersectsViewport]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
-    setIsDragOver(true);
+    setIsDragOver((current) => current ? current : true);
   }, []);
 
   const handleDragLeave = useCallback(() => {
@@ -184,7 +239,7 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
         // Silently ignore parse errors
       }
     },
-    [track.id, track.name, pixelsPerSecond, scrollX, onDropMedia],
+    [track.id, track.name, pixelsPerSecond, scrollX, onDropMedia, allTracks, playheadPosition, snapSettings],
   );
 
   const handleResizeStart = useCallback(
@@ -238,17 +293,14 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
       >
-        {track.clips
-          .filter((clip) => !textClips.some((tc) => tc.id === clip.id))
-          .filter((clip) => !shapeClips.some((sc) => sc.id === clip.id))
-          .map((clip) => (
+        {visibleTrackClips.map((clip) => (
             <ClipComponent
               key={clip.id}
               clip={clip}
               track={track}
               allTracks={allTracks}
               pixelsPerSecond={pixelsPerSecond}
-              isSelected={selectedClipIds.includes(clip.id)}
+              isSelected={selectedClipIdSet.has(clip.id)}
               trackHeights={trackHeights}
               timelineRef={timelineRef}
               onSelect={onSelectClip}
@@ -257,23 +309,23 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
               onTrimClip={onTrimClip}
             />
           ))}
-        {textClips.map((textClip) => (
+        {visibleTextClips.map((textClip) => (
           <TextClipComponent
             key={textClip.id}
             textClip={textClip}
             pixelsPerSecond={pixelsPerSecond}
-            isSelected={selectedClipIds.includes(textClip.id)}
+            isSelected={selectedClipIdSet.has(textClip.id)}
             onSelect={onSelectClip}
             onTrim={onTrimTextClip}
             onMoveClip={onMoveTextClip}
           />
         ))}
-        {shapeClips.map((shapeClip) => (
+        {visibleShapeClips.map((shapeClip) => (
           <ShapeClipComponent
             key={shapeClip.id}
             shapeClip={shapeClip}
             pixelsPerSecond={pixelsPerSecond}
-            isSelected={selectedClipIds.includes(shapeClip.id)}
+            isSelected={selectedClipIdSet.has(shapeClip.id)}
             onSelect={onSelectClip}
             onTrim={onTrimShapeClip}
             onMoveClip={onMoveClip}
@@ -304,9 +356,9 @@ export const TrackLane: React.FC<TrackLaneProps> = ({
               <KeyframeTrack
                 clip={clip}
                 pixelsPerSecond={pixelsPerSecond}
-                onKeyframeSelect={onKeyframeSelect ?? (() => {})}
-                onKeyframeMove={onKeyframeMove ?? (() => {})}
-                onKeyframeDelete={onKeyframeDelete ?? (() => {})}
+                onKeyframeSelect={onKeyframeSelect ?? noopKeyframeSelect}
+                onKeyframeMove={onKeyframeMove ?? noopKeyframeMove}
+                onKeyframeDelete={onKeyframeDelete ?? noopKeyframeDelete}
                 selectedKeyframeIds={selectedKeyframeIds}
               />
             </div>

@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { memo, useRef, useState, useEffect } from "react";
 import { Type } from "lucide-react";
 import type { TextClip } from "@fairarena/core";
 import { ContextMenu, ContextMenuTrigger } from "@fairarena/ui";
@@ -17,7 +17,7 @@ interface TextClipComponentProps {
   onMoveClip?: (clipId: string, newStartTime: number) => void;
 }
 
-export const TextClipComponent: React.FC<TextClipComponentProps> = ({
+const TextClipComponentInner: React.FC<TextClipComponentProps> = ({
   textClip,
   pixelsPerSecond,
   isSelected,
@@ -70,11 +70,14 @@ export const TextClipComponent: React.FC<TextClipComponentProps> = ({
   useEffect(() => {
     if (!isDragging || !onMoveClip) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
+    let frameId: number | null = null;
+    let pendingClientX: number | null = null;
+
+    const applyDrag = (clientX: number) => {
       const rect = clipRef.current?.parentElement?.getBoundingClientRect();
       if (!rect) return;
 
-      const x = e.clientX - rect.left - dragOffset;
+      const x = clientX - rect.left - dragOffset;
       const rawTime = Math.max(0, x / pixelsPerSecond);
       const allTracks = useProjectStore.getState().project.timeline.tracks;
       const dragSnapSettings = { ...snapSettings, snapToPlayhead: false };
@@ -90,8 +93,30 @@ export const TextClipComponent: React.FC<TextClipComponentProps> = ({
       onMoveClip(textClip.id, snapResult.time);
     };
 
+    const flushPendingDrag = () => {
+      frameId = null;
+      if (pendingClientX === null) return;
+      const clientX = pendingClientX;
+      pendingClientX = null;
+      applyDrag(clientX);
+    };
+
+    const handleMouseMove = (event: MouseEvent) => {
+      pendingClientX = event.clientX;
+      if (frameId === null) frameId = requestAnimationFrame(flushPendingDrag);
+    };
+
     const handleMouseUp = () => {
+      if (frameId !== null) cancelAnimationFrame(frameId);
+      frameId = null;
+      if (pendingClientX !== null) {
+        const clientX = pendingClientX;
+        pendingClientX = null;
+        applyDrag(clientX);
+      }
       setIsDragging(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
     };
 
     window.addEventListener("mousemove", handleMouseMove);
@@ -100,6 +125,7 @@ export const TextClipComponent: React.FC<TextClipComponentProps> = ({
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
+      if (frameId !== null) cancelAnimationFrame(frameId);
     };
   }, [isDragging, textClip.id, textClip.duration, pixelsPerSecond, dragOffset, onMoveClip, snapSettings, playheadPosition]);
 
@@ -120,31 +146,47 @@ export const TextClipComponent: React.FC<TextClipComponentProps> = ({
   useEffect(() => {
     if (!isTrimming) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
-      const deltaX = e.clientX - trimStartRef.current.mouseX;
+    let frameId: number | null = null;
+    let pendingClientX: number | null = null;
+
+    const applyTrim = (clientX: number) => {
+      const deltaX = clientX - trimStartRef.current.mouseX;
       const deltaTime = deltaX / pixelsPerSecond;
 
       if (isTrimming === "left") {
-        const newStartTime = Math.max(
-          0,
-          trimStartRef.current.startTime + deltaTime,
-        );
-        const maxStartTime =
-          trimStartRef.current.startTime + trimStartRef.current.duration - 0.1;
+        const newStartTime = Math.max(0, trimStartRef.current.startTime + deltaTime);
+        const maxStartTime = trimStartRef.current.startTime + trimStartRef.current.duration - 0.1;
         const clampedStartTime = Math.min(newStartTime, maxStartTime);
         onTrim(textClip.id, "left", clampedStartTime);
       } else {
-        const newEndTime =
-          trimStartRef.current.startTime +
-          trimStartRef.current.duration +
-          deltaTime;
+        const newEndTime = trimStartRef.current.startTime + trimStartRef.current.duration + deltaTime;
         const minEndTime = trimStartRef.current.startTime + 0.1;
         const clampedEndTime = Math.max(newEndTime, minEndTime);
         onTrim(textClip.id, "right", clampedEndTime);
       }
     };
 
+    const flushPendingTrim = () => {
+      frameId = null;
+      if (pendingClientX === null) return;
+      const clientX = pendingClientX;
+      pendingClientX = null;
+      applyTrim(clientX);
+    };
+
+    const handleMouseMove = (event: MouseEvent) => {
+      pendingClientX = event.clientX;
+      if (frameId === null) frameId = requestAnimationFrame(flushPendingTrim);
+    };
+
     const handleMouseUp = () => {
+      if (frameId !== null) cancelAnimationFrame(frameId);
+      frameId = null;
+      if (pendingClientX !== null) {
+        const clientX = pendingClientX;
+        pendingClientX = null;
+        applyTrim(clientX);
+      }
       setIsTrimming(null);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
@@ -156,6 +198,7 @@ export const TextClipComponent: React.FC<TextClipComponentProps> = ({
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
+      if (frameId !== null) cancelAnimationFrame(frameId);
     };
   }, [isTrimming, textClip.id, pixelsPerSecond, onTrim]);
 
@@ -215,3 +258,7 @@ export const TextClipComponent: React.FC<TextClipComponentProps> = ({
     </ContextMenu>
   );
 };
+
+export const TextClipComponent = memo(TextClipComponentInner);
+TextClipComponent.displayName = "TextClipComponent";
+

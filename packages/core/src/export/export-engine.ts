@@ -17,6 +17,7 @@ import {
   VIDEO_QUALITY_PRESETS,
 } from "./types";
 import { VideoEngine, getVideoEngine } from "../video/video-engine";
+import type { Renderer } from "../video/renderer-factory";
 import { AudioEngine, getAudioEngine } from "../audio/audio-engine";
 import { titleEngine } from "../text/title-engine";
 import { graphicsEngine } from "../graphics/graphics-engine";
@@ -37,30 +38,58 @@ export class ExportEngine {
     framesRendered: number;
   } | null = null;
   private exportWorker: Worker | null = null;
+  private lifecycleVersion = 0;
+  private initializationPromise: Promise<void> | null = null;
+  private gpuRendererWithLossListener: Renderer | null = null;
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
+    if (this.initializationPromise) return this.initializationPromise;
+
+    const lifecycleVersion = this.lifecycleVersion;
+    const initialization = this.initializeInternal(lifecycleVersion);
+    this.initializationPromise = initialization;
 
     try {
-      this.mediabunny = await import("mediabunny");
+      await initialization;
+    } finally {
+      if (this.initializationPromise === initialization) {
+        this.initializationPromise = null;
+      }
+    }
+  }
+
+  private async initializeInternal(lifecycleVersion: number): Promise<void> {
+    try {
+      const mediabunny = await import("mediabunny");
+      if (lifecycleVersion !== this.lifecycleVersion) return;
+      this.mediabunny = mediabunny;
     } catch (error) {
+      if (lifecycleVersion !== this.lifecycleVersion) return;
       console.warn("[ExportEngine] MediaBunny not available:", error);
       this.mediabunny = null;
     }
 
     try {
-      this.videoEngine = getVideoEngine();
-      this.audioEngine = getAudioEngine();
+      const videoEngine = getVideoEngine();
+      const audioEngine = getAudioEngine();
+      if (lifecycleVersion !== this.lifecycleVersion) return;
+      this.videoEngine = videoEngine;
+      this.audioEngine = audioEngine;
 
-      if (!this.videoEngine.isInitialized()) {
-        await this.videoEngine.initialize();
+      if (!videoEngine.isInitialized()) {
+        await videoEngine.initialize();
+        if (lifecycleVersion !== this.lifecycleVersion) return;
       }
-      if (!this.audioEngine.isInitialized()) {
-        await this.audioEngine.initialize();
+      if (!audioEngine.isInitialized()) {
+        await audioEngine.initialize();
+        if (lifecycleVersion !== this.lifecycleVersion) return;
       }
 
+      if (lifecycleVersion !== this.lifecycleVersion) return;
       this.initialized = true;
     } catch (error) {
+      if (lifecycleVersion !== this.lifecycleVersion) return;
       throw new Error(
         `ExportEngine initialization failed: ${
           error instanceof Error ? error.message : "Unknown error"
@@ -73,22 +102,55 @@ export class ExportEngine {
     width: number,
     height: number,
   ): Promise<boolean> {
+    const lifecycleVersion = this.lifecycleVersion;
     if (!this.initialized || !this.videoEngine) {
       await this.initialize();
     }
 
+    if (lifecycleVersion !== this.lifecycleVersion) {
+      throw new Error("ExportEngine was disposed during GPU initialization.");
+    }
+    const videoEngine = this.videoEngine;
+    if (!this.initialized || !videoEngine) {
+      throw new Error("ExportEngine initialization did not complete.");
+    }
+
     try {
-      await this.videoEngine!.initializeGPUCompositor(width, height);
-      const gpuCompositor = this.videoEngine!.getGPUCompositor();
-      if (gpuCompositor) {
-        const device = gpuCompositor.getDevice();
-        if (device) {
-          this.upscalingEngine = getUpscalingEngine();
-          await this.upscalingEngine.initialize({ device });
-        }
-        return true;
+      await videoEngine.initializeGPUCompositor(width, height);
+      if (lifecycleVersion !== this.lifecycleVersion) {
+        throw new Error("ExportEngine was disposed during GPU initialization.");
       }
-      return false;
+
+      const gpuCompositor = videoEngine.getGPUCompositor();
+      if (!gpuCompositor) return false;
+
+      const renderer = gpuCompositor.getRenderer();
+      if (renderer && this.gpuRendererWithLossListener !== renderer) {
+        renderer.onDeviceLost(() => {
+          // Upscaling pipelines and pooled textures belong to the lost device.
+          // Drop them before the renderer recreates its GPUDevice.
+          this.upscalingEngine?.dispose();
+          this.upscalingEngine = null;
+        });
+        this.gpuRendererWithLossListener = renderer;
+      }
+
+      const device = gpuCompositor.getDevice();
+      if (!device) return true;
+
+      const upscalingEngine = getUpscalingEngine();
+      const initialized = await upscalingEngine.initialize({ device });
+      if (lifecycleVersion !== this.lifecycleVersion) {
+        upscalingEngine.dispose();
+        throw new Error("ExportEngine was disposed during upscaling initialization.");
+      }
+      if (!initialized) {
+        upscalingEngine.dispose();
+        throw new Error("Upscaling engine could not initialize its GPU pipelines.");
+      }
+
+      this.upscalingEngine = upscalingEngine;
+      return true;
     } catch (error) {
       throw new Error(
         `ExportEngine initialization failed: ${
@@ -116,6 +178,119 @@ export class ExportEngine {
     if (!this.initialized || !this.mediabunny) {
       throw new Error("ExportEngine not initialized. Call initialize() first.");
     }
+  }
+
+  private ensureRenderingInitialized(): void {
+    if (!this.initialized || !this.videoEngine) {
+      throw new Error("ExportEngine not initialized. Call initialize() first.");
+    }
+  }
+
+  /**
+   * The export engine owns shared encoder, cache, progress, and cancellation
+   * state. Until those resources are isolated per export, only one export may
+   * run at a time.
+   */
+  private hasActiveExport(): boolean {
+    return this.abortController !== null;
+  }
+
+  private createExportInProgressResult(): ExportResult {
+    return {
+      success: false,
+      error: this.createError(
+        "MUXER_ERROR",
+        "Another export is already in progress. Wait for it to finish or cancel it before starting a new export.",
+        "preparing",
+      ),
+    };
+  }
+
+  private createImageSequenceFileName(
+    pattern: string,
+    frameNumber: number,
+    format: ImageExportSettings["format"],
+  ): string {
+    const framePattern = pattern.match(/\{(0+)\}/);
+    const expandedName = framePattern
+      ? pattern.replace(
+          framePattern[0],
+          String(frameNumber).padStart(framePattern[1].length, "0"),
+        )
+      : `${pattern}_${frameNumber}`;
+    const safeBaseName = expandedName
+      .replace(/[<>:"/\\|?*\u0000-\u001F]/g, "_")
+      .replace(/\.(jpg|jpeg|png|webp)$/i, "")
+      .replace(/^[. ]+|[. ]+$/g, "")
+      .trim();
+    const extension = format === "jpg" ? "jpg" : format;
+    return `${safeBaseName || "frame_${frameNumber}"}.${extension}`;
+  }
+
+  private validateImageSettings(settings: ImageExportSettings): string | null {
+    if (!["jpg", "png", "webp"].includes(settings.format)) {
+      return "Unsupported image format.";
+    }
+    if (!Number.isInteger(settings.width) || settings.width <= 0) {
+      return "Image width must be a positive integer.";
+    }
+    if (!Number.isInteger(settings.height) || settings.height <= 0) {
+      return "Image height must be a positive integer.";
+    }
+    if (!Number.isFinite(settings.quality) || settings.quality < 0 || settings.quality > 100) {
+      return "Image quality must be between 0 and 100.";
+    }
+    return null;
+  }
+
+  private validateVideoSettings(settings: VideoExportSettings): string | null {
+    if (!["mp4", "webm", "mov"].includes(settings.format)) {
+      return "Unsupported video container format.";
+    }
+    if (!["h264", "h265", "vp8", "vp9", "av1", "prores"].includes(settings.codec)) {
+      return "Unsupported video codec.";
+    }
+    if (!Number.isInteger(settings.width) || settings.width <= 0) {
+      return "Video width must be a positive integer.";
+    }
+    if (!Number.isInteger(settings.height) || settings.height <= 0) {
+      return "Video height must be a positive integer.";
+    }
+    if (!Number.isFinite(settings.frameRate) || settings.frameRate < 1 || settings.frameRate > 120) {
+      return "Frame rate must be between 1 and 120 fps.";
+    }
+    if (!Number.isFinite(settings.bitrate) || settings.bitrate <= 0) {
+      return "Video bitrate must be a finite positive number.";
+    }
+    if (!Number.isFinite(settings.quality) || settings.quality < 0 || settings.quality > 100) {
+      return "Video quality must be between 0 and 100.";
+    }
+    if (!Number.isFinite(settings.keyframeInterval) || settings.keyframeInterval <= 0) {
+      return "Keyframe interval must be a finite positive number.";
+    }
+    if (!["cbr", "vbr"].includes(settings.bitrateMode)) {
+      return "Unsupported video bitrate mode.";
+    }
+    return null;
+  }
+
+  private validateAudioSettings(settings: AudioExportSettings): string | null {
+    if (!["mp3", "wav", "aac", "flac", "ogg"].includes(settings.format)) {
+      return "Unsupported audio export format.";
+    }
+    if (![44100, 48000, 96000].includes(settings.sampleRate)) {
+      return "Audio sample rate must be 44100, 48000, or 96000 Hz.";
+    }
+    if (![16, 24, 32].includes(settings.bitDepth)) {
+      return "Audio bit depth must be 16, 24, or 32.";
+    }
+    if (![1, 2].includes(settings.channels)) {
+      return "Audio channel count must be 1 or 2.";
+    }
+    if (!Number.isFinite(settings.bitrate) || settings.bitrate <= 0) {
+      return "Audio bitrate must be a finite positive number.";
+    }
+    return null;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -236,11 +411,27 @@ export class ExportEngine {
       },
     };
 
+    const videoSettingsError = this.validateVideoSettings(fullSettings);
+    if (videoSettingsError) {
+      return {
+        success: false,
+        error: this.createError("INVALID_SETTINGS", videoSettingsError, "preparing"),
+      };
+    }
+
     if (fullSettings.codec === "prores") {
       fullSettings.codec = "h264";
       fullSettings.format = "mp4";
       fullSettings.bitrate = 25000;
       fullSettings.quality = 95;
+    }
+
+    const audioSettingsError = this.validateAudioSettings(fullSettings.audioSettings);
+    if (audioSettingsError) {
+      return {
+        success: false,
+        error: this.createError("INVALID_SETTINGS", audioSettingsError, "preparing"),
+      };
     }
 
     const { timeline } = project;
@@ -267,19 +458,7 @@ export class ExportEngine {
       fullSettings.frameRate = 30;
     }
 
-    this.abortController = new AbortController();
-    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
-
-    await this.initializeGPUForExport(
-      fullSettings.width,
-      fullSettings.height,
-    );
-
-    this.videoEngine?.resetExportState();
-    if (this.videoEngine) {
-      this.videoEngine.exportMode = true;
-    }
-
+    // Validate prerequisites before changing shared engine state.
     if (timelineDuration <= 0) {
       return {
         success: false,
@@ -302,10 +481,44 @@ export class ExportEngine {
       };
     }
 
+    if (this.hasActiveExport()) {
+      return this.createExportInProgressResult();
+    }
+
+    const controller = new AbortController();
+    this.abortController = controller;
+    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
+
     const totalFrames = Math.ceil(timelineDuration * fullSettings.frameRate);
     let bytesWritten = 0;
+    let videoSource: InstanceType<typeof import("mediabunny").VideoSampleSource> | null = null;
+    let audioSource: InstanceType<typeof import("mediabunny").AudioBufferSource> | null = null;
 
     try {
+      // Keep GPU setup inside the protected lifecycle so failures and
+      // cancellation always pass through the same identity-safe cleanup.
+      await this.initializeGPUForExport(
+        fullSettings.width,
+        fullSettings.height,
+      );
+
+      if (controller.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "preparing",
+        );
+      }
+
+      if (this.videoEngine) {
+        // Configure the export simulation before rebuilding its project emitters.
+        this.videoEngine.setExportFrameRate(fullSettings.frameRate);
+        this.videoEngine.resetExportState(project.timeline.particleEffects ?? []);
+      }
+      if (this.videoEngine) {
+        this.videoEngine.exportMode = true;
+      }
+
       yield this.createProgress("preparing", 0, totalFrames, 0, 0);
 
       const {
@@ -374,14 +587,14 @@ export class ExportEngine {
         getFirstEncodableAudioCodec,
       );
 
-      const videoSource = new VideoSampleSource({
+      videoSource = new VideoSampleSource({
         codec: videoCodec,
         bitrate: fullSettings.bitrate ? fullSettings.bitrate * 1000 : QUALITY_MEDIUM,
         keyFrameInterval:
           fullSettings.keyframeInterval / fullSettings.frameRate,
         hardwareAcceleration: "prefer-software",
       });
-      const audioSource = new AudioBufferSource({
+      audioSource = new AudioBufferSource({
         codec: audioCodecResult.codec as "aac" | "opus" | "mp3",
         bitrate: audioCodecResult.bitrate,
       });
@@ -395,11 +608,12 @@ export class ExportEngine {
       await output.start();
 
       try {
-        await this.encodeTimelineAudioToSource(project, audioSource);
+        await this.encodeTimelineAudioToSource(project, audioSource, controller.signal);
       } finally {
         this.audioEngine?.clearCache();
       }
       audioSource.close();
+      audioSource = null;
 
       const mediaEngine = getMediaEngine();
       const videoMediaIds: string[] = [];
@@ -423,7 +637,7 @@ export class ExportEngine {
       }
 
       for (let frame = 0; frame < totalFrames; frame++) {
-        if (this.abortController.signal.aborted) {
+        if (controller.signal.aborted) {
           throw this.createError(
             "CANCELLED",
             "Export cancelled by user",
@@ -441,25 +655,63 @@ export class ExportEngine {
         const shouldUpscale = this.shouldApplyUpscaling(project, fullSettings);
         let frameImage = rendered.image;
 
-        if (shouldUpscale && this.upscalingEngine?.isInitialized()) {
-          const upscaled = await this.upscalingEngine.upscaleImageBitmap(
-            frameImage,
-            fullSettings.width,
-            fullSettings.height,
-            fullSettings.upscaling!,
-          );
+        try {
+          // Rendering may resolve after Cancel. Close the returned bitmap via
+          // the finally block without sending another frame to the encoder.
+          if (controller.signal.aborted) {
+            throw this.createError(
+              "CANCELLED",
+              "Export cancelled by user",
+              "rendering",
+            );
+          }
+
+          if (shouldUpscale && this.upscalingEngine?.isInitialized()) {
+            const sourceImage = frameImage;
+            try {
+              frameImage = await this.upscalingEngine.upscaleImageBitmap(
+                sourceImage,
+                fullSettings.width,
+                fullSettings.height,
+                fullSettings.upscaling!,
+              );
+            } finally {
+              sourceImage.close();
+            }
+
+            // Upscaling can also outlive a cancellation request. The outer
+            // finally still owns and closes the resulting bitmap.
+            if (controller.signal.aborted) {
+              throw this.createError(
+                "CANCELLED",
+                "Export cancelled by user",
+                "rendering",
+              );
+            }
+          }
+
+          const videoSample = new VideoSample(frameImage, {
+            timestamp: time,
+            duration: 1 / fullSettings.frameRate,
+          });
+
+          try {
+            await videoSource.add(videoSample);
+          } finally {
+            videoSample.close();
+          }
+
+          // Encoder backpressure may leave add() pending after Cancel.
+          if (controller.signal.aborted) {
+            throw this.createError(
+              "CANCELLED",
+              "Export cancelled by user",
+              "rendering",
+            );
+          }
+        } finally {
           frameImage.close();
-          frameImage = upscaled;
         }
-
-        const videoSample = new VideoSample(frameImage, {
-          timestamp: time,
-          duration: 1 / fullSettings.frameRate,
-        });
-
-        await videoSource.add(videoSample);
-        videoSample.close();
-        frameImage.close();
 
         this.currentExport!.framesRendered = frame + 1;
 
@@ -481,7 +733,16 @@ export class ExportEngine {
         );
       }
 
+      if (controller.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "rendering",
+        );
+      }
+
       videoSource.close();
+      videoSource = null;
       mediaEngine.disposeAllExportDecoders();
       mediaEngine.clearFrameCache();
       this.videoEngine?.clearVideoElementCache();
@@ -498,8 +759,39 @@ export class ExportEngine {
         bytesWritten,
       );
 
+      // The async generator may be paused at the progress yield while the user
+      // cancels; check again before committing the muxed file.
+      if (controller.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "muxing",
+        );
+      }
+
       await output.finalize();
+
+      // Finalization can be asynchronous; cancellation during muxing must not
+      // be reported as a successful export or proceed to commit the file.
+      if (controller.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "muxing",
+        );
+      }
+
       await writableStream.close();
+
+      // Closing the destination is asynchronous; cancellation while it is
+      // pending must not be followed by a success notification.
+      if (controller.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "muxing",
+        );
+      }
 
       yield this.createProgress(
         "complete",
@@ -509,12 +801,27 @@ export class ExportEngine {
         bytesWritten,
       );
 
+      // The consumer can cancel while paused on the final progress update.
+      if (controller.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "muxing",
+        );
+      }
+
       return {
         success: true,
         stats: this.calculateStats(totalFrames, bytesWritten),
       };
     } catch (error) {
       try { await writableStream.abort(); } catch {}
+      if (controller.signal.aborted) {
+        return {
+          success: false,
+          error: this.createError("CANCELLED", "Export cancelled by user", "muxing"),
+        };
+      }
       if (error && typeof error === "object" && "code" in error) {
         return { success: false, error: error as ExportError };
       }
@@ -527,8 +834,12 @@ export class ExportEngine {
         ),
       };
     } finally {
-      this.abortController = null;
-      this.currentExport = null;
+      try { audioSource?.close(); } catch {}
+      try { videoSource?.close(); } catch {}
+      if (this.abortController === controller) {
+        this.abortController = null;
+        this.currentExport = null;
+      }
       this.audioEngine?.clearCache();
       this.videoEngine?.clearVideoElementCache();
       this.videoEngine?.clearCache();
@@ -560,6 +871,14 @@ export class ExportEngine {
       ...settings,
     };
 
+    const audioSettingsError = this.validateAudioSettings(fullSettings);
+    if (audioSettingsError) {
+      return {
+        success: false,
+        error: this.createError("INVALID_SETTINGS", audioSettingsError, "preparing"),
+      };
+    }
+
     if (!this.mediabunny && fullSettings.format !== "wav") {
       return {
         success: false,
@@ -571,12 +890,10 @@ export class ExportEngine {
       };
     }
 
-    this.abortController = new AbortController();
-    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
-
     const { timeline } = project;
     const timelineDuration = this.calculateTimelineDuration(timeline);
 
+    // Reject an empty timeline before creating shared cancellation/export state.
     if (timelineDuration <= 0) {
       return {
         success: false,
@@ -588,9 +905,21 @@ export class ExportEngine {
       };
     }
 
+    if (this.hasActiveExport()) {
+      return this.createExportInProgressResult();
+    }
+
+    const controller = new AbortController();
+    this.abortController = controller;
+    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
+
     try {
       yield this.createProgress("preparing", 0, 1, 0, 0);
       const audioBuffer = await this.renderTimelineAudio(project);
+
+      if (controller.signal.aborted) {
+        throw this.createError("CANCELLED", "Export cancelled by user", "rendering");
+      }
 
       if (!audioBuffer) {
         throw this.createError(
@@ -605,14 +934,24 @@ export class ExportEngine {
       // Encode based on format
       let blob: Blob;
 
+      if (controller.signal.aborted) {
+        throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+      }
+
       if (fullSettings.format === "wav") {
         blob = this.encodeWav(audioBuffer, fullSettings);
       } else {
         // Use MediaBunny for other formats
-        blob = await this.encodeAudioWithMediaBunny(audioBuffer, fullSettings);
+        blob = await this.encodeAudioWithMediaBunny(audioBuffer, fullSettings, controller.signal);
       }
 
       yield this.createProgress("complete", 1, 1, 1, blob.size);
+
+      // The consumer can pause the generator on the completion update and
+      // cancel before requesting the final result.
+      if (controller.signal.aborted) {
+        throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+      }
 
       return {
         success: true,
@@ -626,6 +965,12 @@ export class ExportEngine {
         },
       };
     } catch (error) {
+      if (controller.signal.aborted) {
+        return {
+          success: false,
+          error: this.createError("CANCELLED", "Export cancelled by user", "encoding"),
+        };
+      }
       if (error && typeof error === "object" && "code" in error) {
         return { success: false, error: error as ExportError };
       }
@@ -638,8 +983,10 @@ export class ExportEngine {
         ),
       };
     } finally {
-      this.abortController = null;
-      this.currentExport = null;
+      if (this.abortController === controller) {
+        this.abortController = null;
+        this.currentExport = null;
+      }
     }
   }
 
@@ -648,7 +995,7 @@ export class ExportEngine {
     time: number,
     settings: Partial<ImageExportSettings> = {},
   ): Promise<ExportResult> {
-    this.ensureInitialized();
+    this.ensureRenderingInitialized();
 
     const fullSettings: ImageExportSettings = {
       ...DEFAULT_IMAGE_SETTINGS,
@@ -657,6 +1004,28 @@ export class ExportEngine {
       ...settings,
     };
 
+    const settingsError = this.validateImageSettings(fullSettings);
+    if (settingsError) {
+      return {
+        success: false,
+        error: this.createError("INVALID_SETTINGS", settingsError, "preparing"),
+      };
+    }
+
+    const timelineDuration = this.calculateTimelineDuration(project.timeline);
+    if (!Number.isFinite(time) || time < 0 || time > timelineDuration) {
+      return {
+        success: false,
+        error: this.createError(
+          "INVALID_SETTINGS",
+          "Frame time must be finite and within the timeline duration.",
+          "preparing",
+        ),
+      };
+    }
+
+    let renderedImage: ImageBitmap | null = null;
+    let canvas: OffscreenCanvas | null = null;
     try {
       const renderedFrame = await this.videoEngine!.renderFrame(
         project,
@@ -664,33 +1033,22 @@ export class ExportEngine {
         fullSettings.width,
         fullSettings.height,
       );
+      renderedImage = renderedFrame.image;
 
-      // Scale if needed (fallback in case render didn't match)
-      let canvas: OffscreenCanvas;
-      if (
-        fullSettings.width !== renderedFrame.width ||
-        fullSettings.height !== renderedFrame.height
-      ) {
-        canvas = new OffscreenCanvas(fullSettings.width, fullSettings.height);
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(
-            renderedFrame.image,
-            0,
-            0,
-            fullSettings.width,
-            fullSettings.height,
-          );
-        }
-        renderedFrame.image.close();
-      } else {
-        canvas = new OffscreenCanvas(renderedFrame.width, renderedFrame.height);
-        const ctx = canvas.getContext("2d");
-        if (ctx) {
-          ctx.drawImage(renderedFrame.image, 0, 0);
-        }
-        renderedFrame.image.close();
+      canvas = new OffscreenCanvas(fullSettings.width, fullSettings.height);
+      const ctx = canvas.getContext("2d");
+      if (!ctx) {
+        throw new Error("Unable to create an image export canvas.");
       }
+
+      ctx.drawImage(
+        renderedImage,
+        0,
+        0,
+        fullSettings.width,
+        fullSettings.height,
+      );
+
       const mimeType = this.getImageMimeType(fullSettings.format);
       const blob = await canvas.convertToBlob({
         type: mimeType,
@@ -717,6 +1075,14 @@ export class ExportEngine {
           "rendering",
         ),
       };
+    } finally {
+      renderedImage?.close();
+      // Release the per-frame backing store immediately instead of waiting
+      // for garbage collection during long image-sequence exports.
+      if (canvas) {
+        canvas.width = 0;
+        canvas.height = 0;
+      }
     }
   }
 
@@ -730,8 +1096,9 @@ export class ExportEngine {
   async *exportImageSequence(
     project: Project,
     settings: Partial<SequenceExportSettings> = {},
+    onFrame?: (frame: { name: string; blob: Blob }) => void | Promise<void>,
   ): AsyncGenerator<ExportProgress, ExportResult> {
-    this.ensureInitialized();
+    this.ensureRenderingInitialized();
 
     const { timeline } = project;
     const frameRate = project.settings.frameRate;
@@ -747,17 +1114,50 @@ export class ExportEngine {
       ...settings,
     };
 
-    this.abortController = new AbortController();
-    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
+    const imageSettingsError = this.validateImageSettings(fullSettings);
+    const sequenceSettingsError =
+      !Number.isFinite(frameRate) || frameRate <= 0 || frameRate > 120
+        ? "Sequence frame rate must be finite and between 1 and 120 fps."
+        : !Number.isFinite(timeline.duration) || timeline.duration <= 0
+          ? "Sequence duration must be finite and positive."
+          : !Number.isInteger(fullSettings.startFrame) || fullSettings.startFrame < 0
+            ? "Sequence start frame must be a non-negative integer."
+            : !Number.isInteger(fullSettings.endFrame) ||
+                fullSettings.endFrame < fullSettings.startFrame ||
+                fullSettings.endFrame >= totalFrames
+              ? "Sequence end frame must be an integer within the timeline and not before the start frame."
+              : typeof fullSettings.namingPattern !== "string" ||
+                  fullSettings.namingPattern.trim().length === 0
+                ? "Sequence naming pattern must not be empty."
+                : null;
+
+    if (imageSettingsError || sequenceSettingsError) {
+      return {
+        success: false,
+        error: this.createError(
+          "INVALID_SETTINGS",
+          imageSettingsError ?? sequenceSettingsError!,
+          "preparing",
+        ),
+      };
+    }
+
+    if (this.hasActiveExport()) {
+      return this.createExportInProgressResult();
+    }
 
     const framesToExport = fullSettings.endFrame - fullSettings.startFrame + 1;
-    const blobs: Blob[] = [];
+    const controller = new AbortController();
+    this.abortController = controller;
+    this.currentExport = { startTime: Date.now(), framesRendered: 0 };
+    const files: Array<{ name: string; blob: Blob }> = [];
+    let totalBytes = 0;
 
     try {
       yield this.createProgress("preparing", 0, framesToExport, 0, 0);
 
       for (let i = 0; i < framesToExport; i++) {
-        if (this.abortController.signal.aborted) {
+        if (controller.signal.aborted) {
           throw this.createError(
             "CANCELLED",
             "Export cancelled by user",
@@ -767,12 +1167,53 @@ export class ExportEngine {
 
         const frameNumber = fullSettings.startFrame + i;
         const time = frameNumber / frameRate;
-
         const result = await this.exportFrame(project, time, fullSettings);
-        if (result.success && result.blob) {
-          blobs.push(result.blob);
+
+        // Rendering is asynchronous and may finish after the user presses
+        // Cancel. Do not retain or report a frame produced by a cancelled run.
+        if (controller.signal.aborted) {
+          throw this.createError(
+            "CANCELLED",
+            "Export cancelled by user",
+            "rendering",
+          );
         }
 
+        if (!result.success || !result.blob) {
+          return {
+            success: false,
+            error: result.error ?? this.createError(
+              "FRAME_ENCODE_FAILED",
+              "Unable to export image sequence frame.",
+              "rendering",
+            ),
+          };
+        }
+
+        const frameName = this.createImageSequenceFileName(
+          fullSettings.namingPattern,
+          frameNumber,
+          fullSettings.format,
+        );
+        const exportedFrame = { name: frameName, blob: result.blob };
+        // Stream each rendered frame to the caller before rendering the next.
+        // Awaiting the callback applies destination backpressure and avoids
+        // retaining all encoded frame Blobs in memory.
+        if (onFrame) {
+          await onFrame(exportedFrame);
+          // The destination callback may be awaiting a slow write while the
+          // user cancels. Do not count or report that frame after cancellation.
+          if (controller.signal.aborted) {
+            throw this.createError(
+              "CANCELLED",
+              "Export cancelled by user",
+              "rendering",
+            );
+          }
+        } else {
+          files.push(exportedFrame);
+        }
+        totalBytes += result.blob.size;
         this.currentExport!.framesRendered = i + 1;
 
         yield this.createProgress(
@@ -780,7 +1221,15 @@ export class ExportEngine {
           (i + 1) / framesToExport,
           framesToExport,
           i + 1,
-          blobs.reduce((sum, b) => sum + b.size, 0),
+          totalBytes,
+        );
+      }
+
+      if (controller.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "rendering",
         );
       }
 
@@ -789,17 +1238,36 @@ export class ExportEngine {
         1,
         framesToExport,
         framesToExport,
-        0,
+        totalBytes,
       );
 
-      const totalSize = blobs.reduce((sum, b) => sum + b.size, 0);
+      // Respect cancellation while the caller is paused on the final update.
+      if (controller.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "rendering",
+        );
+      }
 
+      const totalSize = totalBytes;
       return {
         success: true,
-        blob: blobs[0],
+        blob: onFrame ? undefined : files[0]?.blob,
+        files: onFrame ? [] : files,
         stats: this.calculateStats(framesToExport, totalSize),
       };
     } catch (error) {
+      if (controller.signal.aborted) {
+        return {
+          success: false,
+          error: this.createError(
+            "CANCELLED",
+            "Export cancelled by user",
+            "rendering",
+          ),
+        };
+      }
       if (error && typeof error === "object" && "code" in error) {
         return { success: false, error: error as ExportError };
       }
@@ -812,8 +1280,10 @@ export class ExportEngine {
         ),
       };
     } finally {
-      this.abortController = null;
-      this.currentExport = null;
+      if (this.abortController === controller) {
+        this.abortController = null;
+        this.currentExport = null;
+      }
     }
   }
 
@@ -1097,6 +1567,7 @@ export class ExportEngine {
   private async encodeTimelineAudioToSource(
     project: Project,
     audioSource: InstanceType<typeof import("mediabunny").AudioBufferSource>,
+    signal: AbortSignal,
   ): Promise<void> {
     const timelineDuration = this.calculateTimelineDuration(project.timeline);
     if (timelineDuration <= 0) {
@@ -1110,7 +1581,7 @@ export class ExportEngine {
       startTime < timelineDuration;
       startTime += chunkDuration
     ) {
-      if (this.abortController?.signal.aborted) {
+      if (signal.aborted) {
         throw this.createError(
           "CANCELLED",
           "Export cancelled by user",
@@ -1128,11 +1599,29 @@ export class ExportEngine {
         currentChunkDuration,
       );
 
+      // Audio rendering is asynchronous; cancellation may happen while a
+      // chunk is being produced. Never append a late chunk to the muxer.
+      if (signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "encoding",
+        );
+      }
+
       if (!audioBuffer) {
         continue;
       }
 
       await audioSource.add(audioBuffer);
+
+      if (signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "encoding",
+        );
+      }
 
       // Yield between chunks so the browser can reclaim the previous buffer
       // before the next long-running render starts.
@@ -1143,6 +1632,7 @@ export class ExportEngine {
   private async encodeAudioWithMediaBunny(
     buffer: AudioBuffer,
     settings: AudioExportSettings,
+    signal: AbortSignal,
   ): Promise<Blob> {
     const {
       Output,
@@ -1167,25 +1657,64 @@ export class ExportEngine {
     const target = new BufferTarget();
     const output = new Output({ format: outputFormat, target });
 
+    if (signal.aborted) {
+      throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+    }
+
     const audioCodec = await getFirstEncodableAudioCodec(
       outputFormat.getSupportedAudioCodecs(),
     );
+
+    if (signal.aborted) {
+      throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+    }
 
     const audioSource = new AudioSampleSource({
       codec: audioCodec || "mp3",
       bitrate: settings.bitrate * 1000,
     });
 
-    output.addAudioTrack(audioSource);
-    await output.start();
-    const audioSamples = AudioSample.fromAudioBuffer(buffer, 0);
-    for (const sample of audioSamples) {
-      await audioSource.add(sample);
-      sample.close();
+    try {
+      output.addAudioTrack(audioSource);
+      await output.start();
+      if (signal.aborted) {
+        throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+      }
+
+      const audioSamples = AudioSample.fromAudioBuffer(buffer, 0);
+      for (const sample of audioSamples) {
+        try {
+          if (signal.aborted) {
+            throw this.createError(
+              "CANCELLED",
+              "Export cancelled by user",
+              "encoding",
+            );
+          }
+          await audioSource.add(sample);
+          if (signal.aborted) {
+            throw this.createError(
+              "CANCELLED",
+              "Export cancelled by user",
+              "encoding",
+            );
+          }
+        } finally {
+          sample.close();
+        }
+      }
+    } finally {
+      audioSource.close();
     }
 
-    audioSource.close();
+    if (signal.aborted) {
+      throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+    }
+
     await output.finalize();
+    if (signal.aborted) {
+      throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+    }
 
     const resultBuffer = target.buffer;
     if (!resultBuffer) {
@@ -1420,11 +1949,14 @@ export class ExportEngine {
   }
 
   dispose(): void {
+    this.lifecycleVersion += 1;
+    this.initializationPromise = null;
     this.cancel();
     this.terminateWorker();
     this.mediabunny = null;
     this.videoEngine = null;
     this.audioEngine = null;
+    this.gpuRendererWithLossListener = null;
     if (this.upscalingEngine) {
       this.upscalingEngine.clearTexturePool();
       this.upscalingEngine = null;

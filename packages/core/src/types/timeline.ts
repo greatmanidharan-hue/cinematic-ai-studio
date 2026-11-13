@@ -1,6 +1,24 @@
 import type { TransitionType } from "./effects";
 import type { EmphasisAnimation } from "../graphics/types";
 import type { StabilizationProfile } from "../video/stabilization/types";
+import type { ParticleEffect } from "../effects/particle-types";
+
+export interface LightningEffectClip {
+  readonly id: string;
+  readonly name?: string;
+  /** Timeline position in seconds. */
+  readonly startTime: number;
+  readonly duration: number;
+  /** Normalized canvas coordinates in the 0..1 range. */
+  readonly start: { readonly x: number; readonly y: number };
+  readonly end: { readonly x: number; readonly y: number };
+  readonly color?: string;
+  readonly intensity: number;
+  readonly segments?: number;
+  readonly branches?: number;
+  readonly amplitude?: number;
+  readonly enabled: boolean;
+}
 
 export interface Timeline {
   readonly tracks: Track[];
@@ -9,6 +27,10 @@ export interface Timeline {
   readonly markers: Marker[];
   readonly beatMarkers?: TimelineBeatMarker[];
   readonly beatAnalysis?: TimelineBeatAnalysis;
+  /** Optional cinematic lightning overlays, rendered above footage and below subtitles. */
+  readonly lightningEffects?: LightningEffectClip[];
+  /** Optional project-owned particle overlays, persisted with the timeline. */
+  readonly particleEffects?: ParticleEffect[];
 }
 
 export interface TimelineBeatMarker {

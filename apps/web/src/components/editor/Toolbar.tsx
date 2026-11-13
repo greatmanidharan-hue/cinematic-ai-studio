@@ -1,4 +1,4 @@
-import React, { useCallback, useState, useEffect } from "react";
+import React, { useCallback, useState, useEffect, useRef } from "react";
 import {
   Search,
   Command,
@@ -34,6 +34,8 @@ import {
   type VideoExportSettings,
   type AudioExportSettings,
   type ExportResult,
+  type SequenceExportSettings,
+  createImageSequenceZipFromFrames,
   type DeviceProfile,
   type TimeEstimate,
 } from "@fairarena/core";
@@ -124,6 +126,11 @@ export const Toolbar: React.FC = () => {
   });
   const [deviceProfile, setDeviceProfile] = useState<DeviceProfile | null>(null);
   const [exportEstimates, setExportEstimates] = useState<Map<string, TimeEstimate>>(new Map());
+  const sequenceZipAbortController = useRef<AbortController | null>(null);
+  // The core engine is only owned by this sequence while its frame producer is active.
+  const sequenceProducerActive = useRef(false);
+  // Prevent rapid repeated clicks while a save picker or export is starting.
+  const exportStartLock = useRef(false);
 
   useEffect(() => {
     setGlobalExportState({
@@ -219,6 +226,7 @@ export const Toolbar: React.FC = () => {
       webm: "video/webm",
       mov: "video/quicktime",
       wav: "audio/wav",
+      zip: "application/zip",
     };
     const mime = mimeMap[ext] || "application/octet-stream";
 
@@ -235,7 +243,8 @@ export const Toolbar: React.FC = () => {
       return handle.createWritable();
     }
 
-    let buffer = new Uint8Array(16 * 1024 * 1024);
+    // Keep the fallback's initial allocation small; grow only as export data arrives.
+    let buffer = new Uint8Array(1024 * 1024);
     let length = 0;
     let cursor = 0;
 
@@ -257,7 +266,8 @@ export const Toolbar: React.FC = () => {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      // Let the browser begin consuming the download before releasing its Blob URL.
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
 
     const writeBytes = (bytes: Uint8Array, position: number) => {
@@ -273,13 +283,14 @@ export const Toolbar: React.FC = () => {
         cursor = position;
         return Promise.resolve();
       },
-      write(data: unknown) {
-        if (data instanceof ArrayBuffer) {
+      async write(data: unknown) {
+        if (data instanceof Blob) {
+          writeBytes(new Uint8Array(await data.arrayBuffer()), cursor);
+        } else if (data instanceof ArrayBuffer) {
           writeBytes(new Uint8Array(data), cursor);
         } else if (ArrayBuffer.isView(data)) {
           writeBytes(new Uint8Array(data.buffer, data.byteOffset, data.byteLength), cursor);
         }
-        return Promise.resolve();
       },
       close() {
         triggerDownload();
@@ -296,6 +307,8 @@ export const Toolbar: React.FC = () => {
 
   const handleExport = useCallback(
     async (type: ExportType) => {
+      if (exportStartLock.current) return;
+      exportStartLock.current = true;
       setIsExportOpen(false);
 
       try {
@@ -404,14 +417,21 @@ export const Toolbar: React.FC = () => {
           isExporting: false,
           error: error instanceof Error ? error.message : "Export failed",
         }));
+      } finally {
+        exportStartLock.current = false;
       }
     },
     [project, track, runExport, showSavePicker],
   );
 
   const handleCancelExport = useCallback(() => {
-    const engine = getExportEngine();
-    engine.cancel();
+    const sequenceController = sequenceZipAbortController.current;
+    // ZIP packaging can outlive frame rendering. Do not cancel a different export
+    // that may have started on the shared engine after this sequence producer ended.
+    if (!sequenceController || sequenceProducerActive.current) {
+      getExportEngine().cancel();
+    }
+    sequenceController?.abort();
     setExportState({
       isExporting: false,
       progress: 0,
@@ -421,8 +441,181 @@ export const Toolbar: React.FC = () => {
     });
   }, []);
 
+  const handleSequenceExport = useCallback(
+    async (settings: SequenceExportSettings) => {
+      if (exportStartLock.current) return;
+      exportStartLock.current = true;
+      setIsExportDialogOpen(false);
+      let writable: FileSystemWritableFileStream | null = null;
+      const zipController = new AbortController();
+      sequenceZipAbortController.current = zipController;
+      try {
+        writable = await showSavePicker(`${project.name || "image-sequence"}.zip`, "zip");
+        if (zipController.signal.aborted) {
+          await writable.abort();
+          sequenceZipAbortController.current = null;
+          return;
+        }
+        setExportState({ isExporting: true, progress: 0, phase: "Preparing image sequence...", error: null, complete: false });
+        const engine = getExportEngine();
+        await engine.initialize();
+        if (zipController.signal.aborted) {
+          throw new Error("Image sequence export cancelled.");
+        }
+        const totalTimelineFrames = Math.ceil(project.timeline.duration * project.settings.frameRate);
+        const expectedFrames = (settings.endFrame ?? totalTimelineFrames - 1) - (settings.startFrame ?? 0) + 1;
+        const queuedFrames: Array<{ name: string; blob: Blob }> = [];
+        const frameWaiters: Array<() => void> = [];
+        let framesDone = false;
+        let frameError: Error | null = null;
+        const frameSource = async function* () {
+          const wakeOnAbort = () => frameWaiters.splice(0).forEach((wake) => wake());
+          zipController.signal.addEventListener("abort", wakeOnAbort, { once: true });
+          try {
+            while (!framesDone || queuedFrames.length > 0) {
+              if (zipController.signal.aborted) {
+                throw new Error("Image sequence export cancelled.");
+              }
+              if (queuedFrames.length === 0) {
+                await new Promise<void>((resolve) => {
+                  frameWaiters.push(resolve);
+                  // Recheck after registering to close the abort/producer-finish race.
+                  if (zipController.signal.aborted || framesDone || frameError) {
+                    const waiterIndex = frameWaiters.indexOf(resolve);
+                    if (waiterIndex >= 0) frameWaiters.splice(waiterIndex, 1);
+                    resolve();
+                  }
+                });
+                continue;
+              }
+              const nextFrame = queuedFrames.shift()!;
+              frameWaiters.shift()?.();
+              yield nextFrame;
+            }
+            if (frameError) throw frameError;
+          } finally {
+            zipController.signal.removeEventListener("abort", wakeOnAbort);
+          }
+        };
+        const archivePromise = createImageSequenceZipFromFrames(frameSource(), expectedFrames, {
+          signal: zipController.signal,
+          onChunk: async (chunk) => {
+            if (zipController.signal.aborted) throw new Error("Image sequence ZIP packaging cancelled.");
+            await writable?.write(chunk);
+          },
+          onProgress: (completed, total) => {
+            setExportState((prev) => ({
+              ...prev,
+              progress: (completed / total) * 100,
+              phase: "Packaging ZIP... " + completed + "/" + total + " frames",
+            }));
+          },
+        });
+        // If the destination fails early, wake the producer and stop rendering.
+        void archivePromise.catch((error) => {
+          frameError = error instanceof Error ? error : new Error("Image sequence ZIP packaging failed.");
+          framesDone = true;
+          if (sequenceProducerActive.current) engine.cancel();
+          frameWaiters.splice(0).forEach((wake) => wake());
+        });
+        const generator = engine.exportImageSequence(project, settings, async (frame) => {
+          if (zipController.signal.aborted) throw new Error("Image sequence export cancelled.");
+          if (frameError) throw frameError;
+          queuedFrames.push(frame);
+          frameWaiters.shift()?.();
+          // Wait until the ZIP consumer takes this frame before rendering another.
+          while (queuedFrames.includes(frame) && !zipController.signal.aborted && !frameError) {
+            await new Promise<void>((resolve) => frameWaiters.push(resolve));
+          }
+          if (frameError) throw frameError;
+        });
+        let result: ExportResult | undefined;
+        sequenceProducerActive.current = true;
+        try {
+          while (true) {
+            const { value, done } = await generator.next();
+            if (zipController.signal.aborted) throw new Error("Image sequence export cancelled.");
+            if (done) {
+              result = value;
+              break;
+            }
+            setExportState((prev) => ({
+              ...prev,
+              progress: value.progress * 100,
+              phase: value.phase === "complete" ? "Packaging ZIP..." : `${value.phase}...`,
+            }));
+          }
+          if (!result?.success) throw new Error(result?.error?.message || "Image sequence export failed");
+        } catch (error) {
+          frameError = error instanceof Error ? error : new Error("Image sequence export failed");
+          throw error;
+        } finally {
+          sequenceProducerActive.current = false;
+          framesDone = true;
+          frameWaiters.splice(0).forEach((wake) => wake());
+        }
+        const archive = await archivePromise;
+        if (zipController.signal.aborted) {
+          throw new Error("Image sequence ZIP packaging cancelled.");
+        }
+        if (archive.size > 0) await writable.write(archive);
+        if (zipController.signal.aborted) {
+          throw new Error("Image sequence ZIP packaging cancelled.");
+        }
+        await writable.close();
+        // The user can cancel while the destination's final close is pending.
+        // Recheck before reporting completion so a late cancellation is not lost.
+        if (zipController.signal.aborted) {
+          throw new Error("Image sequence ZIP packaging cancelled.");
+        }
+        sequenceZipAbortController.current = null;
+        setExportState((prev) => ({ ...prev, complete: true, progress: 100, phase: "ZIP saved!" }));
+        track(AnalyticsEvents.PROJECT_EXPORTED, {
+          format: "zip",
+          width: settings.width,
+          height: settings.height,
+          frameRate: project.settings.frameRate,
+          duration: project.timeline?.duration ?? 0,
+          exportType: "image-sequence",
+          frameCount: expectedFrames,
+        });
+        setTimeout(() => setExportState({ isExporting: false, progress: 0, phase: "", error: null, complete: false }), 2500);
+      } catch (error) {
+        const cancelled =
+          zipController.signal.aborted ||
+          (error instanceof Error &&
+            (error.name === "AbortError" || /cancelled/i.test(error.message)));
+        sequenceZipAbortController.current = null;
+        if (writable) {
+          try { await writable.abort(); } catch {}
+        }
+        if (cancelled) {
+          setExportState({
+            isExporting: false,
+            progress: 0,
+            phase: "",
+            error: null,
+            complete: false,
+          });
+          return;
+        }
+        setExportState((prev) => ({
+          ...prev,
+          isExporting: false,
+          error: error instanceof Error ? error.message : "Image sequence export failed",
+        }));
+      } finally {
+        exportStartLock.current = false;
+        sequenceZipAbortController.current = null;
+      }
+    },
+    [project, track, showSavePicker],
+  );
+
   const handleCustomExport = useCallback(
     async (settings: VideoExportSettings) => {
+      if (exportStartLock.current) return;
+      exportStartLock.current = true;
       setIsExportDialogOpen(false);
 
       try {
@@ -474,6 +667,8 @@ export const Toolbar: React.FC = () => {
           isExporting: false,
           error: error instanceof Error ? error.message : "Export failed",
         }));
+      } finally {
+        exportStartLock.current = false;
       }
     },
     [project, track, runExport, showSavePicker],
@@ -946,6 +1141,8 @@ export const Toolbar: React.FC = () => {
         isOpen={isExportDialogOpen}
         onClose={() => setIsExportDialogOpen(false)}
         onExport={handleCustomExport}
+        onExportSequence={handleSequenceExport}
+        projectFrameRate={project.settings?.frameRate ?? 30}
         duration={project.timeline?.duration ?? 0}
         projectWidth={project.settings?.width ?? 1920}
         projectHeight={project.settings?.height ?? 1080}

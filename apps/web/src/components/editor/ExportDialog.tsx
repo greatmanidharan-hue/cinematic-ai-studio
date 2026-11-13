@@ -42,7 +42,7 @@ import {
   exportPresetsManager,
   type PlatformExportPreset,
 } from "../../services/export-presets";
-import type { VideoExportSettings, UpscaleQuality } from "@fairarena/core";
+import type { VideoExportSettings, SequenceExportSettings, UpscaleQuality } from "@fairarena/core";
 import {
   getDeviceProfile,
   estimateExportTime,
@@ -60,6 +60,8 @@ interface ExportDialogProps {
   isOpen: boolean;
   onClose: () => void;
   onExport: (settings: VideoExportSettings) => void;
+  onExportSequence: (settings: SequenceExportSettings) => void;
+  projectFrameRate?: number;
   duration?: number;
   projectWidth?: number;
   projectHeight?: number;
@@ -121,11 +123,15 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
   isOpen,
   onClose,
   onExport,
+  onExportSequence,
+  projectFrameRate = 30,
   duration = 0,
   projectWidth = 1920,
   projectHeight = 1080,
 }) => {
-  const [activeTab, setActiveTab] = useState<"presets" | "custom">("presets");
+  const [activeTab, setActiveTab] = useState<"presets" | "custom" | "sequence">("presets");
+  const [sequenceFormat, setSequenceFormat] = useState<"png" | "jpg" | "webp">("png");
+  const [sequenceNamingPattern, setSequenceNamingPattern] = useState("frame_{0000}");
   const [selectedPlatform, setSelectedPlatform] = useState<string | null>(
     "recommended",
   );
@@ -244,13 +250,26 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
         : exportPresetsManager.getRecommendedPresets();
 
   const handleExport = useCallback(() => {
+    if (activeTab === "sequence") {
+      onExportSequence({
+        format: sequenceFormat,
+        quality: 90,
+        width: projectWidth,
+        height: projectHeight,
+        startFrame: 0,
+        endFrame: Math.max(0, Math.ceil(duration * projectFrameRate) - 1),
+        namingPattern: sequenceNamingPattern,
+      });
+      onClose();
+      return;
+    }
     const settings =
       activeTab === "presets" && selectedPreset
         ? (selectedPreset.settings as VideoExportSettings)
         : customSettings;
     onExport(settings);
     onClose();
-  }, [activeTab, selectedPreset, customSettings, onExport, onClose]);
+  }, [activeTab, selectedPreset, customSettings, onExport, onExportSequence, onClose, sequenceFormat, sequenceNamingPattern, projectWidth, projectHeight, duration, projectFrameRate]);
 
   const formatFileSize = (bitrate: number, durationSec: number): string => {
     const bytes = (bitrate * 1000 * durationSec) / 8;
@@ -285,7 +304,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
 
         <Tabs
           value={activeTab}
-          onValueChange={(v) => setActiveTab(v as "presets" | "custom")}
+          onValueChange={(v) => setActiveTab(v as "presets" | "custom" | "sequence")}
           className="flex-1 flex flex-col overflow-hidden"
         >
           <TabsList className="flex border-b border-border bg-transparent rounded-none">
@@ -303,8 +322,45 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
               <Settings size={16} />
               Custom
             </TabsTrigger>
+            <TabsTrigger
+              value="sequence"
+              className="flex-1 flex items-center justify-center gap-2 p-3 text-sm font-medium rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:text-primary text-text-secondary hover:text-text-primary"
+            >
+              <Archive size={16} />
+              Image Sequence
+            </TabsTrigger>
           </TabsList>
 
+          <TabsContent value="sequence" className="flex-1 overflow-y-auto p-6 mt-0">
+            <div className="max-w-xl space-y-5">
+              <div>
+                <h3 className="text-sm font-semibold text-text-primary">Image Sequence Export</h3>
+                <p className="text-xs text-text-muted mt-1">Render every timeline frame as an image and package them into one ZIP archive.</p>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <label className="text-xs text-text-secondary space-y-2">
+                  <span>Image format</span>
+                  <select value={sequenceFormat} onChange={(event) => setSequenceFormat(event.target.value as "png" | "jpg" | "webp")} className="w-full rounded-md border border-border bg-background-secondary p-2 text-text-primary">
+                    <option value="png">PNG (lossless)</option>
+                    <option value="jpg">JPG</option>
+                    <option value="webp">WebP</option>
+                  </select>
+                </label>
+                <label className="text-xs text-text-secondary space-y-2">
+                  <span>Filename pattern</span>
+                  <input value={sequenceNamingPattern} onChange={(event) => setSequenceNamingPattern(event.target.value)} className="w-full rounded-md border border-border bg-background-secondary p-2 text-text-primary" placeholder="frame_{0000}" />
+                </label>
+              </div>
+              <div className="rounded-lg border border-border bg-background-tertiary p-4 text-xs text-text-secondary space-y-1">
+                <p>Resolution: <strong className="text-text-primary">{projectWidth} × {projectHeight}</strong></p>
+                <p>Frame rate: <strong className="text-text-primary">{projectFrameRate} fps</strong></p>
+                <p>Frames: <strong className="text-text-primary">{Math.max(0, Math.ceil(duration * projectFrameRate))}</strong></p>
+                <p>Archive: <strong className="text-text-primary">ZIP</strong></p>
+              </div>
+              {sequenceNamingPattern.trim().length === 0 && <p className="text-xs text-red-400">Enter a filename pattern to continue.</p>}
+              {duration <= 0 && <p className="text-xs text-red-400">Add at least one clip to the timeline before exporting an image sequence.</p>}
+            </div>
+          </TabsContent>
           <TabsContent value="presets" className="flex-1 overflow-hidden flex mt-0">
               <div className="w-48 border-r border-border overflow-y-auto">
                 <button
@@ -855,10 +911,10 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
             </Button>
             <Button
               onClick={handleExport}
-              disabled={activeTab === "presets" && !selectedPreset}
+              disabled={(activeTab === "presets" && !selectedPreset) || (activeTab === "sequence" && (!sequenceNamingPattern.trim() || duration <= 0))}
             >
               <Play size={16} />
-              Start Export
+              {activeTab === "sequence" ? "Export ZIP" : "Start Export"}
             </Button>
           </div>
         </div>

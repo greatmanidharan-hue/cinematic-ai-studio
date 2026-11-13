@@ -102,6 +102,12 @@ export class InverseActionGenerator {
           ...projectBefore.settings,
         });
 
+      case "project/updateTimelineVfx":
+        return this.createInverseAction(action, "project/updateTimelineVfx", {
+          ...(action.params.lightningEffects !== undefined ? { lightningEffects: [...(projectBefore.timeline.lightningEffects ?? [])] } : {}),
+          ...(action.params.particleEffects !== undefined ? { particleEffects: [...(projectBefore.timeline.particleEffects ?? [])] } : {}),
+        });
+
       case "project/create":
         // Cannot undo project creation in a meaningful way
         return null;

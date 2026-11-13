@@ -165,6 +165,7 @@ export interface ProjectState {
     moves: Array<{ clipId: string; startTime: number; trackId?: string }>,
   ) => Promise<ActionResult>;
   beginHistoryGroup: (description?: string) => void;
+  updateTimelineVfx: (patch: { lightningEffects?: unknown[]; particleEffects?: unknown[] }) => Promise<ActionResult>;
   endHistoryGroup: () => void;
   closeGapBeforeClip: (clipId: string) => Promise<ActionResult>;
   consolidateTrack: (trackId: string) => Promise<ActionResult>;
@@ -2506,6 +2507,19 @@ export const useProjectStore = create<ProjectState>()(
         return result;
       },
 
+      updateTimelineVfx: async (patch) => {
+        const { project, actionExecutor } = get();
+        const action: Action = {
+          type: "project/updateTimelineVfx",
+          id: uuidv4(),
+          timestamp: Date.now(),
+          params: patch,
+        };
+        const result = await actionExecutor.execute(action, project);
+        if (result.success) set({ project: { ...project } });
+        return result;
+      },
+
       beginHistoryGroup: (description?: string) => {
         const { actionExecutor } = get();
         actionExecutor.getHistory().beginGroup(description);
@@ -3800,6 +3814,7 @@ export const useProjectStore = create<ProjectState>()(
         const result = await actionExecutor.undo(project);
         if (result.success) {
           set({ project: { ...project } });
+          if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
         }
         return result;
       },
@@ -3962,6 +3977,7 @@ export const useProjectStore = create<ProjectState>()(
         const result = await actionExecutor.redo(project);
         if (result.success) {
           set({ project: { ...project } });
+          if (typeof window !== "undefined") window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
         }
         return result;
       },

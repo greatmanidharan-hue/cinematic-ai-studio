@@ -116,6 +116,12 @@ export class ActionValidator {
         }
         break;
 
+      case "project/updateTimelineVfx":
+        if (action.params.lightningEffects !== undefined && !Array.isArray(action.params.lightningEffects)) errors.push({ code: "INVALID_PARAMS", message: "lightningEffects must be an array", path: "params.lightningEffects" });
+        if (action.params.particleEffects !== undefined && !Array.isArray(action.params.particleEffects)) errors.push({ code: "INVALID_PARAMS", message: "particleEffects must be an array", path: "params.particleEffects" });
+        if (action.params.lightningEffects === undefined && action.params.particleEffects === undefined) errors.push({ code: "INVALID_PARAMS", message: "At least one VFX collection must be supplied", path: "params" });
+        break;
+
       case "project/updateSettings":
         // Settings are partial, so just check they're an object
         if (

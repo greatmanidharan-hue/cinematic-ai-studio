@@ -42,6 +42,8 @@ import {
   DropdownMenuItem,
   DropdownMenuSeparator,
 } from "@fairarena/ui";
+import { LightningEffectLane } from "./timeline/LightningEffectLane";
+import { ParticleEffectLane } from "./timeline/ParticleEffectLane";
 import {
   Playhead,
   TimeRuler,
@@ -53,68 +55,90 @@ import {
   getTrackInfo,
 } from "./timeline/index";
 
+const EMPTY_CLIPS: never[] = [];
+
 export const Timeline: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   const tracksRef = useRef<HTMLDivElement>(null);
+  const scrollFrameRef = useRef<number | null>(null);
+  const pendingScrollRef = useRef<{ left: number; top: number } | null>(null);
 
-  const {
-    project,
-    undo,
-    redo,
-    canUndo,
-    canRedo,
-    splitClip,
-    removeClip,
-    addTrack,
-    reorderTrack,
-    deleteShapeClip,
-    deleteSVGClip,
-    deleteTextClip,
-    removeMarker,
-    updateMarker,
-    updateClipKeyframes,
-  } = useProjectStore();
+  const project = useProjectStore((state) => state.project);
+  const undo = useProjectStore((state) => state.undo);
+  const redo = useProjectStore((state) => state.redo);
+  const canUndo = useProjectStore((state) => state.canUndo);
+  const canRedo = useProjectStore((state) => state.canRedo);
+  const splitClip = useProjectStore((state) => state.splitClip);
+  const removeClip = useProjectStore((state) => state.removeClip);
+  const addTrack = useProjectStore((state) => state.addTrack);
+  const reorderTrack = useProjectStore((state) => state.reorderTrack);
+  const deleteShapeClip = useProjectStore((state) => state.deleteShapeClip);
+  const deleteSVGClip = useProjectStore((state) => state.deleteSVGClip);
+  const deleteTextClip = useProjectStore((state) => state.deleteTextClip);
+  const removeMarker = useProjectStore((state) => state.removeMarker);
+  const updateMarker = useProjectStore((state) => state.updateMarker);
+  const updateClipKeyframes = useProjectStore((state) => state.updateClipKeyframes);
   const tracks = project.timeline.tracks;
 
   const [draggedTrackId, setDraggedTrackId] = React.useState<string | null>(
     null,
   );
 
-  const {
-    playheadPosition,
-    playbackState,
-    pixelsPerSecond,
-    scrollX,
-    scrollY,
-    viewportWidth,
-    setScrollX,
-    setScrollY,
-    setViewportDimensions,
-    zoomIn,
-    zoomOut,
-    trackHeight,
-    setTrackHeight,
-    setTrackHeightById,
-    getTrackHeight,
-  } = useTimelineStore();
+  const playheadPosition = useTimelineStore((state) => state.playheadPosition);
+  const playbackState = useTimelineStore((state) => state.playbackState);
+  const pixelsPerSecond = useTimelineStore((state) => state.pixelsPerSecond);
+  const scrollX = useTimelineStore((state) => state.scrollX);
+  const scrollY = useTimelineStore((state) => state.scrollY);
+  const viewportWidth = useTimelineStore((state) => state.viewportWidth);
+  const setViewportDimensions = useTimelineStore((state) => state.setViewportDimensions);
+  const zoomIn = useTimelineStore((state) => state.zoomIn);
+  const zoomOut = useTimelineStore((state) => state.zoomOut);
+  const trackHeight = useTimelineStore((state) => state.trackHeight);
+  const setTrackHeight = useTimelineStore((state) => state.setTrackHeight);
+  const setTrackHeightById = useTimelineStore((state) => state.setTrackHeightById);
+  const getTrackHeight = useTimelineStore((state) => state.getTrackHeight);
 
   const [showLayersPanel, setShowLayersPanel] = useState(false);
 
-  const { select, selectMultiple, clearSelection, getSelectedClipIds, snapSettings, toggleSnap } =
-    useUIStore();
-  const selectedClipIds = getSelectedClipIds();
+  const selectedItems = useUIStore((state) => state.selectedItems);
+  const select = useUIStore((state) => state.select);
+  const selectMultiple = useUIStore((state) => state.selectMultiple);
+  const clearSelection = useUIStore((state) => state.clearSelection);
+  const snapSettings = useUIStore((state) => state.snapSettings);
+  const toggleSnap = useUIStore((state) => state.toggleSnap);
+  const selectedClipIds = useMemo(
+    () =>
+      selectedItems
+        .filter(
+          (item) =>
+            item.type === "clip" ||
+            item.type === "text-clip" ||
+            item.type === "shape-clip",
+        )
+        .map((item) => item.id),
+    [selectedItems],
+  );
 
-  const { getTitleEngine, getGraphicsEngine } = useEngineStore();
+  const getTitleEngine = useEngineStore((state) => state.getTitleEngine);
+  const getGraphicsEngine = useEngineStore((state) => state.getGraphicsEngine);
   const titleEngine = getTitleEngine();
   const allTextClips = useMemo(() => {
     return titleEngine?.getAllTextClips() ?? [];
   }, [titleEngine, project.modifiedAt]);
 
+  const textClipsByTrack = useMemo(() => {
+    const grouped = new Map<string, typeof allTextClips>();
+    for (const clip of allTextClips) {
+      const clips = grouped.get(clip.trackId) ?? [];
+      clips.push(clip);
+      grouped.set(clip.trackId, clips);
+    }
+    return grouped;
+  }, [allTextClips]);
+
   const getTextClipsForTrack = useCallback(
-    (trackId: string) => {
-      return allTextClips.filter((tc) => tc.trackId === trackId);
-    },
-    [allTextClips],
+    (trackId: string) => textClipsByTrack.get(trackId) ?? EMPTY_CLIPS,
+    [textClipsByTrack],
   );
 
   const graphicsEngine = getGraphicsEngine();
@@ -125,11 +149,19 @@ export const Timeline: React.FC = () => {
     return [...shapes, ...svgs, ...stickers];
   }, [graphicsEngine, project.modifiedAt]);
 
+  const shapeClipsByTrack = useMemo(() => {
+    const grouped = new Map<string, typeof allShapeClips>();
+    for (const clip of allShapeClips) {
+      const clips = grouped.get(clip.trackId) ?? [];
+      clips.push(clip);
+      grouped.set(clip.trackId, clips);
+    }
+    return grouped;
+  }, [allShapeClips]);
+
   const getShapeClipsForTrack = useCallback(
-    (trackId: string) => {
-      return allShapeClips.filter((sc) => sc.trackId === trackId);
-    },
-    [allShapeClips],
+    (trackId: string) => shapeClipsByTrack.get(trackId) ?? EMPTY_CLIPS,
+    [shapeClipsByTrack],
   );
   const [isBoxSelecting, setIsBoxSelecting] = React.useState(false);
   const [selectionBox, setSelectionBox] = React.useState<{
@@ -147,8 +179,14 @@ export const Timeline: React.FC = () => {
         if (end > maxEnd) maxEnd = end;
       }
     }
+    for (const effect of project.timeline.lightningEffects ?? []) {
+      maxEnd = Math.max(maxEnd, effect.startTime + effect.duration);
+    }
+    for (const effect of project.timeline.particleEffects ?? []) {
+      maxEnd = Math.max(maxEnd, effect.startTime + effect.duration);
+    }
     return Math.max(maxEnd, 60); // Minimum 60 seconds
-  }, [tracks]);
+  }, [tracks, project.timeline.lightningEffects, project.timeline.particleEffects]);
 
   const playheadSnapPoints = useMemo(() => {
     const points = new Set<number>();
@@ -158,8 +196,16 @@ export const Timeline: React.FC = () => {
         points.add(clip.startTime + clip.duration);
       }
     }
+    for (const effect of project.timeline.lightningEffects ?? []) {
+      points.add(effect.startTime);
+      points.add(effect.startTime + effect.duration);
+    }
+    for (const effect of project.timeline.particleEffects ?? []) {
+      points.add(effect.startTime);
+      points.add(effect.startTime + effect.duration);
+    }
     return Array.from(points).sort((a, b) => a - b);
-  }, [tracks]);
+  }, [tracks, project.timeline.lightningEffects, project.timeline.particleEffects]);
 
   const totalTracksHeight = useMemo(() => {
     let height = 0;
@@ -206,6 +252,32 @@ export const Timeline: React.FC = () => {
     },
     [tracks, reorderTrack],
   );
+
+  const handleTimelineScroll = useCallback((event: React.UIEvent<HTMLDivElement>) => {
+    pendingScrollRef.current = {
+      left: event.currentTarget.scrollLeft,
+      top: event.currentTarget.scrollTop,
+    };
+    if (scrollFrameRef.current !== null) return;
+
+    scrollFrameRef.current = requestAnimationFrame(() => {
+      scrollFrameRef.current = null;
+      const next = pendingScrollRef.current;
+      if (!next) return;
+      const state = useTimelineStore.getState();
+      if (state.scrollX !== next.left) state.setScrollX(next.left);
+      if (state.scrollY !== next.top) state.setScrollY(next.top);
+    });
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (scrollFrameRef.current !== null) {
+        cancelAnimationFrame(scrollFrameRef.current);
+        scrollFrameRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -498,7 +570,7 @@ export const Timeline: React.FC = () => {
     [],
   );
 
-  const { moveClip } = useProjectStore();
+  const moveClip = useProjectStore((state) => state.moveClip);
   const handleMoveClip = useCallback(
     async (clipId: string, newStartTime: number, targetTrackId?: string) => {
       const graphicClip = allShapeClips.find((sc) => sc.id === clipId);
@@ -688,6 +760,40 @@ export const Timeline: React.FC = () => {
       }));
     },
     [tracks],
+  );
+
+
+  const updateLightningEffect = useCallback(
+    (effectId: string, updates: Partial<import("@fairarena/core").LightningEffectClip>) => {
+      const current = useProjectStore.getState().project.timeline.lightningEffects ?? [];
+      void useProjectStore.getState().updateTimelineVfx({
+        lightningEffects: current.map((effect) => effect.id === effectId ? { ...effect, ...updates } : effect),
+      }).then((result) => {
+        if (result.success) window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+      });
+    },
+    [],
+  );
+
+  const updateParticleEffect = useCallback(
+    (effectId: string, updates: Partial<import("@fairarena/core").ParticleEffect>) => {
+      const current = useProjectStore.getState().project.timeline.particleEffects ?? [];
+      void useProjectStore.getState().updateTimelineVfx({
+        particleEffects: current.map((effect) => effect.id === effectId ? { ...effect, ...updates } : effect),
+      }).then((result) => {
+        if (result.success) window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+      });
+    },
+    [],
+  );
+
+  const beginLightningVfxGesture = useCallback(() => useProjectStore.getState().beginHistoryGroup("Move lightning VFX"), []);
+  const endLightningVfxGesture = useCallback(() => useProjectStore.getState().endHistoryGroup(), []);
+  const beginParticleVfxGesture = useCallback(() => useProjectStore.getState().beginHistoryGroup("Move particle VFX"), []);
+  const endParticleVfxGesture = useCallback(() => useProjectStore.getState().endHistoryGroup(), []);
+  const markerTimes = useMemo(
+    () => project.timeline.markers.map((marker) => marker.time),
+    [project.timeline.markers],
   );
 
   const visualOrderTracks = useMemo(() => tracks, [tracks]);
@@ -978,6 +1084,10 @@ export const Timeline: React.FC = () => {
                   <div
                     key={track.id}
                     className={draggedTrackId === track.id ? "opacity-50" : ""}
+                    style={{
+                      contentVisibility: "auto",
+                      containIntrinsicSize: `auto ${getTrackHeight(track.id)}px`,
+                    }}
                   >
                     <TrackHeader
                       track={track}
@@ -990,16 +1100,17 @@ export const Timeline: React.FC = () => {
                   </div>
                 );
               })}
+              <div className="h-11 flex items-center gap-2 px-3 border-t border-border bg-sky-500/5 text-[10px] font-semibold tracking-wide text-sky-300">
+                <span>⚡</span><span>LIGHTNING VFX</span>
+                <span className="ml-auto text-[9px] font-normal text-text-muted">{project.timeline.lightningEffects?.length ?? 0}</span>
+              </div>
             </div>
           </div>
 
           <div
             ref={tracksRef}
             className="flex-1 bg-background relative overflow-auto custom-scrollbar"
-            onScroll={(e) => {
-              setScrollX(e.currentTarget.scrollLeft);
-              setScrollY(e.currentTarget.scrollTop);
-            }}
+            onScroll={handleTimelineScroll}
             onMouseDown={handleBoxSelectionStart}
             onMouseMove={handleBoxSelectionMove}
             onDragOver={(e) => {
@@ -1089,6 +1200,13 @@ export const Timeline: React.FC = () => {
               className="min-w-full"
             >
               {visualOrderTracks.map((track) => (
+                <div
+                  key={track.id}
+                  style={{
+                    contentVisibility: "auto",
+                    containIntrinsicSize: `auto ${getTrackHeight(track.id)}px`,
+                  }}
+                >
                 <TrackLane
                   key={track.id}
                   track={track}
@@ -1114,6 +1232,7 @@ export const Timeline: React.FC = () => {
                   onMoveTextClip={handleMoveTextClip}
                   onTrimShapeClip={handleTrimShapeClip}
                   scrollX={scrollX}
+                  viewportWidth={viewportWidth}
                   trackHeight={getTrackHeight(track.id)}
                   onResizeTrack={setTrackHeightById}
                   onKeyframeSelect={handleKeyframeSelect}
@@ -1121,13 +1240,42 @@ export const Timeline: React.FC = () => {
                   onKeyframeDelete={handleKeyframeDelete}
                   selectedKeyframeIds={selectedKeyframeIds}
                 />
+                </div>
               ))}
+
+              <LightningEffectLane
+                effects={project.timeline.lightningEffects ?? []}
+                pixelsPerSecond={pixelsPerSecond}
+                duration={timelineDuration}
+                onUpdate={updateLightningEffect}
+                onSelect={(effectId) => select({ type: "effect", id: effectId })}
+                snapSettings={snapSettings}
+                snapPoints={playheadSnapPoints}
+                playheadPosition={playheadPosition}
+                markerTimes={markerTimes}
+                onInteractionStart={beginLightningVfxGesture}
+                onInteractionEnd={endLightningVfxGesture}
+              />
+
+              <ParticleEffectLane
+                effects={project.timeline.particleEffects ?? []}
+                pixelsPerSecond={pixelsPerSecond}
+                duration={timelineDuration}
+                snapSettings={snapSettings}
+                snapPoints={playheadSnapPoints}
+                playheadPosition={playheadPosition}
+                markerTimes={project.timeline.markers.map((marker) => marker.time)}
+                onUpdate={updateParticleEffect}
+                onSelect={(effectId) => select({ type: "effect", id: effectId })}
+                onInteractionStart={() => useProjectStore.getState().beginHistoryGroup("Move particle VFX")}
+                onInteractionEnd={() => useProjectStore.getState().endHistoryGroup()}
+              />
 
               <BeatMarkerOverlay
                 pixelsPerSecond={pixelsPerSecond}
                 scrollX={scrollX}
                 viewportWidth={viewportWidth}
-                totalHeight={totalTracksHeight}
+                totalHeight={totalTracksHeight + 88}
               />
 
               {project.timeline.markers.map((marker) => (

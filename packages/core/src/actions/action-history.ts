@@ -49,6 +49,7 @@ const ACTION_DESCRIPTIONS: Record<
   "subtitle/remove": () => "Remove subtitle",
   "project/rename": () => "Rename project",
   "project/updateSettings": () => "Update settings",
+  "project/updateTimelineVfx": () => "Edit timeline VFX",
   "media/import": () => "Import media",
   "media/delete": () => "Delete media",
   "clip/closeGapBefore": () => "Close gap",

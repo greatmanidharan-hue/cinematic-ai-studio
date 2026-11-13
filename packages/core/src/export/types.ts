@@ -93,9 +93,16 @@ export type ExportErrorCode =
   | "UNSUPPORTED_CODEC"
   | "INVALID_SETTINGS";
 
+export interface ExportedImageFrame {
+  name: string;
+  blob: Blob;
+}
+
 export interface ExportResult {
   success: boolean;
   blob?: Blob;
+  /** Individual image-sequence frames, in export order. */
+  files?: ExportedImageFrame[];
   error?: ExportError;
   stats?: ExportStats;
 }

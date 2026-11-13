@@ -2,9 +2,14 @@ import React, { useRef, useEffect, useCallback, useMemo } from "react";
 import * as THREE from "three";
 import {
   getParticleEngine,
+  getParticleEffectsSeed,
   type Particle,
   type ParticleEffect,
 } from "@fairarena/core";
+
+type ParticleBlendMode = "normal" | "add" | "multiply" | "screen";
+
+const MAX_PREVIEW_PARTICLES = 20_000;
 
 interface ParticleRendererProps {
   effects: ParticleEffect[];
@@ -25,12 +30,15 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
-  const geometryRef = useRef<THREE.BufferGeometry | null>(null);
+  const geometriesRef = useRef<Map<ParticleBlendMode, THREE.BufferGeometry>>(new Map());
   const animationFrameRef = useRef<number | null>(null);
   const currentTimeRef = useRef<number>(currentTime);
   const lastFrameTimeRef = useRef<number>(performance.now());
   const playStartTimeRef = useRef<number>(0);
   const playStartPlayheadRef = useRef<number>(0);
+  const lastSimulatedTimeRef = useRef<number>(currentTime);
+  const lastSeekRef = useRef<{ time: number; seed: number }>({ time: -1, seed: -1 });
+  const particleSeed = useMemo(() => getParticleEffectsSeed(effects), [effects]);
   const isPlayingRef = useRef<boolean>(isPlaying);
   const [isReady, setIsReady] = React.useState(false);
 
@@ -46,6 +54,17 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
 
   const prevEffectIdsRef = useRef<Set<string>>(new Set());
 
+  // This component owns only the effect IDs it receives. Remove those IDs
+  // on unmount so a project switch cannot leave stale emitters in the shared engine.
+  useEffect(() => {
+    return () => {
+      for (const effectId of prevEffectIdsRef.current) {
+        engine.removeEffect(effectId);
+      }
+      prevEffectIdsRef.current = new Set();
+    };
+  }, [engine]);
+
   useEffect(() => {
     const currentIds = new Set(effects.map(e => e.id));
     const prevIds = prevEffectIdsRef.current;
@@ -54,8 +73,11 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       const existingEffect = engine.getEffect(effect.id);
       if (!existingEffect) {
         engine.addEffect(effect);
-      } else if (!prevIds.has(effect.id)) {
+      } else {
+        // Keep inspector edits (including timing and enable state) live in preview.
         engine.updateEffect(effect.id, effect.config);
+        engine.updateEffectTiming(effect.id, effect.startTime, effect.duration);
+        engine.toggleEffect(effect.id, effect.enabled);
       }
     }
 
@@ -104,105 +126,246 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(10000 * 3);
-    const colors = new Float32Array(10000 * 3);
-    const sizes = new Float32Array(10000);
-    const alphas = new Float32Array(10000);
+    // Keep drawing-buffer resolution and shader point sizes in sync when the
+    // browser moves this preview between displays with different DPR values.
+    const syncPixelRatio = () => {
+      const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+      if (renderer.getPixelRatio() === pixelRatio) return;
 
-    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    geometry.setAttribute("size", new THREE.BufferAttribute(sizes, 1));
-    geometry.setAttribute("alpha", new THREE.BufferAttribute(alphas, 1));
-    geometryRef.current = geometry;
+      renderer.setPixelRatio(pixelRatio);
+      renderer.setSize(width, height, false);
+      for (const child of scene.children) {
+        if (child instanceof THREE.Points && child.material instanceof THREE.ShaderMaterial) {
+          const pixelRatioUniform = child.material.uniforms.uPixelRatio;
+          if (pixelRatioUniform) pixelRatioUniform.value = pixelRatio;
+        }
+      }
+      renderer.render(scene, camera);
+    };
+    window.addEventListener("resize", syncPixelRatio);
 
-    const material = new THREE.PointsMaterial({
-      size: 12,
-      vertexColors: true,
-      transparent: true,
-      opacity: 1,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      sizeAttenuation: false,
-    });
+    const blendModes: ParticleBlendMode[] = ["normal", "add", "multiply", "screen"];
+    const geometries = new Map<Particle["blendMode"], THREE.BufferGeometry>();
+    const gl = renderer.getContext();
+    const [minPointSize, maxPointSize] = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE) as Float32Array;
 
-    const points = new THREE.Points(geometry, material);
-    scene.add(points);
+    const createMaterial = (blendMode: ParticleBlendMode) => {
+      // The fragment shader outputs premultiplied RGB (color * alpha).
+      // These factors implement source-over, additive, multiply and screen
+      // compositing without applying particle opacity twice.
+      const blendFactors = blendMode === "add"
+        ? { source: THREE.OneFactor, destination: THREE.OneFactor }
+        : blendMode === "multiply"
+          ? { source: THREE.DstColorFactor, destination: THREE.OneMinusSrcAlphaFactor }
+          : blendMode === "screen"
+            ? { source: THREE.OneFactor, destination: THREE.OneMinusSrcColorFactor }
+            : { source: THREE.OneFactor, destination: THREE.OneMinusSrcAlphaFactor };
+
+      const material = new THREE.ShaderMaterial({
+        uniforms: {
+          // gl_PointSize is measured in drawing-buffer pixels, while particle
+          // sizes are authored in CSS pixels like the Canvas2D export renderer.
+          uPixelRatio: { value: renderer.getPixelRatio() },
+          uMinPointSize: { value: minPointSize },
+          uMaxPointSize: { value: maxPointSize },
+        },
+        transparent: true,
+        vertexColors: true,
+        blending: THREE.CustomBlending,
+        blendEquation: THREE.AddEquation,
+        blendSrc: blendFactors.source,
+        blendDst: blendFactors.destination,
+        blendEquationAlpha: THREE.AddEquation,
+        blendSrcAlpha: THREE.OneFactor,
+        blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+        depthWrite: false,
+        toneMapped: false,
+        vertexShader: `
+          attribute float size;
+          attribute vec3 color;
+          attribute float opacity;
+          uniform float uPixelRatio;
+          uniform float uMinPointSize;
+          uniform float uMaxPointSize;
+          varying vec3 vColor;
+          varying float vOpacity;
+          void main() {
+            vColor = color;
+            vOpacity = opacity;
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            gl_Position = projectionMatrix * mvPosition;
+            gl_PointSize = clamp(size * 5.6 * uPixelRatio, uMinPointSize, uMaxPointSize);
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vColor;
+          varying float vOpacity;
+          void main() {
+            vec2 centered = gl_PointCoord - vec2(0.5);
+            float distanceFromCenter = length(centered) * 2.0;
+            if (distanceFromCenter > 1.0) discard;
+            // Match the Canvas2D radial gradient: solid through 35% of
+            // the radius, then a linear fade to transparent at the edge.
+            float gradientAlpha = 1.0 - clamp(
+              (distanceFromCenter - 0.35) / 0.65,
+              0.0,
+              1.0
+            );
+            float alpha = gradientAlpha * vOpacity;
+            gl_FragColor = vec4(vColor * alpha, alpha);
+          }
+        `,
+      });
+      return material;
+    };
+
+    for (const blendMode of blendModes) {
+      const geometry = new THREE.BufferGeometry();
+      const initialCapacity = 256;
+      geometry.setAttribute(
+        "position",
+        new THREE.BufferAttribute(new Float32Array(initialCapacity * 3), 3).setUsage(THREE.DynamicDrawUsage)
+      );
+      geometry.setAttribute(
+        "color",
+        new THREE.BufferAttribute(new Float32Array(initialCapacity * 3), 3).setUsage(THREE.DynamicDrawUsage)
+      );
+      geometry.setAttribute(
+        "size",
+        new THREE.BufferAttribute(new Float32Array(initialCapacity), 1).setUsage(THREE.DynamicDrawUsage)
+      );
+      geometry.setAttribute(
+        "opacity",
+        new THREE.BufferAttribute(new Float32Array(initialCapacity), 1).setUsage(THREE.DynamicDrawUsage)
+      );
+      geometry.setDrawRange(0, 0);
+      geometries.set(blendMode, geometry);
+      const points = new THREE.Points(geometry, createMaterial(blendMode));
+      // Keep blend groups in a stable compositing order; transparent-object
+      // depth sorting must not reshuffle these full-layer particle batches.
+      points.renderOrder = blendModes.indexOf(blendMode);
+      scene.add(points);
+    }
+    geometriesRef.current = geometries;
 
     setIsReady(true);
 
     return () => {
       setIsReady(false);
-      geometry.dispose();
-      material.dispose();
+      window.removeEventListener("resize", syncPixelRatio);
+      for (const child of [...scene.children]) {
+        if (child instanceof THREE.Points) {
+          child.geometry.dispose();
+          const material = child.material;
+          if (Array.isArray(material)) material.forEach((item) => item.dispose());
+          else material.dispose();
+        }
+      }
       renderer.dispose();
-      if (containerRef.current && renderer.domElement) {
+      if (containerRef.current && renderer.domElement.parentElement === containerRef.current) {
         containerRef.current.removeChild(renderer.domElement);
       }
+      if (geometriesRef.current === geometries) geometriesRef.current.clear();
+      if (rendererRef.current === renderer) rendererRef.current = null;
+      if (sceneRef.current === scene) sceneRef.current = null;
+      if (cameraRef.current === camera) cameraRef.current = null;
     };
   }, [width, height]);
 
-  const hexToRgbNormalized = useCallback(
-    (hex: string): { r: number; g: number; b: number } => {
-      const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
-      if (result) {
-        return {
-          r: parseInt(result[1], 16) / 255,
-          g: parseInt(result[2], 16) / 255,
-          b: parseInt(result[3], 16) / 255,
-        };
-      }
-      const rgbMatch = /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/i.exec(hex);
-      if (rgbMatch) {
-        return {
-          r: parseInt(rgbMatch[1], 10) / 255,
-          g: parseInt(rgbMatch[2], 10) / 255,
-          b: parseInt(rgbMatch[3], 10) / 255,
-        };
-      }
-      return { r: 1, g: 1, b: 1 };
-    },
-    []
-  );
+  const colorCacheRef = useRef<Map<string, { r: number; g: number; b: number }>>(new Map());
+
+  const hexToRgbNormalized = useCallback((value: string) => {
+    const cache = colorCacheRef.current;
+    const cached = cache.get(value);
+    if (cached) return cached;
+
+    let rgb = { r: 1, g: 1, b: 1 };
+    const hex = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(value);
+    const match = /^rgb\((\d+),\s*(\d+),\s*(\d+)\)$/i.exec(value);
+    if (hex) {
+      rgb = {
+        r: parseInt(hex[1], 16) / 255,
+        g: parseInt(hex[2], 16) / 255,
+        b: parseInt(hex[3], 16) / 255,
+      };
+    } else if (match) {
+      rgb = {
+        r: parseInt(match[1], 10) / 255,
+        g: parseInt(match[2], 10) / 255,
+        b: parseInt(match[3], 10) / 255,
+      };
+    }
+    if (cache.size >= 256) cache.clear();
+    cache.set(value, rgb);
+    return rgb;
+  }, []);
 
   const updateParticles = useCallback(
     (particles: Particle[]) => {
-      if (!geometryRef.current) return;
+      const geometries = geometriesRef.current;
+      if (geometries.size === 0) return;
 
-      const positions = geometryRef.current.attributes.position.array as Float32Array;
-      const colors = geometryRef.current.attributes.color.array as Float32Array;
-      const sizes = geometryRef.current.attributes.size.array as Float32Array;
-
-      const count = Math.min(particles.length, 10000);
-
-      for (let i = 0; i < count; i++) {
-        const particle = particles[i];
-        const i3 = i * 3;
-
-        positions[i3] = particle.position.x;
-        positions[i3 + 1] = height - particle.position.y;
-        positions[i3 + 2] = particle.position.z;
-
-        const rgb = hexToRgbNormalized(particle.color);
-        colors[i3] = rgb.r * particle.opacity;
-        colors[i3 + 1] = rgb.g * particle.opacity;
-        colors[i3 + 2] = rgb.b * particle.opacity;
-
-        sizes[i] = particle.size;
+      const groups = new Map<ParticleBlendMode, Particle[]>();
+      for (const blendMode of ["normal", "add", "multiply", "screen"] as const) {
+        groups.set(blendMode, []);
+      }
+      const visibleParticleCount = Math.min(particles.length, MAX_PREVIEW_PARTICLES);
+      for (let index = 0; index < visibleParticleCount; index++) {
+        const particle = particles[index];
+        groups.get(particle.blendMode ?? "normal")?.push(particle);
       }
 
-      for (let i = count; i < 10000; i++) {
-        const i3 = i * 3;
-        positions[i3] = 0;
-        positions[i3 + 1] = 0;
-        positions[i3 + 2] = -1000;
-        sizes[i] = 0;
-      }
+      for (const [blendMode, geometry] of geometries) {
+        const group = groups.get(blendMode) ?? [];
+        const count = group.length;
+        const currentPosition = geometry.getAttribute("position") as THREE.BufferAttribute;
+        const currentCapacity = currentPosition.array.length / 3;
+        if (count > currentCapacity) {
+          const capacity = Math.min(MAX_PREVIEW_PARTICLES, 2 ** Math.ceil(Math.log2(count)));
+          geometry.setAttribute(
+            "position",
+            new THREE.BufferAttribute(new Float32Array(capacity * 3), 3).setUsage(THREE.DynamicDrawUsage)
+          );
+          geometry.setAttribute(
+            "color",
+            new THREE.BufferAttribute(new Float32Array(capacity * 3), 3).setUsage(THREE.DynamicDrawUsage)
+          );
+          geometry.setAttribute(
+            "size",
+            new THREE.BufferAttribute(new Float32Array(capacity), 1).setUsage(THREE.DynamicDrawUsage)
+          );
+          geometry.setAttribute(
+            "opacity",
+            new THREE.BufferAttribute(new Float32Array(capacity), 1).setUsage(THREE.DynamicDrawUsage)
+          );
+        }
 
-      geometryRef.current.attributes.position.needsUpdate = true;
-      geometryRef.current.attributes.color.needsUpdate = true;
-      geometryRef.current.attributes.size.needsUpdate = true;
-      geometryRef.current.setDrawRange(0, count);
+        const positions = (geometry.getAttribute("position") as THREE.BufferAttribute).array as Float32Array;
+        const colors = (geometry.getAttribute("color") as THREE.BufferAttribute).array as Float32Array;
+        const sizes = (geometry.getAttribute("size") as THREE.BufferAttribute).array as Float32Array;
+        const opacities = (geometry.getAttribute("opacity") as THREE.BufferAttribute).array as Float32Array;
+
+        for (let i = 0; i < count; i++) {
+          const particle = group[i];
+          const i3 = i * 3;
+          positions[i3] = particle.position.x;
+          positions[i3 + 1] = height - particle.position.y;
+          positions[i3 + 2] = particle.position.z;
+
+          const rgb = hexToRgbNormalized(particle.color);
+          colors[i3] = rgb.r;
+          colors[i3 + 1] = rgb.g;
+          colors[i3 + 2] = rgb.b;
+          sizes[i] = particle.size;
+          opacities[i] = Math.max(0, Math.min(1, particle.opacity));
+        }
+
+        (geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+        (geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
+        (geometry.getAttribute("size") as THREE.BufferAttribute).needsUpdate = true;
+        (geometry.getAttribute("opacity") as THREE.BufferAttribute).needsUpdate = true;
+        geometry.setDrawRange(0, count);
+      }
     },
     [hexToRgbNormalized, height]
   );
@@ -222,6 +385,9 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     if (isPlaying) {
       playStartTimeRef.current = performance.now();
       playStartPlayheadRef.current = currentTimeRef.current;
+      engine.seekToTime(playStartPlayheadRef.current, 1 / 30, particleSeed);
+      lastSeekRef.current = { time: playStartPlayheadRef.current, seed: particleSeed };
+      lastSimulatedTimeRef.current = currentTimeRef.current;
       lastFrameTimeRef.current = performance.now();
 
       const animate = () => {
@@ -230,15 +396,27 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         const now = performance.now();
         const deltaMs = now - lastFrameTimeRef.current;
         lastFrameTimeRef.current = now;
-        const deltaTime = deltaMs / 1000;
-
         const elapsedSinceStart = (now - playStartTimeRef.current) / 1000;
         const estimatedCurrentTime = playStartPlayheadRef.current + elapsedSinceStart;
-
-        engine.update(estimatedCurrentTime, deltaTime);
-        const particles = engine.getParticles();
-        updateParticles(particles);
-        render();
+        const fixedStep = 1 / 30;
+        let simulationAdvanced = false;
+        if (deltaMs > 500) {
+          engine.seekToTime(estimatedCurrentTime, fixedStep, particleSeed);
+          lastSimulatedTimeRef.current = estimatedCurrentTime;
+          simulationAdvanced = true;
+        } else {
+          while (lastSimulatedTimeRef.current + fixedStep <= estimatedCurrentTime) {
+            lastSimulatedTimeRef.current += fixedStep;
+            engine.update(lastSimulatedTimeRef.current, fixedStep);
+            simulationAdvanced = true;
+          }
+        }
+        // The particle image is unchanged between fixed simulation ticks.
+        // Avoid uploading GPU buffers and issuing duplicate WebGL draws at 60/120 Hz.
+        if (simulationAdvanced) {
+          updateParticles(engine.getParticles());
+          render();
+        }
 
         animationFrameRef.current = requestAnimationFrame(animate);
       };
@@ -252,12 +430,16 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         }
       };
     } else {
-      engine.update(currentTime, 1 / 30);
+      if (lastSeekRef.current.time !== currentTime || lastSeekRef.current.seed !== particleSeed) {
+        engine.seekToTime(currentTime, 1 / 30, particleSeed);
+        lastSeekRef.current = { time: currentTime, seed: particleSeed };
+        lastSimulatedTimeRef.current = currentTime;
+      }
       const particles = engine.getParticles();
       updateParticles(particles);
       render();
     }
-  }, [isPlaying, isReady, currentTime, engine, updateParticles, render, effects]);
+  }, [isPlaying, isReady, currentTime, engine, updateParticles, render, effects, particleSeed]);
 
   useEffect(() => {
     if (cameraRef.current) {

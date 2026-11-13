@@ -939,8 +939,12 @@ export class WebGPURenderer implements Renderer {
   }
 
   async recreateDevice(): Promise<boolean> {
+    // Device-loss subscribers belong to the renderer instance, not to the
+    // underlying GPUDevice. Keep them registered across device recreation.
+    const deviceLostCallbacks = this.deviceLostCallbacks;
     this.isDeviceLost = false;
     this.destroy();
+    this.deviceLostCallbacks = deviceLostCallbacks;
     return this.initialize();
   }
 

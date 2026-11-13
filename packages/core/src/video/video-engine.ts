@@ -5,6 +5,7 @@ import type {
   Effect,
   Transform,
   Subtitle,
+  LightningEffectClip,
 } from "../types/timeline";
 import type { MediaItem, Project } from "../types/project";
 import type { TextClip } from "../text/types";
@@ -51,7 +52,10 @@ import {
   getGifFrameAtTime,
   isAnimatedGif,
 } from "../media/gif-decoder";
-import { getParticleEngine } from "../effects/particle-engine";
+import { ParticleEngine, getParticleEngine, getParticleEffectsSeed } from "../effects/particle-engine";
+import type { ParticleEffect } from "../effects/particle-types";
+import { renderParticles } from "../effects/particle-renderer";
+import { renderLightningBolt } from "../effects/lightning-bolt-renderer";
 import { getPersonSegmentationEngine } from "../ai/person-segmentation-engine";
 
 const DEFAULT_CACHE_CONFIG: FrameCacheConfig = {
@@ -104,7 +108,9 @@ export class VideoEngine {
   private gpuRenderer: Renderer | null = null;
   private effectsEngine: VideoEffectsEngine | null = null;
   private transitionEngine: TransitionEngine | null = null;
-  private lastExportTime: number = -1;
+  private exportParticleSimulationTime: number = 0;
+  private exportParticleEngine: ParticleEngine | null = null;
+  private exportParticleSeed: number = 0x6d2b79f5;
   private exportFrameRate: number = 30;
   exportMode: boolean = false;
 
@@ -899,6 +905,7 @@ export class VideoEngine {
     subjectFrame?.close();
 
     this.renderParticlesToContext(ctx, time, width, height);
+    this.renderLightningEffectsToContext(ctx, timeline.lightningEffects ?? [], time, width, height);
 
     for (const subtitle of activeSubtitles) {
       this.renderSubtitleToCanvasCtx(ctx, subtitle, width, height);
@@ -1227,53 +1234,131 @@ export class VideoEngine {
     });
   }
 
+  private renderLightningEffectsToContext(
+    ctx: OffscreenCanvasRenderingContext2D,
+    effects: readonly LightningEffectClip[],
+    time: number,
+    width: number,
+    height: number,
+  ): void {
+    for (const effect of effects) {
+      if (
+        !effect.enabled ||
+        effect.duration <= 0 ||
+        time < effect.startTime ||
+        time >= effect.startTime + effect.duration
+      ) {
+        continue;
+      }
+
+      const intensity = Math.max(0, Math.min(1, effect.intensity));
+      if (intensity <= 0) continue;
+
+      const frameIndex = Math.floor((time - effect.startTime) * this.exportFrameRate);
+      let seed = 0x811c9dc5;
+      const seedInput = `${effect.id}:${frameIndex}`;
+      for (let index = 0; index < seedInput.length; index++) {
+        seed ^= seedInput.charCodeAt(index);
+        seed = Math.imul(seed, 0x01000193);
+      }
+
+      ctx.save();
+      ctx.globalAlpha = intensity;
+      renderLightningBolt(ctx, {
+        start: { x: effect.start.x * width, y: effect.start.y * height },
+        end: { x: effect.end.x * width, y: effect.end.y * height },
+        segments: effect.segments ?? 18,
+        branches: effect.branches ?? 2,
+        amplitude: effect.amplitude ?? 24,
+        color: effect.color ?? "#9bdcff",
+        lineWidth: 1.5 + intensity * 3.5,
+        glow: 8 + intensity * 22,
+        seed: seed >>> 0,
+      });
+      ctx.restore();
+    }
+  }
+
   private renderParticlesToContext(
     ctx: OffscreenCanvasRenderingContext2D,
     time: number,
     width: number,
     height: number,
   ): void {
-    const particleEngine = getParticleEngine();
+    const particleEngine = this.exportParticleEngine;
+    if (!particleEngine) return;
     particleEngine.setCanvasSize(width, height);
 
-    const deltaTime = this.lastExportTime >= 0
-      ? Math.max(0, time - this.lastExportTime)
-      : 1 / this.exportFrameRate;
-    this.lastExportTime = time;
-
-    particleEngine.update(time, deltaTime);
+    const fixedStep = 1 / this.exportFrameRate;
+    // Rebuild deterministic state when callers seek backwards or render an
+    // earlier timestamp after a later frame. Normal exports remain sequential.
+    if (time < this.exportParticleSimulationTime - 1e-9) {
+      particleEngine.seekToTime(time, fixedStep, this.exportParticleSeed);
+      this.exportParticleSimulationTime = time;
+    }
+    // Advance on the configured export frame grid. Configure this to 30
+    // fps to match the editor preview's current fixed-step simulation; other
+    // export rates intentionally use their own frame-aligned simulation grid.
+    while (this.exportParticleSimulationTime + fixedStep <= time + 1e-9) {
+      this.exportParticleSimulationTime += fixedStep;
+      particleEngine.update(this.exportParticleSimulationTime, fixedStep);
+    }
     const particles = particleEngine.getParticles();
 
     if (particles.length === 0) return;
 
+    // ParticleEngine uses a bottom-left origin for its vertical axis, while
+    // canvas coordinates grow downward. Flip the context once, then share the
+    // same glow/rotation renderer used by the rest of the cinematic effects.
     ctx.save();
-
-    for (const particle of particles) {
-      if (!particle.active || particle.opacity <= 0) continue;
-
-      ctx.globalAlpha = particle.opacity;
-      ctx.fillStyle = particle.color;
-
-      const screenY = height - particle.position.y;
-
-      ctx.beginPath();
-      ctx.arc(
-        particle.position.x,
-        screenY,
-        particle.size / 2,
-        0,
-        Math.PI * 2
-      );
-      ctx.fill();
-    }
-
+    ctx.translate(0, height);
+    ctx.scale(1, -1);
+    renderParticles(ctx, particles, { glow: 1.8 });
     ctx.restore();
   }
 
-  resetExportState(): void {
-    this.lastExportTime = -1;
-    const particleEngine = getParticleEngine();
-    particleEngine.reset();
+  /**
+   * Set the frame rate used by deterministic export-side particle and
+   * frame-indexed effect simulation. Call before resetExportState/rendering.
+   */
+  setExportFrameRate(frameRate: number): void {
+    if (!Number.isFinite(frameRate) || frameRate <= 0 || frameRate > 120) {
+      throw new RangeError("Export frame rate must be a finite value greater than 0 and at most 120.");
+    }
+    if (this.exportFrameRate === frameRate) return;
+
+    this.exportFrameRate = frameRate;
+    // A changed simulation step invalidates accumulated particle state.
+    this.exportParticleSimulationTime = 0;
+    this.exportParticleEngine?.reset();
+  }
+
+  resetExportState(projectEffects?: readonly ParticleEffect[]): void {
+    this.exportParticleSimulationTime = 0;
+    // Export owns a private simulation so resetting/seeding an export cannot
+    // disturb the live preview's shared particle engine.
+    this.exportParticleEngine?.dispose();
+    // Prefer project-serialized effects; retain singleton fallback for older callers.
+    const effects = (projectEffects ?? getParticleEngine().getAllEffects())
+      .map((effect) => ({
+        ...effect,
+        config: {
+          ...effect.config,
+          wind: { ...effect.config.wind },
+          colors: [...effect.config.colors],
+          size: { ...effect.config.size },
+          opacity: { ...effect.config.opacity },
+          lifetime: { ...effect.config.lifetime },
+        },
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+    this.exportParticleEngine = new ParticleEngine();
+    for (const effect of effects) {
+      this.exportParticleEngine.addEffect(effect);
+    }
+    this.exportParticleSeed = getParticleEffectsSeed(effects);
+    this.exportParticleEngine.setRandomSeed(this.exportParticleSeed);
+    this.exportParticleEngine.reset();
   }
 
   private renderSubtitleToCanvasCtx(
@@ -2837,6 +2922,8 @@ export class VideoEngine {
   dispose(): void {
     this.clearCache();
     this.clearVideoElementCache();
+    this.exportParticleEngine?.dispose();
+    this.exportParticleEngine = null;
     for (const bitmap of this.staticImageCache.values()) {
       try { bitmap.close(); } catch {}
     }

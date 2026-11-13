@@ -10,6 +10,7 @@ const {
   mockAudioSourceAdd,
   mockOutputStart,
   mockOutputFinalize,
+  mockUpscalingEngine,
 } = vi.hoisted(() => {
   const mockRenderFrame = vi.fn().mockResolvedValue({
     image: { close: vi.fn() },
@@ -23,6 +24,7 @@ const {
     initializeGPUCompositor: vi.fn().mockResolvedValue(undefined),
     getGPUCompositor: vi.fn().mockReturnValue(null),
     renderFrame: mockRenderFrame,
+    setExportFrameRate: vi.fn(),
     resetExportState: vi.fn(),
     clearVideoElementCache: vi.fn(),
     clearCache: vi.fn(),
@@ -45,6 +47,12 @@ const {
     clearFrameCache: vi.fn(),
   };
 
+  const mockUpscalingEngine = {
+    initialize: vi.fn().mockResolvedValue(true),
+    clearTexturePool: vi.fn(),
+    dispose: vi.fn(),
+  };
+
   return {
     mockRenderFrame,
     mockVideoEngine,
@@ -55,6 +63,7 @@ const {
     mockAudioSourceAdd: vi.fn().mockResolvedValue(undefined),
     mockOutputStart: vi.fn().mockResolvedValue(undefined),
     mockOutputFinalize: vi.fn().mockResolvedValue(undefined),
+    mockUpscalingEngine,
   };
 });
 
@@ -84,6 +93,11 @@ vi.mock("../graphics/graphics-engine", () => ({
 
 vi.mock("../media/mediabunny-engine", () => ({
   getMediaEngine: vi.fn().mockReturnValue(mockMediaEngine),
+}));
+
+vi.mock("../video/upscaling", () => ({
+  UpscalingEngine: vi.fn(),
+  getUpscalingEngine: vi.fn().mockReturnValue(mockUpscalingEngine),
 }));
 
 vi.mock("mediabunny", () => {
@@ -252,6 +266,43 @@ describe("ExportEngine", () => {
   });
 
   describe("initialization", () => {
+    it("allows initialization to retry after a partial engine failure", async () => {
+      mockAudioEngine.initialize
+        .mockRejectedValueOnce(new Error("audio initialization failed"))
+        .mockResolvedValueOnce(undefined);
+
+      await expect(exportEngine.initialize()).rejects.toThrow(
+        "ExportEngine initialization failed: audio initialization failed",
+      );
+      expect(exportEngine.isInitialized()).toBe(false);
+
+      await expect(exportEngine.initialize()).resolves.toBeUndefined();
+      expect(mockVideoEngine.initialize).toHaveBeenCalledTimes(1);
+      expect(mockAudioEngine.initialize).toHaveBeenCalledTimes(2);
+      expect(exportEngine.isInitialized()).toBe(true);
+    });
+
+    it("shares one initialization across concurrent callers", async () => {
+      let finishVideoInitialization!: () => void;
+      mockVideoEngine.initialize.mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          finishVideoInitialization = resolve;
+        }),
+      );
+
+      const firstInitialization = exportEngine.initialize();
+      const secondInitialization = exportEngine.initialize();
+      await vi.waitFor(() => expect(mockVideoEngine.initialize).toHaveBeenCalledTimes(1));
+
+      expect(mockAudioEngine.initialize).not.toHaveBeenCalled();
+      finishVideoInitialization();
+      await Promise.all([firstInitialization, secondInitialization]);
+
+      expect(mockVideoEngine.initialize).toHaveBeenCalledTimes(1);
+      expect(mockAudioEngine.initialize).toHaveBeenCalledTimes(1);
+      expect(exportEngine.isInitialized()).toBe(true);
+    });
+
     it("should start uninitialized", () => {
       expect(exportEngine.isInitialized()).toBe(false);
     });
@@ -403,7 +454,872 @@ describe("ExportEngine", () => {
     });
   });
 
+  describe("audio export settings validation", () => {
+    it("should reject a non-finite audio bitrate before starting export", async () => {
+      await exportEngine.initialize();
+
+      const generator = exportEngine.exportAudio(
+        createMockProject(),
+        { bitrate: Number.NaN },
+      );
+      const result = await generator.next();
+
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected validation to stop export");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockRenderAudio).not.toHaveBeenCalled();
+    });
+
+    it("should reject invalid nested audio settings before video export setup", async () => {
+      await exportEngine.initialize();
+
+      const project = createMockProject({
+        timeline: createMockTimeline(),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      const generator = exportEngine.exportVideo(
+        project,
+        {
+          ...DEFAULT_VIDEO_SETTINGS,
+          audioSettings: {
+            ...DEFAULT_AUDIO_SETTINGS,
+            sampleRate: 12345 as unknown as 44100,
+          },
+        },
+        writableStream,
+      );
+      const result = await generator.next();
+
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected validation to stop export");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockVideoEngine.initializeGPUCompositor).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("audio export cancellation", () => {
+    it("honors cancellation after the final progress update", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({
+          tracks: [
+            createMockTrack({
+              type: "audio",
+              clips: [createMockClip({ duration: 1, outPoint: 1 })],
+            }),
+          ],
+          duration: 1,
+        }),
+      });
+      mockRenderAudio.mockResolvedValue({ buffer: { duration: 1 } });
+      const generator = exportEngine.exportAudio(project, { format: "wav" });
+
+      const progress = await generator.next();
+      expect(progress.done).toBe(false);
+      const finalProgress = await generator.next();
+      expect(finalProgress.done).toBe(false);
+      expect(finalProgress.value?.phase).toBe("complete");
+
+      exportEngine.cancel();
+      const result = await generator.next();
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected cancelled audio export to finish");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("CANCELLED");
+    });
+
+    it("clears audio export state after a rendering failure so a retry can start", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({
+          tracks: [
+            createMockTrack({
+              type: "audio",
+              clips: [createMockClip({ duration: 1, outPoint: 1 })],
+            }),
+          ],
+          duration: 1,
+        }),
+      });
+      const renderSpy = vi.spyOn(exportEngine, "renderTimelineAudio")
+        .mockRejectedValueOnce(new Error("temporary audio render failure"))
+        .mockResolvedValueOnce({
+          duration: 1,
+          numberOfChannels: 1,
+          getChannelData: () => new Float32Array(8),
+        } as AudioBuffer);
+
+      try {
+        const failedGenerator = exportEngine.exportAudio(project, { format: "wav" });
+        const preparing = await failedGenerator.next();
+        expect(preparing.done).toBe(false);
+        const failedResult = await failedGenerator.next();
+
+        expect(failedResult.done).toBe(true);
+        if (!failedResult.done) throw new Error("Expected failed audio export to finish");
+        expect(failedResult.value.success).toBe(false);
+        expect(failedResult.value.error?.code).toBe("AUDIO_ENCODE_FAILED");
+
+        const retryGenerator = exportEngine.exportAudio(project, { format: "wav" });
+        let retryResult = await retryGenerator.next();
+        while (!retryResult.done) retryResult = await retryGenerator.next();
+
+        expect(retryResult.value.success).toBe(true);
+        expect(renderSpy).toHaveBeenCalledTimes(2);
+      } finally {
+        renderSpy.mockRestore();
+      }
+    });
+
+    it("reports cancellation when audio rendering rejects after cancellation", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject();
+      let rejectRender!: (error: Error) => void;
+      const pendingRender = new Promise<null>((_resolve, reject) => {
+        rejectRender = reject;
+      });
+      const renderSpy = vi.spyOn(exportEngine, "renderTimelineAudio")
+        .mockReturnValue(pendingRender);
+      const generator = exportEngine.exportAudio(project);
+      try {
+        const preparing = await generator.next();
+        expect(preparing.done).toBe(false);
+
+        const pendingResult = generator.next();
+        exportEngine.cancel();
+        rejectRender(new Error("audio renderer stopped"));
+        const result = await pendingResult;
+
+        expect(result.done).toBe(true);
+        if (!result.done) throw new Error("Expected cancelled audio export to finish");
+        expect(result.value.success).toBe(false);
+        expect(result.value.error?.code).toBe("CANCELLED");
+      } finally {
+        renderSpy.mockRestore();
+      }
+    });
+  });
+
+  describe("image export validation", () => {
+    it("should reject invalid image dimensions before rendering", async () => {
+      await exportEngine.initialize();
+
+      const result = await exportEngine.exportFrame(
+        createMockProject(),
+        0,
+        { ...DEFAULT_IMAGE_SETTINGS, width: 0 },
+      );
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockRenderFrame).not.toHaveBeenCalled();
+    });
+
+    it("should reject frame times outside the timeline", async () => {
+      await exportEngine.initialize();
+
+      const project = createMockProject({
+        timeline: createMockTimeline({ duration: 5 }),
+      });
+      const result = await exportEngine.exportFrame(project, 6);
+
+      expect(result.success).toBe(false);
+      expect(result.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockRenderFrame).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("video export settings validation", () => {
+    it("should reject invalid dimensions before initializing the GPU compositor", async () => {
+      await exportEngine.initialize();
+
+      const project = createMockProject({
+        timeline: createMockTimeline(),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, width: 0 },
+        writableStream,
+      );
+      const result = await generator.next();
+
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected validation to stop export");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockVideoEngine.initializeGPUCompositor).not.toHaveBeenCalled();
+    });
+
+    it("should reject frame rates outside the supported range", async () => {
+      await exportEngine.initialize();
+
+      const project = createMockProject({
+        timeline: createMockTimeline(),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 0 },
+        writableStream,
+      );
+      const result = await generator.next();
+
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected validation to stop export");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockVideoEngine.initializeGPUCompositor).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("image sequence validation", () => {
+    it("should reject an end frame outside the timeline before rendering", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 5 }),
+      });
+
+      const generator = exportEngine.exportImageSequence(project, {
+        startFrame: 0,
+        endFrame: 5,
+      });
+      const result = await generator.next();
+
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected sequence validation to stop export");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockRenderFrame).not.toHaveBeenCalled();
+    });
+
+    it("should return every frame with sanitized filenames and format extensions", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 2 }),
+      });
+      const firstBlob = new Blob(["frame-0"]);
+      const secondBlob = new Blob(["frame-1"]);
+      const exportFrameSpy = vi.spyOn(exportEngine, "exportFrame")
+        .mockResolvedValueOnce({ success: true, blob: firstBlob })
+        .mockResolvedValueOnce({ success: true, blob: secondBlob });
+
+      const generator = exportEngine.exportImageSequence(project, {
+        namingPattern: "../shot:{000}",
+        format: "png",
+      });
+      let result;
+      try {
+        result = await generator.next();
+        while (!result.done) {
+          result = await generator.next();
+        }
+      } finally {
+        exportFrameSpy.mockRestore();
+      }
+
+      expect(result.value.success).toBe(true);
+      expect(result.value.files?.map((file) => file.name)).toEqual([
+        "_shot_000.png",
+        "_shot_001.png",
+      ]);
+      expect(result.value.files?.map((file) => file.blob)).toEqual([
+        firstBlob,
+        secondBlob,
+      ]);
+    });
+
+    it("streams each rendered frame to an awaited callback without retaining frame Blobs", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 2 }),
+      });
+      const firstBlob = new Blob(["frame-0"]);
+      const secondBlob = new Blob(["frame-1"]);
+      const exportFrameSpy = vi.spyOn(exportEngine, "exportFrame")
+        .mockResolvedValueOnce({ success: true, blob: firstBlob })
+        .mockResolvedValueOnce({ success: true, blob: secondBlob });
+      const received: Array<{ name: string; blob: Blob }> = [];
+      const callback = vi.fn(async (frame: { name: string; blob: Blob }) => {
+        await Promise.resolve();
+        received.push(frame);
+      });
+      const generator = exportEngine.exportImageSequence(project, {
+        namingPattern: "frame_{000}",
+        format: "png",
+      }, callback);
+      let result;
+      try {
+        result = await generator.next();
+        while (!result.done) result = await generator.next();
+      } finally {
+        exportFrameSpy.mockRestore();
+      }
+
+      expect(result.value.success).toBe(true);
+      expect(callback).toHaveBeenCalledTimes(2);
+      expect(received.map((frame) => frame.name)).toEqual(["frame_000.png", "frame_001.png"]);
+      expect(received.map((frame) => frame.blob)).toEqual([firstBlob, secondBlob]);
+      expect(result.value.files).toEqual([]);
+      expect(result.value.blob).toBeUndefined();
+      expect(result.value.stats?.fileSize).toBe(firstBlob.size + secondBlob.size);
+    });
+
+    it("honors cancellation while the streamed frame consumer is awaiting a write", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 2 }),
+      });
+      const exportFrameSpy = vi.spyOn(exportEngine, "exportFrame")
+        .mockResolvedValue({ success: true, blob: new Blob(["frame"]) });
+      const onFrame = vi.fn(async () => {
+        exportEngine.cancel();
+        await Promise.resolve();
+      });
+      const generator = exportEngine.exportImageSequence(project, {}, onFrame);
+      let result;
+      try {
+        result = await generator.next();
+        while (!result.done) result = await generator.next();
+      } finally {
+        exportFrameSpy.mockRestore();
+      }
+
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("CANCELLED");
+      expect(onFrame).toHaveBeenCalledTimes(1);
+      expect(exportFrameSpy).toHaveBeenCalledTimes(1);
+      expect(result.value.stats?.framesRendered ?? 0).toBe(0);
+    });
+
+    it("honors cancellation after the final progress update", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const exportFrameSpy = vi.spyOn(exportEngine, "exportFrame")
+        .mockResolvedValue({ success: true, blob: new Blob(["frame"]) });
+      try {
+        const generator = exportEngine.exportImageSequence(project);
+        await generator.next();
+        const frameProgress = await generator.next();
+        expect(frameProgress.done).toBe(false);
+        const finalProgress = await generator.next();
+        expect(finalProgress.done).toBe(false);
+        expect(finalProgress.value?.phase).toBe("complete");
+
+        exportEngine.cancel();
+        const result = await generator.next();
+        expect(result.done).toBe(true);
+        if (!result.done) throw new Error("Expected cancelled sequence export to finish");
+        expect(result.value.success).toBe(false);
+        expect(result.value.error?.code).toBe("CANCELLED");
+      } finally {
+        exportFrameSpy.mockRestore();
+      }
+    });
+
+    it("reports cancellation when the streamed frame consumer rejects after cancellation", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const exportFrameSpy = vi.spyOn(exportEngine, "exportFrame")
+        .mockResolvedValue({ success: true, blob: new Blob(["frame"]) });
+      const onFrame = vi.fn(async () => {
+        exportEngine.cancel();
+        throw new Error("consumer stopped during cancellation");
+      });
+      const generator = exportEngine.exportImageSequence(project, {}, onFrame);
+      let result;
+      try {
+        result = await generator.next();
+        while (!result.done) result = await generator.next();
+      } finally {
+        exportFrameSpy.mockRestore();
+      }
+
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("CANCELLED");
+      expect(result.value.error?.message).toContain("cancelled");
+      expect(onFrame).toHaveBeenCalledTimes(1);
+      expect(exportFrameSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("allows a fresh sequence export after the frame consumer fails", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const exportFrameSpy = vi.spyOn(exportEngine, "exportFrame")
+        .mockResolvedValue({ success: true, blob: new Blob(["frame"]) });
+
+      try {
+        const failedGenerator = exportEngine.exportImageSequence(
+          project,
+          {},
+          async () => {
+            throw new Error("temporary destination write failure");
+          },
+        );
+        let failedResult = await failedGenerator.next();
+        while (!failedResult.done) failedResult = await failedGenerator.next();
+
+        expect(failedResult.value.success).toBe(false);
+        expect(failedResult.value.error?.code).toBe("FRAME_ENCODE_FAILED");
+        expect(failedResult.value.error?.message).toContain("temporary destination write failure");
+
+        const retryGenerator = exportEngine.exportImageSequence(project);
+        let retryResult = await retryGenerator.next();
+        while (!retryResult.done) retryResult = await retryGenerator.next();
+
+        expect(retryResult.value.success).toBe(true);
+        expect(retryResult.value.files).toHaveLength(1);
+        expect(exportFrameSpy).toHaveBeenCalledTimes(2);
+      } finally {
+        exportFrameSpy.mockRestore();
+      }
+    });
+
+    it("allows a fresh sequence export after a cancelled streamed export", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const exportFrameSpy = vi.spyOn(exportEngine, "exportFrame")
+        .mockResolvedValue({ success: true, blob: new Blob(["frame"]) });
+      const cancelledConsumer = vi.fn(() => {
+        exportEngine.cancel();
+      });
+
+      try {
+        const cancelledGenerator = exportEngine.exportImageSequence(
+          project,
+          {},
+          cancelledConsumer,
+        );
+        let cancelledResult = await cancelledGenerator.next();
+        while (!cancelledResult.done) {
+          cancelledResult = await cancelledGenerator.next();
+        }
+
+        const nextGenerator = exportEngine.exportImageSequence(project);
+        let nextResult = await nextGenerator.next();
+        while (!nextResult.done) {
+          nextResult = await nextGenerator.next();
+        }
+
+        expect(cancelledResult.value.success).toBe(false);
+        expect(cancelledResult.value.error?.code).toBe("CANCELLED");
+        expect(nextResult.value.success).toBe(true);
+        expect(nextResult.value.files).toHaveLength(1);
+        expect(exportFrameSpy).toHaveBeenCalledTimes(2);
+      } finally {
+        exportFrameSpy.mockRestore();
+      }
+    });
+
+    it("rejects a second export while a streamed sequence is active", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const exportFrameSpy = vi.spyOn(exportEngine, "exportFrame")
+        .mockResolvedValue({ success: true, blob: new Blob(["frame"]) });
+
+      let releaseFrame!: () => void;
+      const frameWrite = new Promise<void>((resolve) => {
+        releaseFrame = resolve;
+      });
+      const firstGenerator = exportEngine.exportImageSequence(
+        project,
+        {},
+        async () => frameWrite,
+      );
+
+      try {
+        await firstGenerator.next();
+        const activeStep = firstGenerator.next();
+        // Let the frame callback begin and hold the first export open.
+        await Promise.resolve();
+        const secondGenerator = exportEngine.exportImageSequence(project);
+        const secondResult = await secondGenerator.next();
+
+        expect(secondResult.done).toBe(true);
+        if (!secondResult.done) throw new Error("Expected concurrent export to be rejected");
+        expect(secondResult.value.success).toBe(false);
+        expect(secondResult.value.error?.message).toContain("already in progress");
+
+        releaseFrame();
+        let firstResult = await activeStep;
+        while (!firstResult.done) firstResult = await firstGenerator.next();
+        expect(firstResult.value.success).toBe(true);
+      } finally {
+        releaseFrame();
+        exportFrameSpy.mockRestore();
+      }
+    });
+
+    it("stops rendering when the streamed frame consumer fails", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 2 }),
+      });
+      const exportFrameSpy = vi.spyOn(exportEngine, "exportFrame")
+        .mockResolvedValue({ success: true, blob: new Blob(["frame"]) });
+      const onFrame = vi.fn(async () => {
+        throw new Error("ZIP destination unavailable");
+      });
+      const generator = exportEngine.exportImageSequence(project, {}, onFrame);
+      let result;
+      try {
+        result = await generator.next();
+        while (!result.done) result = await generator.next();
+      } finally {
+        exportFrameSpy.mockRestore();
+      }
+
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.message).toContain("ZIP destination unavailable");
+      expect(onFrame).toHaveBeenCalledTimes(1);
+      expect(exportFrameSpy).toHaveBeenCalledTimes(1);
+    });
+
+    it("should reject an empty sequence naming pattern before rendering", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 5 }),
+      });
+
+      const generator = exportEngine.exportImageSequence(project, {
+        namingPattern: "   ",
+      });
+      const result = await generator.next();
+
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected sequence validation to stop export");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("INVALID_SETTINGS");
+      expect(mockRenderFrame).not.toHaveBeenCalled();
+    });
+  });
+
   describe("video export", () => {
+    it("does not append an audio chunk when rendering resolves after cancellation", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({
+          tracks: [
+            createMockTrack({
+              type: "audio",
+              clips: [createMockClip({ duration: 1, outPoint: 1 })],
+            }),
+          ],
+          duration: 1,
+        }),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      let finishAudioRender!: (value: { buffer: { duration: number } }) => void;
+      mockRenderAudio.mockImplementationOnce(
+        () => new Promise((resolve) => {
+          finishAudioRender = resolve;
+        }),
+      );
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 1, width: 640, height: 360 },
+        writableStream,
+      );
+
+      await generator.next();
+      const pendingStep = generator.next();
+      await vi.waitFor(() => expect(mockRenderAudio).toHaveBeenCalledTimes(1));
+      exportEngine.cancel();
+      finishAudioRender({ buffer: { duration: 1 } });
+
+      const result = await pendingStep;
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected cancelled export to finish");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("CANCELLED");
+      expect(mockAudioSourceAdd).not.toHaveBeenCalled();
+      expect(writableStream.abort).toHaveBeenCalled();
+    });
+
+    it("does not encode a frame when rendering resolves after cancellation", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      let finishRender!: (value: { image: { close: () => void }; width: number; height: number }) => void;
+      const image = { close: vi.fn() };
+      mockRenderFrame.mockImplementationOnce(
+        () => new Promise((resolve) => {
+          finishRender = resolve;
+        }),
+      );
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 1, width: 640, height: 360 },
+        writableStream,
+      );
+
+      await generator.next();
+      const pendingStep = generator.next();
+      await vi.waitFor(() => expect(mockRenderFrame).toHaveBeenCalled());
+      exportEngine.cancel();
+      finishRender({ image, width: 640, height: 360 });
+
+      const result = await pendingStep;
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected cancelled export to finish");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("CANCELLED");
+      expect(image.close).toHaveBeenCalled();
+      expect(mockVideoSourceAdd).not.toHaveBeenCalled();
+      expect(writableStream.abort).toHaveBeenCalled();
+    });
+
+    it("honors cancellation while output finalization is pending", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      let finishFinalize!: () => void;
+      mockOutputFinalize.mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          finishFinalize = resolve;
+        }),
+      );
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 1, width: 640, height: 360 },
+        writableStream,
+      );
+
+      let step = await generator.next();
+      while (!step.done) {
+        const pendingStep = generator.next();
+        try {
+          await vi.waitFor(
+            () => expect(mockOutputFinalize).toHaveBeenCalled(),
+            { timeout: 100 },
+          );
+          exportEngine.cancel();
+          finishFinalize();
+          step = await pendingStep;
+          break;
+        } catch {
+          step = await pendingStep;
+        }
+      }
+
+      expect(mockOutputFinalize).toHaveBeenCalledTimes(1);
+      expect(step.done).toBe(true);
+      if (!step.done) throw new Error("Expected cancelled export to finish");
+      expect(step.value.success).toBe(false);
+      expect(step.value.error?.code).toBe("CANCELLED");
+      expect(writableStream.close).not.toHaveBeenCalled();
+      expect(writableStream.abort).toHaveBeenCalled();
+    });
+
+    it("aborts the destination when closing a completed video export fails", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockRejectedValue(new Error("destination close failed")),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 1, width: 640, height: 360 },
+        writableStream,
+      );
+
+      let result = await generator.next();
+      while (!result.done) result = await generator.next();
+
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.message).toContain("destination close failed");
+      expect(writableStream.close).toHaveBeenCalledTimes(1);
+      expect(writableStream.abort).toHaveBeenCalledTimes(1);
+      expect(mockVideoEngine.setExportFrameRate).toHaveBeenCalledWith(1);
+      expect(mockVideoEngine.resetExportState).toHaveBeenCalledWith(
+        project.timeline.particleEffects ?? [],
+      );
+      expect(mockVideoEngine.setExportFrameRate.mock.invocationCallOrder[0]).toBeLessThan(
+        mockVideoEngine.resetExportState.mock.invocationCallOrder[0],
+      );
+    });
+
+    it("honors cancellation while closing the completed video destination", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      let finishClose!: () => void;
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn(() => new Promise<void>((resolve) => {
+          finishClose = resolve;
+        })),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 1, width: 640, height: 360 },
+        writableStream,
+      );
+
+      let step = await generator.next();
+      while (!step.done) {
+        const pendingStep = generator.next();
+        await vi.waitFor(() => expect(writableStream.close).toHaveBeenCalled());
+        exportEngine.cancel();
+        finishClose();
+        step = await pendingStep;
+        break;
+      }
+
+      expect(step.done).toBe(true);
+      if (!step.done) throw new Error("Expected cancelled export to finish");
+      expect(step.value.success).toBe(false);
+      expect(step.value.error?.code).toBe("CANCELLED");
+      expect(writableStream.abort).toHaveBeenCalled();
+    });
+
+    it("honors cancellation after the final video progress update", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 1, width: 640, height: 360 },
+        writableStream,
+      );
+
+      let step = await generator.next();
+      while (!step.done && step.value.phase !== "complete") {
+        step = await generator.next();
+      }
+      expect(step.done).toBe(false);
+      expect(step.value.phase).toBe("complete");
+
+      exportEngine.cancel();
+      const result = await generator.next();
+
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected cancelled export to finish");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("CANCELLED");
+      expect(writableStream.abort).toHaveBeenCalled();
+    });
+
+    it("honors cancellation while GPU initialization is pending", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      let finishGpuInitialization!: () => void;
+      mockVideoEngine.initializeGPUCompositor.mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          finishGpuInitialization = resolve;
+        }),
+      );
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 1, width: 640, height: 360 },
+        writableStream,
+      );
+      const pendingResult = generator.next();
+      exportEngine.cancel();
+      finishGpuInitialization();
+
+      const result = await pendingResult;
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected cancelled export to finish");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("CANCELLED");
+      expect(mockOutputStart).not.toHaveBeenCalled();
+    });
+
     it("should render long export audio in chunks and clear cached audio", async () => {
       const project = createMockProject({
         timeline: createMockTimeline({
@@ -450,6 +1366,82 @@ describe("ExportEngine", () => {
   describe("dispose", () => {
     it("should reset state on dispose", () => {
       exportEngine.dispose();
+      expect(exportEngine.isInitialized()).toBe(false);
+      expect(exportEngine.isMediaBunnyAvailable()).toBe(false);
+    });
+
+    it("disposes device-bound upscaling resources when the WebGPU device is lost", async () => {
+      await exportEngine.initialize();
+      let handleDeviceLost: (() => void) | undefined;
+      const renderer = {
+        onDeviceLost: vi.fn((callback: () => void) => {
+          handleDeviceLost = callback;
+        }),
+      };
+      mockVideoEngine.getGPUCompositor.mockReturnValueOnce({
+        getRenderer: () => renderer,
+        getDevice: () => ({}),
+      });
+
+      await expect(
+        exportEngine.initializeGPUForExport(1280, 720),
+      ).resolves.toBe(true);
+      expect(renderer.onDeviceLost).toHaveBeenCalledTimes(1);
+      expect(mockUpscalingEngine.initialize).toHaveBeenCalledTimes(1);
+
+      handleDeviceLost?.();
+
+      expect(mockUpscalingEngine.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it("fails GPU setup and disposes partial upscaling resources when pipeline initialization fails", async () => {
+      await exportEngine.initialize();
+      mockVideoEngine.getGPUCompositor.mockReturnValueOnce({
+        getDevice: vi.fn().mockReturnValue({}),
+      });
+      mockUpscalingEngine.initialize.mockResolvedValueOnce(false);
+
+      await expect(exportEngine.initializeGPUForExport(1280, 720)).rejects.toThrow(
+        "ExportEngine initialization failed: Upscaling engine could not initialize its GPU pipelines.",
+      );
+      expect(mockUpscalingEngine.dispose).toHaveBeenCalledTimes(1);
+    });
+
+    it("stops GPU setup when the engine is disposed while compositor setup is pending", async () => {
+      await exportEngine.initialize();
+      let finishGpuSetup!: () => void;
+      mockVideoEngine.initializeGPUCompositor.mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          finishGpuSetup = resolve;
+        }),
+      );
+
+      const gpuInitialization = exportEngine.initializeGPUForExport(640, 360);
+      await vi.waitFor(() =>
+        expect(mockVideoEngine.initializeGPUCompositor).toHaveBeenCalledTimes(1),
+      );
+      exportEngine.dispose();
+      finishGpuSetup();
+
+      await expect(gpuInitialization).rejects.toThrow(
+        "ExportEngine initialization failed: ExportEngine was disposed during GPU initialization.",
+      );
+    });
+
+    it("does not let pending initialization revive a disposed engine", async () => {
+      let finishVideoInitialization!: () => void;
+      mockVideoEngine.initialize.mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          finishVideoInitialization = resolve;
+        }),
+      );
+
+      const initialization = exportEngine.initialize();
+      await vi.waitFor(() => expect(mockVideoEngine.initialize).toHaveBeenCalled());
+      exportEngine.dispose();
+      finishVideoInitialization();
+      await initialization;
+
       expect(exportEngine.isInitialized()).toBe(false);
       expect(exportEngine.isMediaBunnyAvailable()).toBe(false);
     });
