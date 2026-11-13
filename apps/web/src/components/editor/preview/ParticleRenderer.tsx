@@ -204,7 +204,11 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       );
       geometry.setDrawRange(0, 0);
       geometries.set(blendMode, geometry);
-      scene.add(new THREE.Points(geometry, createMaterial(blendMode)));
+      const points = new THREE.Points(geometry, createMaterial(blendMode));
+      // Keep blend groups in a stable compositing order; transparent-object
+      // depth sorting must not reshuffle these full-layer particle batches.
+      points.renderOrder = blendModes.indexOf(blendMode);
+      scene.add(points);
     }
     geometriesRef.current = geometries;
 
