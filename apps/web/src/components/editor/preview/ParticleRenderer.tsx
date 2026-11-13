@@ -9,6 +9,8 @@ import {
 
 type ParticleBlendMode = "normal" | "add" | "multiply" | "screen";
 
+const MAX_PREVIEW_PARTICLES = 20_000;
+
 interface ParticleRendererProps {
   effects: ParticleEffect[];
   width: number;
@@ -266,7 +268,9 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       for (const blendMode of ["normal", "add", "multiply", "screen"] as const) {
         groups.set(blendMode, []);
       }
-      for (const particle of particles.slice(0, 10000)) {
+      const visibleParticleCount = Math.min(particles.length, MAX_PREVIEW_PARTICLES);
+      for (let index = 0; index < visibleParticleCount; index++) {
+        const particle = particles[index];
         groups.get(particle.blendMode ?? "normal")?.push(particle);
       }
 
@@ -276,7 +280,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         const currentPosition = geometry.getAttribute("position") as THREE.BufferAttribute;
         const currentCapacity = currentPosition.array.length / 3;
         if (count > currentCapacity) {
-          const capacity = Math.min(10000, 2 ** Math.ceil(Math.log2(count)));
+          const capacity = Math.min(MAX_PREVIEW_PARTICLES, 2 ** Math.ceil(Math.log2(count)));
           geometry.setAttribute(
             "position",
             new THREE.BufferAttribute(new Float32Array(capacity * 3), 3).setUsage(THREE.DynamicDrawUsage)
