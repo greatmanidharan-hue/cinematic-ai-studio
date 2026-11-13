@@ -38,11 +38,26 @@ export class ExportEngine {
   } | null = null;
   private exportWorker: Worker | null = null;
   private lifecycleVersion = 0;
+  private initializationPromise: Promise<void> | null = null;
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
-    const lifecycleVersion = this.lifecycleVersion;
+    if (this.initializationPromise) return this.initializationPromise;
 
+    const lifecycleVersion = this.lifecycleVersion;
+    const initialization = this.initializeInternal(lifecycleVersion);
+    this.initializationPromise = initialization;
+
+    try {
+      await initialization;
+    } finally {
+      if (this.initializationPromise === initialization) {
+        this.initializationPromise = null;
+      }
+    }
+  }
+
+  private async initializeInternal(lifecycleVersion: number): Promise<void> {
     try {
       const mediabunny = await import("mediabunny");
       if (lifecycleVersion !== this.lifecycleVersion) return;
@@ -54,21 +69,25 @@ export class ExportEngine {
     }
 
     try {
-      this.videoEngine = getVideoEngine();
-      this.audioEngine = getAudioEngine();
+      const videoEngine = getVideoEngine();
+      const audioEngine = getAudioEngine();
+      if (lifecycleVersion !== this.lifecycleVersion) return;
+      this.videoEngine = videoEngine;
+      this.audioEngine = audioEngine;
 
-      if (!this.videoEngine.isInitialized()) {
-        await this.videoEngine.initialize();
+      if (!videoEngine.isInitialized()) {
+        await videoEngine.initialize();
         if (lifecycleVersion !== this.lifecycleVersion) return;
       }
-      if (!this.audioEngine.isInitialized()) {
-        await this.audioEngine.initialize();
+      if (!audioEngine.isInitialized()) {
+        await audioEngine.initialize();
         if (lifecycleVersion !== this.lifecycleVersion) return;
       }
 
       if (lifecycleVersion !== this.lifecycleVersion) return;
       this.initialized = true;
     } catch (error) {
+      if (lifecycleVersion !== this.lifecycleVersion) return;
       throw new Error(
         `ExportEngine initialization failed: ${
           error instanceof Error ? error.message : "Unknown error"
@@ -1892,6 +1911,7 @@ export class ExportEngine {
 
   dispose(): void {
     this.lifecycleVersion += 1;
+    this.initializationPromise = null;
     this.cancel();
     this.terminateWorker();
     this.mediabunny = null;
