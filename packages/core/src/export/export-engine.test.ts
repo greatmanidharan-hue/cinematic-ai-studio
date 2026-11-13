@@ -454,6 +454,36 @@ describe("ExportEngine", () => {
     });
   });
 
+  describe("audio export cancellation", () => {
+    it("reports cancellation when audio rendering rejects after cancellation", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject();
+      let rejectRender!: (error: Error) => void;
+      const pendingRender = new Promise<null>((_resolve, reject) => {
+        rejectRender = reject;
+      });
+      const renderSpy = vi.spyOn(exportEngine, "renderTimelineAudio")
+        .mockReturnValue(pendingRender);
+      const generator = exportEngine.exportAudio(project);
+      try {
+        const preparing = await generator.next();
+        expect(preparing.done).toBe(false);
+
+        const pendingResult = generator.next();
+        exportEngine.cancel();
+        rejectRender(new Error("audio renderer stopped"));
+        const result = await pendingResult;
+
+        expect(result.done).toBe(true);
+        if (!result.done) throw new Error("Expected cancelled audio export to finish");
+        expect(result.value.success).toBe(false);
+        expect(result.value.error?.code).toBe("CANCELLED");
+      } finally {
+        renderSpy.mockRestore();
+      }
+    });
+  });
+
   describe("image export validation", () => {
     it("should reject invalid image dimensions before rendering", async () => {
       await exportEngine.initialize();
