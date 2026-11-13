@@ -271,6 +271,7 @@ export class ParticleEngine {
       velocity,
       acceleration: { x: 0, y: config.gravity, z: 0 },
       color: config.colors[colorIndex],
+      blendMode: config.blendMode,
       size: randomRange(config.size.min, config.size.max, random),
       opacity: config.opacity.start,
       rotation: random() * Math.PI * 2,
