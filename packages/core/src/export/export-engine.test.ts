@@ -500,7 +500,11 @@ describe("ExportEngine", () => {
       });
       const renderSpy = vi.spyOn(exportEngine, "renderTimelineAudio")
         .mockRejectedValueOnce(new Error("temporary audio render failure"))
-        .mockResolvedValueOnce({ duration: 1 } as AudioBuffer);
+        .mockResolvedValueOnce({
+          duration: 1,
+          numberOfChannels: 1,
+          getChannelData: () => new Float32Array(8),
+        } as AudioBuffer);
 
       try {
         const failedGenerator = exportEngine.exportAudio(project, { format: "wav" });
