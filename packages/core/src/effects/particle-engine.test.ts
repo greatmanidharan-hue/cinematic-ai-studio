@@ -79,6 +79,27 @@ describe("deterministic particle simulation", () => {
     expect(engine.getActiveEffectIds()).toEqual([]);
   });
 
+  it("keeps opacity finite when fade ranges meet or overlap", () => {
+    const engine = createEngine(55);
+    engine.updateEffect("fire-test", {
+      particleCount: 24,
+      emissionRate: 30,
+      lifetime: { min: 1, max: 1 },
+      fadeIn: 0.5,
+      fadeOut: 0.5,
+    });
+
+    engine.update(0.5, 0.5);
+    const particles = engine.getParticles();
+
+    expect(particles.length).toBeGreaterThan(0);
+    expect(particles.every((particle) =>
+      Number.isFinite(particle.opacity) &&
+      particle.opacity >= 0 &&
+      particle.opacity <= 1
+    )).toBe(true);
+  });
+
   it("treats negative seek times as the start of the timeline", () => {
     const engine = createEngine(12);
     engine.seekToTime(-5, 1 / 30, 12);
