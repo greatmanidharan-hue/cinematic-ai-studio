@@ -141,6 +141,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
             ? { source: THREE.SrcAlphaFactor, destination: THREE.OneMinusSrcColorFactor }
             : { source: THREE.SrcAlphaFactor, destination: THREE.OneMinusSrcAlphaFactor };
 
+      const fragmentColor = blendMode === "multiply" ? "vColor * alpha" : "vColor";
       const material = new THREE.ShaderMaterial({
         transparent: true,
         vertexColors: true,
@@ -177,7 +178,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
             float glow = exp(-distanceFromCenter * distanceFromCenter * 4.5);
             float core = 1.0 - smoothstep(0.0, 0.45, distanceFromCenter);
             float alpha = max(glow * 0.72, core) * vOpacity;
-            gl_FragColor = vec4(vColor, alpha);
+            gl_FragColor = vec4(${fragmentColor}, alpha);
           }
         `,
       });
