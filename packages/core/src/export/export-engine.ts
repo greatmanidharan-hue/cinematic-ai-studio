@@ -1589,12 +1589,13 @@ export class ExportEngine {
       bitrate: settings.bitrate * 1000,
     });
 
-    output.addAudioTrack(audioSource);
-    await output.start();
-    if (signal.aborted) {
-      throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
-    }
     try {
+      output.addAudioTrack(audioSource);
+      await output.start();
+      if (signal.aborted) {
+        throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+      }
+
       const audioSamples = AudioSample.fromAudioBuffer(buffer, 0);
       for (const sample of audioSamples) {
         try {
@@ -1607,7 +1608,11 @@ export class ExportEngine {
           }
           await audioSource.add(sample);
           if (signal.aborted) {
-            throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+            throw this.createError(
+              "CANCELLED",
+              "Export cancelled by user",
+              "encoding",
+            );
           }
         } finally {
           sample.close();
