@@ -68,6 +68,17 @@ describe("deterministic particle simulation", () => {
     expect(engine.getParticles()).toEqual(laterParticles);
   });
 
+  it("deactivates an effect at its exact end time", () => {
+    const engine = createEngine(321);
+    engine.updateEffectTiming("fire-test", 1, 1);
+
+    engine.update(1, 1 / 30);
+    expect(engine.getActiveEffectIds()).toEqual([]);
+
+    engine.update(2, 1 / 30);
+    expect(engine.getActiveEffectIds()).toEqual([]);
+  });
+
   it("treats negative seek times as the start of the timeline", () => {
     const engine = createEngine(12);
     engine.seekToTime(-5, 1 / 30, 12);
