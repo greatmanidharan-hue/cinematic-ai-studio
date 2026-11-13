@@ -16,7 +16,7 @@ export interface ParticleRenderOptions {
   opacity?: number;
   /** Additional glow radius in multiples of particle size. */
   glow?: number;
-  /** Use additive blending for luminous effects. */
+  /** Override each particle's configured blend mode for the whole layer. */
   additive?: boolean;
 }
 
@@ -30,10 +30,22 @@ export function renderParticles(
   if (layerOpacity === 0 || particles.length === 0) return;
 
   context.save();
-  context.globalCompositeOperation = options.additive ? "lighter" : "source-over";
 
   for (const particle of particles) {
     if (!particle.active || particle.opacity <= 0 || particle.size <= 0) continue;
+
+    const blendMode = options.additive === true
+      ? "add"
+      : options.additive === false
+        ? "normal"
+        : particle.blendMode;
+    context.globalCompositeOperation = blendMode === "add"
+      ? "lighter"
+      : blendMode === "multiply"
+        ? "multiply"
+        : blendMode === "screen"
+          ? "screen"
+          : "source-over";
 
     const alpha = Math.max(0, Math.min(1, particle.opacity * layerOpacity));
     const radius = Math.max(0.5, particle.size);
