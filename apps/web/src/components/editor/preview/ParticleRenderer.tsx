@@ -128,6 +128,8 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
 
     const blendModes: ParticleBlendMode[] = ["normal", "add", "multiply", "screen"];
     const geometries = new Map<Particle["blendMode"], THREE.BufferGeometry>();
+    const gl = renderer.getContext();
+    const [minPointSize, maxPointSize] = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE) as Float32Array;
 
     const createMaterial = (blendMode: ParticleBlendMode) => {
       // The fragment shader outputs premultiplied RGB (color * alpha).
@@ -146,6 +148,8 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
           // gl_PointSize is measured in drawing-buffer pixels, while particle
           // sizes are authored in CSS pixels like the Canvas2D export renderer.
           uPixelRatio: { value: renderer.getPixelRatio() },
+          uMinPointSize: { value: minPointSize },
+          uMaxPointSize: { value: maxPointSize },
         },
         transparent: true,
         vertexColors: true,
@@ -163,6 +167,8 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
           attribute vec3 color;
           attribute float opacity;
           uniform float uPixelRatio;
+          uniform float uMinPointSize;
+          uniform float uMaxPointSize;
           varying vec3 vColor;
           varying float vOpacity;
           void main() {
@@ -170,7 +176,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
             vOpacity = opacity;
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
             gl_Position = projectionMatrix * mvPosition;
-            gl_PointSize = max(1.0, size * 5.6 * uPixelRatio);
+            gl_PointSize = clamp(size * 5.6 * uPixelRatio, uMinPointSize, uMaxPointSize);
           }
         `,
         fragmentShader: `
