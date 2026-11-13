@@ -126,10 +126,14 @@ export class ExportEngine {
       if (!device) return true;
 
       const upscalingEngine = getUpscalingEngine();
-      await upscalingEngine.initialize({ device });
+      const initialized = await upscalingEngine.initialize({ device });
       if (lifecycleVersion !== this.lifecycleVersion) {
-        upscalingEngine.clearTexturePool();
+        upscalingEngine.dispose();
         throw new Error("ExportEngine was disposed during upscaling initialization.");
+      }
+      if (!initialized) {
+        upscalingEngine.dispose();
+        throw new Error("Upscaling engine could not initialize its GPU pipelines.");
       }
 
       this.upscalingEngine = upscalingEngine;
