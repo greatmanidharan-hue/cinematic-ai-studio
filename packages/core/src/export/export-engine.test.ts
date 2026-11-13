@@ -455,6 +455,35 @@ describe("ExportEngine", () => {
   });
 
   describe("audio export cancellation", () => {
+    it("honors cancellation after the final progress update", async () => {
+      const project = createMockProject({
+        timeline: createMockTimeline({
+          tracks: [
+            createMockTrack({
+              type: "audio",
+              clips: [createMockClip({ duration: 1, outPoint: 1 })],
+            }),
+          ],
+          duration: 1,
+        }),
+      });
+      mockRenderAudio.mockResolvedValue({ buffer: { duration: 1 } });
+      const generator = exportEngine.exportAudio(project, { format: "wav" });
+
+      const progress = await generator.next();
+      expect(progress.done).toBe(false);
+      const finalProgress = await generator.next();
+      expect(finalProgress.done).toBe(false);
+      expect(finalProgress.value?.phase).toBe("complete");
+
+      exportEngine.cancel();
+      const result = await generator.next();
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected cancelled audio export to finish");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("CANCELLED");
+    });
+
     it("reports cancellation when audio rendering rejects after cancellation", async () => {
       await exportEngine.initialize();
       const project = createMockProject();
