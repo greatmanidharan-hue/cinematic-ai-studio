@@ -334,16 +334,27 @@ export class ParticleEngine {
         particle.rotation += particle.rotationSpeed * deltaTime;
         particle.age += deltaTime;
 
-        const lifeProgress = particle.age / particle.lifetime;
-        if (lifeProgress < config.fadeIn) {
-          particle.opacity = config.opacity.start * (lifeProgress / config.fadeIn);
-        } else if (lifeProgress > 1 - config.fadeOut) {
-          const fadeProgress = (1 - lifeProgress) / config.fadeOut;
+        const lifeProgress = particle.lifetime > 0
+          ? Math.max(0, Math.min(1, particle.age / particle.lifetime))
+          : 1;
+        const fadeIn = Math.max(0, Math.min(1, Number.isFinite(config.fadeIn) ? config.fadeIn : 0));
+        const fadeOut = Math.max(0, Math.min(1, Number.isFinite(config.fadeOut) ? config.fadeOut : 0));
+
+        if (fadeIn > 0 && lifeProgress <= fadeIn) {
+          particle.opacity = config.opacity.start * (lifeProgress / fadeIn);
+        } else if (fadeOut > 0 && lifeProgress >= 1 - fadeOut) {
+          const fadeProgress = (1 - lifeProgress) / fadeOut;
           particle.opacity = config.opacity.end + (config.opacity.start - config.opacity.end) * fadeProgress;
         } else {
-          const midProgress = (lifeProgress - config.fadeIn) / (1 - config.fadeIn - config.fadeOut);
+          const middleDuration = 1 - fadeIn - fadeOut;
+          const midProgress = middleDuration > 0
+            ? (lifeProgress - fadeIn) / middleDuration
+            : 1;
           particle.opacity = config.opacity.start + (config.opacity.end - config.opacity.start) * midProgress;
         }
+        particle.opacity = Number.isFinite(particle.opacity)
+          ? Math.max(0, Math.min(1, particle.opacity))
+          : 0;
 
         if (particle.age >= particle.lifetime) {
           particle.active = false;
