@@ -358,6 +358,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
                 <p>Archive: <strong className="text-text-primary">ZIP</strong></p>
               </div>
               {sequenceNamingPattern.trim().length === 0 && <p className="text-xs text-red-400">Enter a filename pattern to continue.</p>}
+              {duration <= 0 && <p className="text-xs text-red-400">Add at least one clip to the timeline before exporting an image sequence.</p>}
             </div>
           </TabsContent>
           <TabsContent value="presets" className="flex-1 overflow-hidden flex mt-0">
@@ -910,7 +911,7 @@ export const ExportDialog: React.FC<ExportDialogProps> = ({
             </Button>
             <Button
               onClick={handleExport}
-              disabled={(activeTab === "presets" && !selectedPreset) || (activeTab === "sequence" && !sequenceNamingPattern.trim())}
+              disabled={(activeTab === "presets" && !selectedPreset) || (activeTab === "sequence" && (!sequenceNamingPattern.trim() || duration <= 0))}
             >
               <Play size={16} />
               {activeTab === "sequence" ? "Export ZIP" : "Start Export"}
