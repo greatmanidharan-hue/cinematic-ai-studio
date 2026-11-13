@@ -151,6 +151,42 @@ describe("deterministic particle simulation", () => {
     expect(engine.getParticles("fire-test")).toHaveLength(10_000);
   });
 
+  it("enforces a 20,000-particle budget across all emitters", () => {
+    const engine = createEngine(903);
+    const baseEffect = engine.getEffect("fire-test")!;
+    engine.updateEffect("fire-test", {
+      particleCount: 10_000,
+      emissionRate: 1_000_000,
+      lifetime: { min: 1, max: 1 },
+      turbulence: 0,
+    });
+
+    for (const id of ["fire-test-2", "fire-test-3"]) {
+      engine.addEffect({
+        ...baseEffect,
+        id,
+        clipId: id,
+        config: {
+          ...baseEffect.config,
+          particleCount: 10_000,
+          emissionRate: 1_000_000,
+          lifetime: { min: 1, max: 1 },
+          turbulence: 0,
+        },
+      });
+    }
+
+    engine.update(0.01, 0.01);
+    const totalParticles = ["fire-test", "fire-test-2", "fire-test-3"]
+      .reduce((total, id) => total + engine.getParticles(id).length, 0);
+    expect(totalParticles).toBe(20_000);
+
+    engine.update(0.02, 0.01);
+    const particlesAfterNextStep = ["fire-test", "fire-test-2", "fire-test-3"]
+      .reduce((total, id) => total + engine.getParticles(id).length, 0);
+    expect(particlesAfterNextStep).toBe(20_000);
+  });
+
   it("treats non-finite particle limits and emission rates as zero", () => {
     const engine = createEngine(902);
     engine.updateEffect("fire-test", {
