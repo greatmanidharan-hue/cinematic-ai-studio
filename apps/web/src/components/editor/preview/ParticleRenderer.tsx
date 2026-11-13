@@ -141,6 +141,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       toneMapped: false,
       vertexShader: `
         attribute float size;
+        attribute vec3 color;
         varying vec3 vColor;
         void main() {
           vColor = color;
