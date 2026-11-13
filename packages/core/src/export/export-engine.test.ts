@@ -821,6 +821,42 @@ describe("ExportEngine", () => {
       expect(exportFrameSpy).toHaveBeenCalledTimes(1);
     });
 
+    it("allows a fresh sequence export after the frame consumer fails", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const exportFrameSpy = vi.spyOn(exportEngine, "exportFrame")
+        .mockResolvedValue({ success: true, blob: new Blob(["frame"]) });
+
+      try {
+        const failedGenerator = exportEngine.exportImageSequence(
+          project,
+          {},
+          async () => {
+            throw new Error("temporary destination write failure");
+          },
+        );
+        let failedResult = await failedGenerator.next();
+        while (!failedResult.done) failedResult = await failedGenerator.next();
+
+        expect(failedResult.value.success).toBe(false);
+        expect(failedResult.value.error?.code).toBe("FRAME_ENCODE_FAILED");
+        expect(failedResult.value.error?.message).toContain("temporary destination write failure");
+
+        const retryGenerator = exportEngine.exportImageSequence(project);
+        let retryResult = await retryGenerator.next();
+        while (!retryResult.done) retryResult = await retryGenerator.next();
+
+        expect(retryResult.value.success).toBe(true);
+        expect(retryResult.value.files).toHaveLength(1);
+        expect(exportFrameSpy).toHaveBeenCalledTimes(2);
+      } finally {
+        exportFrameSpy.mockRestore();
+      }
+    });
+
     it("allows a fresh sequence export after a cancelled streamed export", async () => {
       await exportEngine.initialize();
       const project = createMockProject({
