@@ -239,7 +239,8 @@ describe("deterministic particle simulation", () => {
     engine.update(Number.NaN, 1 / 30);
     engine.update(0.6, Number.NaN);
     engine.update(0.4, -0.1);
-    engine.update(0.6, 0);
+    engine.update(0.4, 0.1); // Positive delta must not permit a backwards timestamp.
+    engine.update(0.5, 0);
 
     expect(engine.getParticles()).toEqual(beforeInvalidSteps);
   });
