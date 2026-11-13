@@ -130,14 +130,37 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     geometry.setDrawRange(0, 0);
     geometryRef.current = geometry;
 
-    const material = new THREE.PointsMaterial({
-      size: 12,
-      vertexColors: true,
+    // Use the per-particle size attribute (PointsMaterial ignores custom size
+    // attributes) and a soft radial sprite so Fire/Smoke presets retain their
+    // authored size range in the live preview.
+    const material = new THREE.ShaderMaterial({
       transparent: true,
-      opacity: 1,
+      vertexColors: true,
       blending: THREE.AdditiveBlending,
       depthWrite: false,
-      sizeAttenuation: false,
+      toneMapped: false,
+      vertexShader: `
+        attribute float size;
+        varying vec3 vColor;
+        void main() {
+          vColor = color;
+          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+          gl_Position = projectionMatrix * mvPosition;
+          gl_PointSize = max(1.0, size * 5.6);
+        }
+      `,
+      fragmentShader: `
+        varying vec3 vColor;
+        void main() {
+          vec2 centered = gl_PointCoord - vec2(0.5);
+          float distanceFromCenter = length(centered) * 2.0;
+          if (distanceFromCenter > 1.0) discard;
+          float glow = exp(-distanceFromCenter * distanceFromCenter * 4.5);
+          float core = 1.0 - smoothstep(0.0, 0.45, distanceFromCenter);
+          float alpha = max(glow * 0.72, core);
+          gl_FragColor = vec4(vColor, alpha);
+        }
+      `,
     });
 
     const points = new THREE.Points(geometry, material);
