@@ -1311,6 +1311,24 @@ describe("ExportEngine", () => {
       expect(exportEngine.isInitialized()).toBe(false);
       expect(exportEngine.isMediaBunnyAvailable()).toBe(false);
     });
+
+    it("does not let pending initialization revive a disposed engine", async () => {
+      let finishVideoInitialization!: () => void;
+      mockVideoEngine.initialize.mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          finishVideoInitialization = resolve;
+        }),
+      );
+
+      const initialization = exportEngine.initialize();
+      await vi.waitFor(() => expect(mockVideoEngine.initialize).toHaveBeenCalled());
+      exportEngine.dispose();
+      finishVideoInitialization();
+      await initialization;
+
+      expect(exportEngine.isInitialized()).toBe(false);
+      expect(exportEngine.isMediaBunnyAvailable()).toBe(false);
+    });
   });
 });
 
