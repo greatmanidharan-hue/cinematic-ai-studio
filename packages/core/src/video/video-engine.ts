@@ -1309,6 +1309,22 @@ export class VideoEngine {
     ctx.restore();
   }
 
+  /**
+   * Set the frame rate used by deterministic export-side particle and
+   * frame-indexed effect simulation. Call before resetExportState/rendering.
+   */
+  setExportFrameRate(frameRate: number): void {
+    if (!Number.isFinite(frameRate) || frameRate <= 0 || frameRate > 120) {
+      throw new RangeError("Export frame rate must be a finite value greater than 0 and at most 120.");
+    }
+    if (this.exportFrameRate === frameRate) return;
+
+    this.exportFrameRate = frameRate;
+    // A changed simulation step invalidates accumulated particle state.
+    this.exportParticleSimulationTime = 0;
+    this.exportParticleEngine?.reset();
+  }
+
   resetExportState(projectEffects?: readonly ParticleEffect[]): void {
     this.exportParticleSimulationTime = 0;
     // Export owns a private simulation so resetting/seeding an export cannot
