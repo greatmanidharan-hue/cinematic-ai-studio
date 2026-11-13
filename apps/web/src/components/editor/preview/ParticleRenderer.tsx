@@ -7,6 +7,8 @@ import {
   type ParticleEffect,
 } from "@fairarena/core";
 
+type ParticleBlendMode = "normal" | "add" | "multiply" | "screen";
+
 interface ParticleRendererProps {
   effects: ParticleEffect[];
   width: number;
@@ -26,7 +28,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
-  const geometriesRef = useRef<Map<Particle["blendMode"], THREE.BufferGeometry>>(new Map());
+  const geometriesRef = useRef<Map<ParticleBlendMode, THREE.BufferGeometry>>(new Map());
   const animationFrameRef = useRef<number | null>(null);
   const currentTimeRef = useRef<number>(currentTime);
   const lastFrameTimeRef = useRef<number>(performance.now());
@@ -122,10 +124,10 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    const blendModes: Particle["blendMode"][] = ["normal", "add", "multiply", "screen"];
+    const blendModes: ParticleBlendMode[] = ["normal", "add", "multiply", "screen"];
     const geometries = new Map<Particle["blendMode"], THREE.BufferGeometry>();
 
-    const createMaterial = (blendMode: Particle["blendMode"]) => {
+    const createMaterial = (blendMode: ParticleBlendMode) => {
       const material = new THREE.ShaderMaterial({
         transparent: true,
         vertexColors: true,
@@ -241,7 +243,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       const geometries = geometriesRef.current;
       if (geometries.size === 0) return;
 
-      const groups = new Map<Particle["blendMode"], Particle[]>();
+      const groups = new Map<ParticleBlendMode, Particle[]>();
       for (const blendMode of ["normal", "add", "multiply", "screen"] as const) {
         groups.set(blendMode, []);
       }
