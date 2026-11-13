@@ -108,7 +108,7 @@ export class VideoEngine {
   private gpuRenderer: Renderer | null = null;
   private effectsEngine: VideoEffectsEngine | null = null;
   private transitionEngine: TransitionEngine | null = null;
-  private lastExportTime: number = -1;
+  private exportParticleSimulationTime: number = 0;
   private exportParticleEngine: ParticleEngine | null = null;
   private exportFrameRate: number = 30;
   exportMode: boolean = false;
@@ -1288,12 +1288,13 @@ export class VideoEngine {
     if (!particleEngine) return;
     particleEngine.setCanvasSize(width, height);
 
-    const deltaTime = this.lastExportTime >= 0
-      ? Math.max(0, time - this.lastExportTime)
-      : 1 / this.exportFrameRate;
-    this.lastExportTime = time;
-
-    particleEngine.update(time, deltaTime);
+    const fixedStep = 1 / this.exportFrameRate;
+    // Match the editor preview's fixed-step particle simulation so exports
+    // render consistently at 24, 30, 60 fps and on uneven frame timestamps.
+    while (this.exportParticleSimulationTime + fixedStep <= time + 1e-9) {
+      this.exportParticleSimulationTime += fixedStep;
+      particleEngine.update(this.exportParticleSimulationTime, fixedStep);
+    }
     const particles = particleEngine.getParticles();
 
     if (particles.length === 0) return;
@@ -1309,7 +1310,7 @@ export class VideoEngine {
   }
 
   resetExportState(projectEffects?: readonly ParticleEffect[]): void {
-    this.lastExportTime = -1;
+    this.exportParticleSimulationTime = 0;
     // Export owns a private simulation so resetting/seeding an export cannot
     // disturb the live preview's shared particle engine.
     this.exportParticleEngine?.dispose();
