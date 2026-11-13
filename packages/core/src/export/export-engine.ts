@@ -100,22 +100,40 @@ export class ExportEngine {
     width: number,
     height: number,
   ): Promise<boolean> {
+    const lifecycleVersion = this.lifecycleVersion;
     if (!this.initialized || !this.videoEngine) {
       await this.initialize();
     }
 
+    if (lifecycleVersion !== this.lifecycleVersion) {
+      throw new Error("ExportEngine was disposed during GPU initialization.");
+    }
+    const videoEngine = this.videoEngine;
+    if (!this.initialized || !videoEngine) {
+      throw new Error("ExportEngine initialization did not complete.");
+    }
+
     try {
-      await this.videoEngine!.initializeGPUCompositor(width, height);
-      const gpuCompositor = this.videoEngine!.getGPUCompositor();
-      if (gpuCompositor) {
-        const device = gpuCompositor.getDevice();
-        if (device) {
-          this.upscalingEngine = getUpscalingEngine();
-          await this.upscalingEngine.initialize({ device });
-        }
-        return true;
+      await videoEngine.initializeGPUCompositor(width, height);
+      if (lifecycleVersion !== this.lifecycleVersion) {
+        throw new Error("ExportEngine was disposed during GPU initialization.");
       }
-      return false;
+
+      const gpuCompositor = videoEngine.getGPUCompositor();
+      if (!gpuCompositor) return false;
+
+      const device = gpuCompositor.getDevice();
+      if (!device) return true;
+
+      const upscalingEngine = getUpscalingEngine();
+      await upscalingEngine.initialize({ device });
+      if (lifecycleVersion !== this.lifecycleVersion) {
+        upscalingEngine.clearTexturePool();
+        throw new Error("ExportEngine was disposed during upscaling initialization.");
+      }
+
+      this.upscalingEngine = upscalingEngine;
+      return true;
     } catch (error) {
       throw new Error(
         `ExportEngine initialization failed: ${
