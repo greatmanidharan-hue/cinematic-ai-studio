@@ -722,6 +722,34 @@ describe("ExportEngine", () => {
       expect(result.value.stats?.framesRendered ?? 0).toBe(0);
     });
 
+    it("honors cancellation after the final progress update", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        settings: { width: 1920, height: 1080, frameRate: 1, sampleRate: 48000, channels: 2 },
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const exportFrameSpy = vi.spyOn(exportEngine, "exportFrame")
+        .mockResolvedValue({ success: true, blob: new Blob(["frame"]) });
+      try {
+        const generator = exportEngine.exportImageSequence(project);
+        await generator.next();
+        const frameProgress = await generator.next();
+        expect(frameProgress.done).toBe(false);
+        const finalProgress = await generator.next();
+        expect(finalProgress.done).toBe(false);
+        expect(finalProgress.value?.phase).toBe("complete");
+
+        exportEngine.cancel();
+        const result = await generator.next();
+        expect(result.done).toBe(true);
+        if (!result.done) throw new Error("Expected cancelled sequence export to finish");
+        expect(result.value.success).toBe(false);
+        expect(result.value.error?.code).toBe("CANCELLED");
+      } finally {
+        exportFrameSpy.mockRestore();
+      }
+    });
+
     it("reports cancellation when the streamed frame consumer rejects after cancellation", async () => {
       await exportEngine.initialize();
       const project = createMockProject({
