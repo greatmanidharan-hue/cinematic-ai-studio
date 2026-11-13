@@ -110,6 +110,7 @@ export class VideoEngine {
   private transitionEngine: TransitionEngine | null = null;
   private exportParticleSimulationTime: number = 0;
   private exportParticleEngine: ParticleEngine | null = null;
+  private exportParticleSeed: number = 0x6d2b79f5;
   private exportFrameRate: number = 30;
   exportMode: boolean = false;
 
@@ -1289,6 +1290,12 @@ export class VideoEngine {
     particleEngine.setCanvasSize(width, height);
 
     const fixedStep = 1 / this.exportFrameRate;
+    // Rebuild deterministic state when callers seek backwards or render an
+    // earlier timestamp after a later frame. Normal exports remain sequential.
+    if (time < this.exportParticleSimulationTime - 1e-9) {
+      particleEngine.seekToTime(time, fixedStep, this.exportParticleSeed);
+      this.exportParticleSimulationTime = time;
+    }
     // Advance on the configured export frame grid. Configure this to 30
     // fps to match the editor preview's current fixed-step simulation; other
     // export rates intentionally use their own frame-aligned simulation grid.
@@ -1349,7 +1356,8 @@ export class VideoEngine {
     for (const effect of effects) {
       this.exportParticleEngine.addEffect(effect);
     }
-    this.exportParticleEngine.setRandomSeed(getParticleEffectsSeed(effects));
+    this.exportParticleSeed = getParticleEffectsSeed(effects);
+    this.exportParticleEngine.setRandomSeed(this.exportParticleSeed);
     this.exportParticleEngine.reset();
   }
 
