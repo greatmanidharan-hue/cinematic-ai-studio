@@ -10,6 +10,7 @@ const {
   mockAudioSourceAdd,
   mockOutputStart,
   mockOutputFinalize,
+  mockUpscalingEngine,
 } = vi.hoisted(() => {
   const mockRenderFrame = vi.fn().mockResolvedValue({
     image: { close: vi.fn() },
@@ -45,6 +46,12 @@ const {
     clearFrameCache: vi.fn(),
   };
 
+  const mockUpscalingEngine = {
+    initialize: vi.fn().mockResolvedValue(true),
+    clearTexturePool: vi.fn(),
+    dispose: vi.fn(),
+  };
+
   return {
     mockRenderFrame,
     mockVideoEngine,
@@ -55,6 +62,7 @@ const {
     mockAudioSourceAdd: vi.fn().mockResolvedValue(undefined),
     mockOutputStart: vi.fn().mockResolvedValue(undefined),
     mockOutputFinalize: vi.fn().mockResolvedValue(undefined),
+    mockUpscalingEngine,
   };
 });
 
@@ -84,6 +92,11 @@ vi.mock("../graphics/graphics-engine", () => ({
 
 vi.mock("../media/mediabunny-engine", () => ({
   getMediaEngine: vi.fn().mockReturnValue(mockMediaEngine),
+}));
+
+vi.mock("../video/upscaling", () => ({
+  UpscalingEngine: vi.fn(),
+  getUpscalingEngine: vi.fn().mockReturnValue(mockUpscalingEngine),
 }));
 
 vi.mock("mediabunny", () => {
@@ -1347,6 +1360,19 @@ describe("ExportEngine", () => {
       exportEngine.dispose();
       expect(exportEngine.isInitialized()).toBe(false);
       expect(exportEngine.isMediaBunnyAvailable()).toBe(false);
+    });
+
+    it("fails GPU setup and disposes partial upscaling resources when pipeline initialization fails", async () => {
+      await exportEngine.initialize();
+      mockVideoEngine.getGPUCompositor.mockReturnValueOnce({
+        getDevice: vi.fn().mockReturnValue({}),
+      });
+      mockUpscalingEngine.initialize.mockResolvedValueOnce(false);
+
+      await expect(exportEngine.initializeGPUForExport(1280, 720)).rejects.toThrow(
+        "ExportEngine initialization failed: Upscaling engine could not initialize its GPU pipelines.",
+      );
+      expect(mockUpscalingEngine.dispose).toHaveBeenCalledTimes(1);
     });
 
     it("stops GPU setup when the engine is disposed while compositor setup is pending", async () => {
