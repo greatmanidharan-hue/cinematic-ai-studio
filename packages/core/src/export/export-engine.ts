@@ -542,7 +542,7 @@ export class ExportEngine {
       await output.start();
 
       try {
-        await this.encodeTimelineAudioToSource(project, audioSource);
+        await this.encodeTimelineAudioToSource(project, audioSource, controller.signal);
       } finally {
         this.audioEngine?.clearCache();
       }
@@ -1467,6 +1467,7 @@ export class ExportEngine {
   private async encodeTimelineAudioToSource(
     project: Project,
     audioSource: InstanceType<typeof import("mediabunny").AudioBufferSource>,
+    signal: AbortSignal,
   ): Promise<void> {
     const timelineDuration = this.calculateTimelineDuration(project.timeline);
     if (timelineDuration <= 0) {
@@ -1480,7 +1481,7 @@ export class ExportEngine {
       startTime < timelineDuration;
       startTime += chunkDuration
     ) {
-      if (this.abortController?.signal.aborted) {
+      if (signal.aborted) {
         throw this.createError(
           "CANCELLED",
           "Export cancelled by user",
@@ -1498,11 +1499,29 @@ export class ExportEngine {
         currentChunkDuration,
       );
 
+      // Audio rendering is asynchronous; cancellation may happen while a
+      // chunk is being produced. Never append a late chunk to the muxer.
+      if (signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "encoding",
+        );
+      }
+
       if (!audioBuffer) {
         continue;
       }
 
       await audioSource.add(audioBuffer);
+
+      if (signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "encoding",
+        );
+      }
 
       // Yield between chunks so the browser can reclaim the previous buffer
       // before the next long-running render starts.
