@@ -9,6 +9,8 @@ import {
 
 type RandomSource = () => number;
 
+const MAX_PARTICLES_PER_EFFECT = 10_000;
+
 function generateId(random: RandomSource): string {
   return random().toString(36).substring(2, 11);
 }
@@ -323,13 +325,23 @@ export class ParticleEngine {
       // particles so flames, smoke and sparks can finish their lifetimes.
       if (!effectEnded) {
         emitter.elapsedTime = currentTime - effect.startTime;
-        emitter.emissionAccumulator += config.emissionRate * deltaTime;
+        const particleLimit = Number.isFinite(config.particleCount)
+          ? Math.min(MAX_PARTICLES_PER_EFFECT, Math.max(0, Math.floor(config.particleCount)))
+          : 0;
+        const emissionRate = Number.isFinite(config.emissionRate)
+          ? Math.max(0, config.emissionRate)
+          : 0;
+        emitter.emissionAccumulator += emissionRate * deltaTime;
         while (
           emitter.emissionAccumulator >= 1 &&
-          emitter.particles.length < config.particleCount
+          emitter.particles.length < particleLimit
         ) {
           emitter.particles.push(this.createParticle(effect, center));
           emitter.emissionAccumulator -= 1;
+        }
+        // Do not accumulate a burst backlog while the emitter is at capacity.
+        if (emitter.particles.length >= particleLimit) {
+          emitter.emissionAccumulator %= 1;
         }
       }
       emitter.active = !effectEnded || emitter.particles.length > 0;
