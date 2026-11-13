@@ -848,6 +848,48 @@ describe("ExportEngine", () => {
   });
 
   describe("video export", () => {
+    it("does not encode a frame when rendering resolves after cancellation", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      let finishRender!: (value: { image: { close: () => void }; width: number; height: number }) => void;
+      const image = { close: vi.fn() };
+      mockRenderFrame.mockImplementationOnce(
+        () => new Promise((resolve) => {
+          finishRender = resolve;
+        }),
+      );
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 1, width: 640, height: 360 },
+        writableStream,
+      );
+
+      await generator.next();
+      const pendingStep = generator.next();
+      await vi.waitFor(() => expect(mockRenderFrame).toHaveBeenCalled());
+      exportEngine.cancel();
+      finishRender({ image, width: 640, height: 360 });
+
+      const result = await pendingStep;
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected cancelled export to finish");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("CANCELLED");
+      expect(image.close).toHaveBeenCalled();
+      expect(mockVideoSourceAdd).not.toHaveBeenCalled();
+      expect(writableStream.abort).toHaveBeenCalled();
+    });
+
     it("honors cancellation while output finalization is pending", async () => {
       await exportEngine.initialize();
       const project = createMockProject({
