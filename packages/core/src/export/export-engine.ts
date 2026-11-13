@@ -612,6 +612,16 @@ export class ExportEngine {
             } finally {
               sourceImage.close();
             }
+
+            // Upscaling can also outlive a cancellation request. The outer
+            // finally still owns and closes the resulting bitmap.
+            if (controller.signal.aborted) {
+              throw this.createError(
+                "CANCELLED",
+                "Export cancelled by user",
+                "rendering",
+              );
+            }
           }
 
           const videoSample = new VideoSample(frameImage, {
@@ -623,6 +633,15 @@ export class ExportEngine {
             await videoSource.add(videoSample);
           } finally {
             videoSample.close();
+          }
+
+          // Encoder backpressure may leave add() pending after Cancel.
+          if (controller.signal.aborted) {
+            throw this.createError(
+              "CANCELLED",
+              "Export cancelled by user",
+              "rendering",
+            );
           }
         } finally {
           frameImage.close();
