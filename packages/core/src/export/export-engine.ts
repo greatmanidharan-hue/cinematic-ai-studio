@@ -37,13 +37,18 @@ export class ExportEngine {
     framesRendered: number;
   } | null = null;
   private exportWorker: Worker | null = null;
+  private lifecycleVersion = 0;
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
+    const lifecycleVersion = this.lifecycleVersion;
 
     try {
-      this.mediabunny = await import("mediabunny");
+      const mediabunny = await import("mediabunny");
+      if (lifecycleVersion !== this.lifecycleVersion) return;
+      this.mediabunny = mediabunny;
     } catch (error) {
+      if (lifecycleVersion !== this.lifecycleVersion) return;
       console.warn("[ExportEngine] MediaBunny not available:", error);
       this.mediabunny = null;
     }
@@ -54,11 +59,14 @@ export class ExportEngine {
 
       if (!this.videoEngine.isInitialized()) {
         await this.videoEngine.initialize();
+        if (lifecycleVersion !== this.lifecycleVersion) return;
       }
       if (!this.audioEngine.isInitialized()) {
         await this.audioEngine.initialize();
+        if (lifecycleVersion !== this.lifecycleVersion) return;
       }
 
+      if (lifecycleVersion !== this.lifecycleVersion) return;
       this.initialized = true;
     } catch (error) {
       throw new Error(
@@ -1883,6 +1891,7 @@ export class ExportEngine {
   }
 
   dispose(): void {
+    this.lifecycleVersion += 1;
     this.cancel();
     this.terminateWorker();
     this.mediabunny = null;
