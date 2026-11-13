@@ -1349,6 +1349,27 @@ describe("ExportEngine", () => {
       expect(exportEngine.isMediaBunnyAvailable()).toBe(false);
     });
 
+    it("stops GPU setup when the engine is disposed while compositor setup is pending", async () => {
+      await exportEngine.initialize();
+      let finishGpuSetup!: () => void;
+      mockVideoEngine.initializeGPUCompositor.mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          finishGpuSetup = resolve;
+        }),
+      );
+
+      const gpuInitialization = exportEngine.initializeGPUForExport(640, 360);
+      await vi.waitFor(() =>
+        expect(mockVideoEngine.initializeGPUCompositor).toHaveBeenCalledTimes(1),
+      );
+      exportEngine.dispose();
+      finishGpuSetup();
+
+      await expect(gpuInitialization).rejects.toThrow(
+        "ExportEngine initialization failed: ExportEngine was disposed during GPU initialization.",
+      );
+    });
+
     it("does not let pending initialization revive a disposed engine", async () => {
       let finishVideoInitialization!: () => void;
       mockVideoEngine.initialize.mockImplementationOnce(
