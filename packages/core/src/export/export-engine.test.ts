@@ -252,6 +252,27 @@ describe("ExportEngine", () => {
   });
 
   describe("initialization", () => {
+    it("shares one initialization across concurrent callers", async () => {
+      let finishVideoInitialization!: () => void;
+      mockVideoEngine.initialize.mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          finishVideoInitialization = resolve;
+        }),
+      );
+
+      const firstInitialization = exportEngine.initialize();
+      const secondInitialization = exportEngine.initialize();
+      await vi.waitFor(() => expect(mockVideoEngine.initialize).toHaveBeenCalledTimes(1));
+
+      expect(mockAudioEngine.initialize).not.toHaveBeenCalled();
+      finishVideoInitialization();
+      await Promise.all([firstInitialization, secondInitialization]);
+
+      expect(mockVideoEngine.initialize).toHaveBeenCalledTimes(1);
+      expect(mockAudioEngine.initialize).toHaveBeenCalledTimes(1);
+      expect(exportEngine.isInitialized()).toBe(true);
+    });
+
     it("should start uninitialized", () => {
       expect(exportEngine.isInitialized()).toBe(false);
     });
