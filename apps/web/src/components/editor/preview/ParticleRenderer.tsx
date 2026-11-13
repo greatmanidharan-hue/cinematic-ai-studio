@@ -142,6 +142,11 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
             : { source: THREE.OneFactor, destination: THREE.OneMinusSrcAlphaFactor };
 
       const material = new THREE.ShaderMaterial({
+        uniforms: {
+          // gl_PointSize is measured in drawing-buffer pixels, while particle
+          // sizes are authored in CSS pixels like the Canvas2D export renderer.
+          uPixelRatio: { value: renderer.getPixelRatio() },
+        },
         transparent: true,
         vertexColors: true,
         blending: THREE.CustomBlending,
@@ -157,6 +162,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
           attribute float size;
           attribute vec3 color;
           attribute float opacity;
+          uniform float uPixelRatio;
           varying vec3 vColor;
           varying float vOpacity;
           void main() {
@@ -164,7 +170,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
             vOpacity = opacity;
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
             gl_Position = projectionMatrix * mvPosition;
-            gl_PointSize = max(1.0, size * 5.6);
+            gl_PointSize = max(1.0, size * 5.6 * uPixelRatio);
           }
         `,
         fragmentShader: `
