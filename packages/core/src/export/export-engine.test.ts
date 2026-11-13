@@ -881,13 +881,9 @@ describe("ExportEngine", () => {
         writableStream,
       );
 
-      let step = await generator.next();
-      while (!step.done && mockRenderAudio.mock.calls.length === 0) {
-        step = await generator.next();
-      }
-      expect(mockRenderAudio).toHaveBeenCalledTimes(1);
-
+      await generator.next();
       const pendingStep = generator.next();
+      await vi.waitFor(() => expect(mockRenderAudio).toHaveBeenCalledTimes(1));
       exportEngine.cancel();
       finishAudioRender({ buffer: { duration: 1 } });
 
