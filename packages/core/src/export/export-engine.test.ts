@@ -848,6 +848,58 @@ describe("ExportEngine", () => {
   });
 
   describe("video export", () => {
+    it("does not append an audio chunk when rendering resolves after cancellation", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({
+          tracks: [
+            createMockTrack({
+              type: "audio",
+              clips: [createMockClip({ duration: 1, outPoint: 1 })],
+            }),
+          ],
+          duration: 1,
+        }),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      let finishAudioRender!: (value: { buffer: { duration: number } }) => void;
+      mockRenderAudio.mockImplementationOnce(
+        () => new Promise((resolve) => {
+          finishAudioRender = resolve;
+        }),
+      );
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 1, width: 640, height: 360 },
+        writableStream,
+      );
+
+      let step = await generator.next();
+      while (!step.done && mockRenderAudio.mock.calls.length === 0) {
+        step = await generator.next();
+      }
+      expect(mockRenderAudio).toHaveBeenCalledTimes(1);
+
+      const pendingStep = generator.next();
+      exportEngine.cancel();
+      finishAudioRender({ buffer: { duration: 1 } });
+
+      const result = await pendingStep;
+      expect(result.done).toBe(true);
+      if (!result.done) throw new Error("Expected cancelled export to finish");
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.code).toBe("CANCELLED");
+      expect(mockAudioSourceAdd).not.toHaveBeenCalled();
+      expect(writableStream.abort).toHaveBeenCalled();
+    });
+
     it("does not encode a frame when rendering resolves after cancellation", async () => {
       await exportEngine.initialize();
       const project = createMockProject({
