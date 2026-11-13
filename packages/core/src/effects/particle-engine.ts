@@ -292,11 +292,12 @@ export class ParticleEngine {
       return;
     }
 
+    let totalParticleCount = Array.from(this.emitters.values()).reduce(
+      (total, state) => total + state.particles.length,
+      0,
+    );
+
     for (const [effectId, emitter] of this.emitters) {
-      let totalParticleCount = Array.from(this.emitters.values()).reduce(
-        (total, state) => total + state.particles.length,
-        0,
-      );
       const effect = this.effects.get(effectId);
       if (!effect) {
         emitter.active = false;
