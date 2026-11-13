@@ -48,6 +48,8 @@ export interface ParticleEffect {
 
 export interface Particle {
   id: string;
+  /** Blend mode inherited from the owning effect configuration. */
+  blendMode: ParticleConfig["blendMode"];
   position: Vector3;
   velocity: Vector3;
   acceleration: Vector3;
