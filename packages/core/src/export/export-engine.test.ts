@@ -1202,6 +1202,13 @@ describe("ExportEngine", () => {
       expect(result.value.error?.message).toContain("destination close failed");
       expect(writableStream.close).toHaveBeenCalledTimes(1);
       expect(writableStream.abort).toHaveBeenCalledTimes(1);
+      expect(mockVideoEngine.setExportFrameRate).toHaveBeenCalledWith(1);
+      expect(mockVideoEngine.resetExportState).toHaveBeenCalledWith(
+        project.timeline.particleEffects ?? [],
+      );
+      expect(mockVideoEngine.setExportFrameRate.mock.invocationCallOrder[0]).toBeLessThan(
+        mockVideoEngine.resetExportState.mock.invocationCallOrder[0],
+      );
     });
 
     it("honors cancellation while closing the completed video destination", async () => {
