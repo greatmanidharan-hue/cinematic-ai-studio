@@ -857,7 +857,7 @@ export class ExportEngine {
         blob = this.encodeWav(audioBuffer, fullSettings);
       } else {
         // Use MediaBunny for other formats
-        blob = await this.encodeAudioWithMediaBunny(audioBuffer, fullSettings);
+        blob = await this.encodeAudioWithMediaBunny(audioBuffer, fullSettings, controller.signal);
       }
 
       yield this.createProgress("complete", 1, 1, 1, blob.size);
@@ -1547,6 +1547,7 @@ export class ExportEngine {
   private async encodeAudioWithMediaBunny(
     buffer: AudioBuffer,
     settings: AudioExportSettings,
+    signal: AbortSignal,
   ): Promise<Blob> {
     const {
       Output,
@@ -1571,7 +1572,7 @@ export class ExportEngine {
     const target = new BufferTarget();
     const output = new Output({ format: outputFormat, target });
 
-    if (this.abortController?.signal.aborted) {
+    if (signal.aborted) {
       throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
     }
 
@@ -1590,6 +1591,9 @@ export class ExportEngine {
 
     output.addAudioTrack(audioSource);
     await output.start();
+    if (signal.aborted) {
+      throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+    }
     try {
       const audioSamples = AudioSample.fromAudioBuffer(buffer, 0);
       for (const sample of audioSamples) {
@@ -1602,6 +1606,9 @@ export class ExportEngine {
             );
           }
           await audioSource.add(sample);
+          if (signal.aborted) {
+            throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+          }
         } finally {
           sample.close();
         }
@@ -1615,6 +1622,9 @@ export class ExportEngine {
     }
 
     await output.finalize();
+    if (signal.aborted) {
+      throw this.createError("CANCELLED", "Export cancelled by user", "encoding");
+    }
 
     const resultBuffer = target.buffer;
     if (!resultBuffer) {
