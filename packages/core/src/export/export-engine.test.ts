@@ -252,6 +252,22 @@ describe("ExportEngine", () => {
   });
 
   describe("initialization", () => {
+    it("allows initialization to retry after a partial engine failure", async () => {
+      mockAudioEngine.initialize
+        .mockRejectedValueOnce(new Error("audio initialization failed"))
+        .mockResolvedValueOnce(undefined);
+
+      await expect(exportEngine.initialize()).rejects.toThrow(
+        "ExportEngine initialization failed: audio initialization failed",
+      );
+      expect(exportEngine.isInitialized()).toBe(false);
+
+      await expect(exportEngine.initialize()).resolves.toBeUndefined();
+      expect(mockVideoEngine.initialize).toHaveBeenCalledTimes(1);
+      expect(mockAudioEngine.initialize).toHaveBeenCalledTimes(2);
+      expect(exportEngine.isInitialized()).toBe(true);
+    });
+
     it("shares one initialization across concurrent callers", async () => {
       let finishVideoInitialization!: () => void;
       mockVideoEngine.initialize.mockImplementationOnce(
