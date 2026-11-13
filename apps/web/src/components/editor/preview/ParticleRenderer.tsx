@@ -153,9 +153,12 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         vertexShader: `
           attribute float size;
           attribute vec3 color;
+          attribute float opacity;
           varying vec3 vColor;
+          varying float vOpacity;
           void main() {
             vColor = color;
+            vOpacity = opacity;
             vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
             gl_Position = projectionMatrix * mvPosition;
             gl_PointSize = max(1.0, size * 5.6);
@@ -163,13 +166,14 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         `,
         fragmentShader: `
           varying vec3 vColor;
+          varying float vOpacity;
           void main() {
             vec2 centered = gl_PointCoord - vec2(0.5);
             float distanceFromCenter = length(centered) * 2.0;
             if (distanceFromCenter > 1.0) discard;
             float glow = exp(-distanceFromCenter * distanceFromCenter * 4.5);
             float core = 1.0 - smoothstep(0.0, 0.45, distanceFromCenter);
-            float alpha = max(glow * 0.72, core);
+            float alpha = max(glow * 0.72, core) * vOpacity;
             gl_FragColor = vec4(vColor * alpha, alpha);
           }
         `,
@@ -190,6 +194,10 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       );
       geometry.setAttribute(
         "size",
+        new THREE.BufferAttribute(new Float32Array(initialCapacity), 1).setUsage(THREE.DynamicDrawUsage)
+      );
+      geometry.setAttribute(
+        "opacity",
         new THREE.BufferAttribute(new Float32Array(initialCapacity), 1).setUsage(THREE.DynamicDrawUsage)
       );
       geometry.setDrawRange(0, 0);
@@ -281,11 +289,16 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
             "size",
             new THREE.BufferAttribute(new Float32Array(capacity), 1).setUsage(THREE.DynamicDrawUsage)
           );
+          geometry.setAttribute(
+            "opacity",
+            new THREE.BufferAttribute(new Float32Array(capacity), 1).setUsage(THREE.DynamicDrawUsage)
+          );
         }
 
         const positions = (geometry.getAttribute("position") as THREE.BufferAttribute).array as Float32Array;
         const colors = (geometry.getAttribute("color") as THREE.BufferAttribute).array as Float32Array;
         const sizes = (geometry.getAttribute("size") as THREE.BufferAttribute).array as Float32Array;
+        const opacities = (geometry.getAttribute("opacity") as THREE.BufferAttribute).array as Float32Array;
 
         for (let i = 0; i < count; i++) {
           const particle = group[i];
@@ -295,15 +308,17 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
           positions[i3 + 2] = particle.position.z;
 
           const rgb = hexToRgbNormalized(particle.color);
-          colors[i3] = rgb.r * particle.opacity;
-          colors[i3 + 1] = rgb.g * particle.opacity;
-          colors[i3 + 2] = rgb.b * particle.opacity;
+          colors[i3] = rgb.r;
+          colors[i3 + 1] = rgb.g;
+          colors[i3 + 2] = rgb.b;
           sizes[i] = particle.size;
+          opacities[i] = Math.max(0, Math.min(1, particle.opacity));
         }
 
         (geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
         (geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
         (geometry.getAttribute("size") as THREE.BufferAttribute).needsUpdate = true;
+        (geometry.getAttribute("opacity") as THREE.BufferAttribute).needsUpdate = true;
         geometry.setDrawRange(0, count);
       }
     },
