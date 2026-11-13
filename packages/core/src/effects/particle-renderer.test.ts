@@ -9,6 +9,7 @@ function makeParticle(overrides: Partial<Particle> = {}): Particle {
     velocity: { x: 0, y: 0, z: 0 },
     acceleration: { x: 0, y: 0, z: 0 },
     color: "#ff8a00",
+    blendMode: "normal",
     size: 6,
     opacity: 0.8,
     rotation: 0.25,
@@ -22,6 +23,7 @@ function makeParticle(overrides: Partial<Particle> = {}): Particle {
 
 function makeContext() {
   const gradient = { addColorStop: vi.fn() };
+  const compositeOperations: string[] = [];
   const context = {
     save: vi.fn(),
     restore: vi.fn(),
@@ -32,10 +34,12 @@ function makeContext() {
     arc: vi.fn(),
     fill: vi.fn(),
     set globalAlpha(_value: number) {},
-    set globalCompositeOperation(_value: GlobalCompositeOperation) {},
+    set globalCompositeOperation(value: GlobalCompositeOperation) {
+      compositeOperations.push(value);
+    },
     set fillStyle(_value: string | CanvasGradient | CanvasPattern) {},
   };
-  return { context, gradient };
+  return { context, gradient, compositeOperations };
 }
 
 describe("renderParticles", () => {
@@ -65,6 +69,36 @@ describe("renderParticles", () => {
 
     expect(context.createRadialGradient).not.toHaveBeenCalled();
     expect(context.fill).not.toHaveBeenCalled();
+  });
+
+  it("uses each particle's configured blend mode", () => {
+    const { context, compositeOperations } = makeContext();
+
+    renderParticles(context as unknown as CanvasRenderingContext2D, [
+      makeParticle({ blendMode: "add" }),
+      makeParticle({ blendMode: "screen" }),
+      makeParticle({ blendMode: "multiply" }),
+      makeParticle({ blendMode: "normal" }),
+    ]);
+
+    expect(compositeOperations).toEqual([
+      "lighter",
+      "screen",
+      "multiply",
+      "source-over",
+    ]);
+  });
+
+  it("allows the additive option to override particle blend modes", () => {
+    const { context, compositeOperations } = makeContext();
+
+    renderParticles(
+      context as unknown as CanvasRenderingContext2D,
+      [makeParticle({ blendMode: "normal" })],
+      { additive: true },
+    );
+
+    expect(compositeOperations).toEqual(["lighter"]);
   });
 
   it("does not draw when layer opacity is zero", () => {
