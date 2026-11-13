@@ -112,6 +112,19 @@ describe("deterministic particle simulation", () => {
     )).toBe(true);
   });
 
+  it("ignores invalid and backwards simulation time steps", () => {
+    const engine = createEngine(73);
+    engine.update(0.5, 0.5);
+    const beforeInvalidSteps = engine.getParticles();
+
+    engine.update(Number.NaN, 1 / 30);
+    engine.update(0.6, Number.NaN);
+    engine.update(0.4, -0.1);
+    engine.update(0.6, 0);
+
+    expect(engine.getParticles()).toEqual(beforeInvalidSteps);
+  });
+
   it("treats negative seek times as the start of the timeline", () => {
     const engine = createEngine(12);
     engine.seekToTime(-5, 1 / 30, 12);
