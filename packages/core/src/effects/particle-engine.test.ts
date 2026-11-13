@@ -70,6 +70,25 @@ describe("deterministic particle simulation", () => {
     expect(sought.getParticles()).toEqual(sequential.getParticles());
   });
 
+  it.each([24, 30, 60])(
+    "reconstructs the same particle state when seeking at %i FPS",
+    (frameRate) => {
+      const seed = 98765;
+      const duration = 2;
+      const sequential = createEngine(seed);
+      const totalFrames = frameRate * duration;
+
+      for (let frame = 1; frame <= totalFrames; frame++) {
+        sequential.update(frame / frameRate, 1 / frameRate);
+      }
+
+      const sought = createEngine(1);
+      sought.seekToTime(duration, 1 / frameRate, seed);
+
+      expect(sought.getParticles()).toEqual(sequential.getParticles());
+    },
+  );
+
   it("clears particles and resets deterministically when seeking backwards", () => {
     const engine = createEngine(99);
     engine.seekToTime(4, 1 / 30, 99);
