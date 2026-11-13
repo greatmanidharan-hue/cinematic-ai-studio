@@ -174,9 +174,14 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
             vec2 centered = gl_PointCoord - vec2(0.5);
             float distanceFromCenter = length(centered) * 2.0;
             if (distanceFromCenter > 1.0) discard;
-            float glow = exp(-distanceFromCenter * distanceFromCenter * 4.5);
-            float core = 1.0 - smoothstep(0.0, 0.45, distanceFromCenter);
-            float alpha = max(glow * 0.72, core) * vOpacity;
+            // Match the Canvas2D radial gradient: solid through 35% of
+            // the radius, then a linear fade to transparent at the edge.
+            float gradientAlpha = 1.0 - clamp(
+              (distanceFromCenter - 0.35) / 0.65,
+              0.0,
+              1.0
+            );
+            float alpha = gradientAlpha * vOpacity;
             gl_FragColor = vec4(vColor * alpha, alpha);
           }
         `,
