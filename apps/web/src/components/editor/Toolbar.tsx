@@ -243,7 +243,8 @@ export const Toolbar: React.FC = () => {
       return handle.createWritable();
     }
 
-    let buffer = new Uint8Array(16 * 1024 * 1024);
+    // Keep the fallback's initial allocation small; grow only as export data arrives.
+    let buffer = new Uint8Array(1024 * 1024);
     let length = 0;
     let cursor = 0;
 
