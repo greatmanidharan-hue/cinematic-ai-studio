@@ -282,6 +282,12 @@ export class ParticleEngine {
   }
 
   update(currentTime: number, deltaTime: number): void {
+    // Ignore invalid or backwards simulation steps. Timeline scrubbing must use
+    // seekToTime(), which rebuilds the deterministic state from the start.
+    if (!Number.isFinite(currentTime) || !Number.isFinite(deltaTime) || deltaTime <= 0) {
+      return;
+    }
+
     for (const [effectId, emitter] of this.emitters) {
       const effect = this.effects.get(effectId);
       if (!effect) {
