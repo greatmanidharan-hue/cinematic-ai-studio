@@ -510,7 +510,11 @@ export class ExportEngine {
         );
       }
 
-      this.videoEngine?.resetExportState(project.timeline.particleEffects ?? []);
+      if (this.videoEngine) {
+        // Configure the export simulation before rebuilding its project emitters.
+        this.videoEngine.setExportFrameRate(fullSettings.frameRate);
+        this.videoEngine.resetExportState(project.timeline.particleEffects ?? []);
+      }
       if (this.videoEngine) {
         this.videoEngine.exportMode = true;
       }
