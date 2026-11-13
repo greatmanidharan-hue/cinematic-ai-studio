@@ -848,6 +848,55 @@ describe("ExportEngine", () => {
   });
 
   describe("video export", () => {
+    it("honors cancellation while output finalization is pending", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockResolvedValue(undefined),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      let finishFinalize!: () => void;
+      mockOutputFinalize.mockImplementationOnce(
+        () => new Promise<void>((resolve) => {
+          finishFinalize = resolve;
+        }),
+      );
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 1, width: 640, height: 360 },
+        writableStream,
+      );
+
+      let step = await generator.next();
+      while (!step.done && mockOutputFinalize.mock.calls.length === 0) {
+        const pendingStep = generator.next();
+        // Allow the export pipeline to reach the deliberately pending finalize.
+        await Promise.resolve();
+        await Promise.resolve();
+        if (mockOutputFinalize.mock.calls.length > 0) {
+          exportEngine.cancel();
+          finishFinalize();
+          step = await pendingStep;
+          break;
+        }
+        step = await pendingStep;
+      }
+
+      expect(mockOutputFinalize).toHaveBeenCalledTimes(1);
+      expect(step.done).toBe(true);
+      if (!step.done) throw new Error("Expected cancelled export to finish");
+      expect(step.value.success).toBe(false);
+      expect(step.value.error?.code).toBe("CANCELLED");
+      expect(writableStream.close).not.toHaveBeenCalled();
+      expect(writableStream.abort).toHaveBeenCalled();
+    });
+
     it("honors cancellation while GPU initialization is pending", async () => {
       await exportEngine.initialize();
       const project = createMockProject({
