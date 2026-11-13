@@ -26,7 +26,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
-  const geometryRef = useRef<THREE.BufferGeometry | null>(null);
+  const geometriesRef = useRef<Map<Particle["blendMode"], THREE.BufferGeometry>>(new Map());
   const animationFrameRef = useRef<number | null>(null);
   const currentTimeRef = useRef<number>(currentTime);
   const lastFrameTimeRef = useRef<number>(performance.now());
@@ -122,64 +122,86 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    const geometry = new THREE.BufferGeometry();
-    const initialCapacity = 256;
-    geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(initialCapacity * 3), 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(initialCapacity * 3), 3));
-    geometry.setAttribute("size", new THREE.BufferAttribute(new Float32Array(initialCapacity), 1));
-    geometry.setDrawRange(0, 0);
-    geometryRef.current = geometry;
+    const blendModes: Particle["blendMode"][] = ["normal", "add", "multiply", "screen"];
+    const geometries = new Map<Particle["blendMode"], THREE.BufferGeometry>();
 
-    // Use the per-particle size attribute (PointsMaterial ignores custom size
-    // attributes) and a soft radial sprite so Fire/Smoke presets retain their
-    // authored size range in the live preview.
-    const material = new THREE.ShaderMaterial({
-      transparent: true,
-      vertexColors: true,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      toneMapped: false,
-      vertexShader: `
-        attribute float size;
-        attribute vec3 color;
-        varying vec3 vColor;
-        void main() {
-          vColor = color;
-          vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-          gl_Position = projectionMatrix * mvPosition;
-          gl_PointSize = max(1.0, size * 5.6);
-        }
-      `,
-      fragmentShader: `
-        varying vec3 vColor;
-        void main() {
-          vec2 centered = gl_PointCoord - vec2(0.5);
-          float distanceFromCenter = length(centered) * 2.0;
-          if (distanceFromCenter > 1.0) discard;
-          float glow = exp(-distanceFromCenter * distanceFromCenter * 4.5);
-          float core = 1.0 - smoothstep(0.0, 0.45, distanceFromCenter);
-          float alpha = max(glow * 0.72, core);
-          // The vertex color already contains particle opacity. Keep the
-          // fragment output premultiplied to avoid bright fringes on mobile GPUs.
-          gl_FragColor = vec4(vColor * alpha, alpha);
-        }
-      `,
-    });
+    const createMaterial = (blendMode: Particle["blendMode"]) => {
+      const material = new THREE.ShaderMaterial({
+        transparent: true,
+        vertexColors: true,
+        blending: blendMode === "add"
+          ? THREE.AdditiveBlending
+          : blendMode === "multiply"
+            ? THREE.MultiplyBlending
+            : blendMode === "screen"
+              ? THREE.CustomBlending
+              : THREE.NormalBlending,
+        ...(blendMode === "screen" ? {
+          blendEquation: THREE.AddEquation,
+          blendSrc: THREE.OneFactor,
+          blendDst: THREE.OneMinusSrcColorFactor,
+          blendEquationAlpha: THREE.AddEquation,
+          blendSrcAlpha: THREE.OneFactor,
+          blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+        } : {}),
+        depthWrite: false,
+        toneMapped: false,
+        vertexShader: `
+          attribute float size;
+          attribute vec3 color;
+          varying vec3 vColor;
+          void main() {
+            vColor = color;
+            vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+            gl_Position = projectionMatrix * mvPosition;
+            gl_PointSize = max(1.0, size * 5.6);
+          }
+        `,
+        fragmentShader: `
+          varying vec3 vColor;
+          void main() {
+            vec2 centered = gl_PointCoord - vec2(0.5);
+            float distanceFromCenter = length(centered) * 2.0;
+            if (distanceFromCenter > 1.0) discard;
+            float glow = exp(-distanceFromCenter * distanceFromCenter * 4.5);
+            float core = 1.0 - smoothstep(0.0, 0.45, distanceFromCenter);
+            float alpha = max(glow * 0.72, core);
+            gl_FragColor = vec4(vColor * alpha, alpha);
+          }
+        `,
+      });
+      return material;
+    };
 
-    const points = new THREE.Points(geometry, material);
-    scene.add(points);
+    for (const blendMode of blendModes) {
+      const geometry = new THREE.BufferGeometry();
+      const initialCapacity = 256;
+      geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(initialCapacity * 3), 3));
+      geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(initialCapacity * 3), 3));
+      geometry.setAttribute("size", new THREE.BufferAttribute(new Float32Array(initialCapacity), 1));
+      geometry.setDrawRange(0, 0);
+      geometries.set(blendMode, geometry);
+      scene.add(new THREE.Points(geometry, createMaterial(blendMode)));
+    }
+    geometriesRef.current = geometries;
 
     setIsReady(true);
 
     return () => {
       setIsReady(false);
-      geometry.dispose();
-      material.dispose();
+      for (const child of [...scene.children]) {
+        if (child instanceof THREE.Points) {
+          child.geometry.dispose();
+          const material = child.material;
+          if (Array.isArray(material)) material.forEach((item) => item.dispose());
+          else material.dispose();
+        }
+      }
       renderer.dispose();
       if (containerRef.current && renderer.domElement.parentElement === containerRef.current) {
         containerRef.current.removeChild(renderer.domElement);
       }
-      if (geometryRef.current === geometry) geometryRef.current = null;
+      if (geometriesRef.current === geometries) geometriesRef.current.clear();
       if (rendererRef.current === renderer) rendererRef.current = null;
       if (sceneRef.current === scene) sceneRef.current = null;
       if (cameraRef.current === camera) cameraRef.current = null;
@@ -216,41 +238,52 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
 
   const updateParticles = useCallback(
     (particles: Particle[]) => {
-      const geometry = geometryRef.current;
-      if (!geometry) return;
+      const geometries = geometriesRef.current;
+      if (geometries.size === 0) return;
 
-      const count = Math.min(particles.length, 10000);
-      const currentPosition = geometry.getAttribute("position") as THREE.BufferAttribute;
-      const currentCapacity = currentPosition.array.length / 3;
-      if (count > currentCapacity) {
-        const capacity = Math.min(10000, 2 ** Math.ceil(Math.log2(count)));
-        geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(capacity * 3), 3));
-        geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(capacity * 3), 3));
-        geometry.setAttribute("size", new THREE.BufferAttribute(new Float32Array(capacity), 1));
+      const groups = new Map<Particle["blendMode"], Particle[]>();
+      for (const blendMode of ["normal", "add", "multiply", "screen"] as const) {
+        groups.set(blendMode, []);
+      }
+      for (const particle of particles.slice(0, 10000)) {
+        groups.get(particle.blendMode ?? "normal")?.push(particle);
       }
 
-      const positions = (geometry.getAttribute("position") as THREE.BufferAttribute).array as Float32Array;
-      const colors = (geometry.getAttribute("color") as THREE.BufferAttribute).array as Float32Array;
-      const sizes = (geometry.getAttribute("size") as THREE.BufferAttribute).array as Float32Array;
+      for (const [blendMode, geometry] of geometries) {
+        const group = groups.get(blendMode) ?? [];
+        const count = group.length;
+        const currentPosition = geometry.getAttribute("position") as THREE.BufferAttribute;
+        const currentCapacity = currentPosition.array.length / 3;
+        if (count > currentCapacity) {
+          const capacity = Math.min(10000, 2 ** Math.ceil(Math.log2(count)));
+          geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(capacity * 3), 3));
+          geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(capacity * 3), 3));
+          geometry.setAttribute("size", new THREE.BufferAttribute(new Float32Array(capacity), 1));
+        }
 
-      for (let i = 0; i < count; i++) {
-        const particle = particles[i];
-        const i3 = i * 3;
-        positions[i3] = particle.position.x;
-        positions[i3 + 1] = height - particle.position.y;
-        positions[i3 + 2] = particle.position.z;
+        const positions = (geometry.getAttribute("position") as THREE.BufferAttribute).array as Float32Array;
+        const colors = (geometry.getAttribute("color") as THREE.BufferAttribute).array as Float32Array;
+        const sizes = (geometry.getAttribute("size") as THREE.BufferAttribute).array as Float32Array;
 
-        const rgb = hexToRgbNormalized(particle.color);
-        colors[i3] = rgb.r * particle.opacity;
-        colors[i3 + 1] = rgb.g * particle.opacity;
-        colors[i3 + 2] = rgb.b * particle.opacity;
-        sizes[i] = particle.size;
+        for (let i = 0; i < count; i++) {
+          const particle = group[i];
+          const i3 = i * 3;
+          positions[i3] = particle.position.x;
+          positions[i3 + 1] = height - particle.position.y;
+          positions[i3 + 2] = particle.position.z;
+
+          const rgb = hexToRgbNormalized(particle.color);
+          colors[i3] = rgb.r * particle.opacity;
+          colors[i3 + 1] = rgb.g * particle.opacity;
+          colors[i3 + 2] = rgb.b * particle.opacity;
+          sizes[i] = particle.size;
+        }
+
+        (geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+        (geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
+        (geometry.getAttribute("size") as THREE.BufferAttribute).needsUpdate = true;
+        geometry.setDrawRange(0, count);
       }
-
-      (geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
-      (geometry.getAttribute("color") as THREE.BufferAttribute).needsUpdate = true;
-      (geometry.getAttribute("size") as THREE.BufferAttribute).needsUpdate = true;
-      geometry.setDrawRange(0, count);
     },
     [hexToRgbNormalized, height]
   );
