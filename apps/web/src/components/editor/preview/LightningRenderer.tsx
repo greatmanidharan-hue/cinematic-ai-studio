@@ -58,12 +58,13 @@ export const LightningRenderer: React.FC<LightningRendererProps> = ({
       renderLightningBolt(context, {
         start: { x: effect.start.x * width, y: effect.start.y * height },
         end: { x: effect.end.x * width, y: effect.end.y * height },
-        segments: effect.segments,
-        branches: effect.branches,
-        amplitude: effect.amplitude,
-        color: effect.color,
-        lineWidth: Math.max(1.5, 3 * intensity),
-        glow: 18 * intensity,
+        segments: effect.segments ?? 18,
+        branches: effect.branches ?? 2,
+        amplitude: effect.amplitude ?? 24,
+        color: effect.color ?? "#9bdcff",
+        // Match the export renderer so preview and exported frames use the same stroke profile.
+        lineWidth: 1.5 + intensity * 3.5,
+        glow: 8 + intensity * 22,
         seed: stableSeed(effect.id, frame),
       });
       context.restore();
