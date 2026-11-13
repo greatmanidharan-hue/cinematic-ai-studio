@@ -289,7 +289,7 @@ export class ParticleEngine {
       }
 
       const effectStarted = currentTime >= effect.startTime;
-      const effectEnded = currentTime > effect.startTime + effect.duration;
+      const effectEnded = currentTime >= effect.startTime + effect.duration;
 
       if (!effectStarted || effectEnded) {
         emitter.active = false;
