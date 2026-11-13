@@ -135,6 +135,33 @@ describe("deterministic particle simulation", () => {
     expect(engine.getParticles()).toEqual([]);
   });
 
+  it("caps each emitter at 10,000 particles without building an emission backlog", () => {
+    const engine = createEngine(901);
+    engine.updateEffect("fire-test", {
+      particleCount: 20_000,
+      emissionRate: 1_000_000,
+      lifetime: { min: 1, max: 1 },
+      turbulence: 0,
+    });
+
+    engine.update(0.01, 0.01);
+    expect(engine.getParticles("fire-test")).toHaveLength(10_000);
+
+    engine.update(0.02, 0.01);
+    expect(engine.getParticles("fire-test")).toHaveLength(10_000);
+  });
+
+  it("treats non-finite particle limits and emission rates as zero", () => {
+    const engine = createEngine(902);
+    engine.updateEffect("fire-test", {
+      particleCount: Number.POSITIVE_INFINITY,
+      emissionRate: Number.POSITIVE_INFINITY,
+    });
+
+    engine.update(0.5, 0.5);
+    expect(engine.getParticles("fire-test")).toEqual([]);
+  });
+
   it("clears active particles immediately when an effect is disabled", () => {
     const engine = createEngine(88);
     engine.update(0.5, 0.5);
