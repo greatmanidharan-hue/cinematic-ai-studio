@@ -1106,6 +1106,16 @@ export class ExportEngine {
         stats: this.calculateStats(framesToExport, totalSize),
       };
     } catch (error) {
+      if (controller.signal.aborted) {
+        return {
+          success: false,
+          error: this.createError(
+            "CANCELLED",
+            "Export cancelled by user",
+            "rendering",
+          ),
+        };
+      }
       if (error && typeof error === "object" && "code" in error) {
         return { success: false, error: error as ExportError };
       }
