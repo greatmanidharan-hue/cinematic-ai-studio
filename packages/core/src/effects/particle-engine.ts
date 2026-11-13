@@ -306,13 +306,10 @@ export class ParticleEngine {
       const effectStarted = currentTime >= effect.startTime;
       const effectEnded = currentTime >= effect.startTime + effect.duration;
 
-      if (!effectStarted || effectEnded) {
+      if (!effectStarted) {
         emitter.active = false;
         continue;
       }
-
-      emitter.active = true;
-      emitter.elapsedTime = currentTime - effect.startTime;
 
       const config = effect.config;
       const center: Vector3 = {
@@ -321,14 +318,20 @@ export class ParticleEngine {
         z: 0,
       };
 
-      emitter.emissionAccumulator += config.emissionRate * deltaTime;
-      while (
-        emitter.emissionAccumulator >= 1 &&
-        emitter.particles.length < config.particleCount
-      ) {
-        emitter.particles.push(this.createParticle(effect, center));
-        emitter.emissionAccumulator -= 1;
+      // Stop emitting at the clip boundary, but keep simulating existing
+      // particles so flames, smoke and sparks can finish their lifetimes.
+      if (!effectEnded) {
+        emitter.elapsedTime = currentTime - effect.startTime;
+        emitter.emissionAccumulator += config.emissionRate * deltaTime;
+        while (
+          emitter.emissionAccumulator >= 1 &&
+          emitter.particles.length < config.particleCount
+        ) {
+          emitter.particles.push(this.createParticle(effect, center));
+          emitter.emissionAccumulator -= 1;
+        }
       }
+      emitter.active = !effectEnded || emitter.particles.length > 0;
 
       for (const particle of emitter.particles) {
         if (!particle.active) continue;
@@ -377,6 +380,10 @@ export class ParticleEngine {
       }
 
       emitter.particles = emitter.particles.filter((p) => p.active);
+      if (effectEnded && emitter.particles.length === 0) {
+        emitter.active = false;
+        emitter.emissionAccumulator = 0;
+      }
     }
   }
 
