@@ -266,7 +266,8 @@ export const Toolbar: React.FC = () => {
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      // Let the browser begin consuming the download before releasing its Blob URL.
+      window.setTimeout(() => URL.revokeObjectURL(url), 1000);
     };
 
     const writeBytes = (bytes: Uint8Array, position: number) => {
