@@ -1047,6 +1047,33 @@ describe("ExportEngine", () => {
       expect(writableStream.abort).toHaveBeenCalled();
     });
 
+    it("aborts the destination when closing a completed video export fails", async () => {
+      await exportEngine.initialize();
+      const project = createMockProject({
+        timeline: createMockTimeline({ duration: 1 }),
+      });
+      const writableStream = {
+        seek: vi.fn().mockResolvedValue(undefined),
+        write: vi.fn().mockResolvedValue(undefined),
+        close: vi.fn().mockRejectedValue(new Error("destination close failed")),
+        abort: vi.fn().mockResolvedValue(undefined),
+      } as unknown as FileSystemWritableFileStream;
+
+      const generator = exportEngine.exportVideo(
+        project,
+        { ...DEFAULT_VIDEO_SETTINGS, frameRate: 1, width: 640, height: 360 },
+        writableStream,
+      );
+
+      let result = await generator.next();
+      while (!result.done) result = await generator.next();
+
+      expect(result.value.success).toBe(false);
+      expect(result.value.error?.message).toContain("destination close failed");
+      expect(writableStream.close).toHaveBeenCalledTimes(1);
+      expect(writableStream.abort).toHaveBeenCalledTimes(1);
+    });
+
     it("honors cancellation while closing the completed video destination", async () => {
       await exportEngine.initialize();
       const project = createMockProject({
