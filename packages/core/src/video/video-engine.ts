@@ -1289,8 +1289,9 @@ export class VideoEngine {
     particleEngine.setCanvasSize(width, height);
 
     const fixedStep = 1 / this.exportFrameRate;
-    // Match the editor preview's fixed-step particle simulation so exports
-    // render consistently at 24, 30, 60 fps and on uneven frame timestamps.
+    // Advance on the configured export frame grid. Configure this to 30
+    // fps to match the editor preview's current fixed-step simulation; other
+    // export rates intentionally use their own frame-aligned simulation grid.
     while (this.exportParticleSimulationTime + fixedStep <= time + 1e-9) {
       this.exportParticleSimulationTime += fixedStep;
       particleEngine.update(this.exportParticleSimulationTime, fixedStep);
