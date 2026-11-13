@@ -17,6 +17,7 @@ import {
   VIDEO_QUALITY_PRESETS,
 } from "./types";
 import { VideoEngine, getVideoEngine } from "../video/video-engine";
+import type { Renderer } from "../video/renderer-factory";
 import { AudioEngine, getAudioEngine } from "../audio/audio-engine";
 import { titleEngine } from "../text/title-engine";
 import { graphicsEngine } from "../graphics/graphics-engine";
@@ -39,6 +40,7 @@ export class ExportEngine {
   private exportWorker: Worker | null = null;
   private lifecycleVersion = 0;
   private initializationPromise: Promise<void> | null = null;
+  private gpuRendererWithLossListener: Renderer | null = null;
 
   async initialize(): Promise<void> {
     if (this.initialized) return;
@@ -121,6 +123,17 @@ export class ExportEngine {
 
       const gpuCompositor = videoEngine.getGPUCompositor();
       if (!gpuCompositor) return false;
+
+      const renderer = gpuCompositor.getRenderer();
+      if (renderer && this.gpuRendererWithLossListener !== renderer) {
+        renderer.onDeviceLost(() => {
+          // Upscaling pipelines and pooled textures belong to the lost device.
+          // Drop them before the renderer recreates its GPUDevice.
+          this.upscalingEngine?.dispose();
+          this.upscalingEngine = null;
+        });
+        this.gpuRendererWithLossListener = renderer;
+      }
 
       const device = gpuCompositor.getDevice();
       if (!device) return true;
@@ -1939,6 +1952,7 @@ export class ExportEngine {
     this.mediabunny = null;
     this.videoEngine = null;
     this.audioEngine = null;
+    this.gpuRendererWithLossListener = null;
     if (this.upscalingEngine) {
       this.upscalingEngine.clearTexturePool();
       this.upscalingEngine = null;
