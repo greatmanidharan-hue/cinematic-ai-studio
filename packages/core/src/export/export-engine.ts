@@ -590,6 +590,16 @@ export class ExportEngine {
         let frameImage = rendered.image;
 
         try {
+          // Rendering may resolve after Cancel. Close the returned bitmap via
+          // the finally block without sending another frame to the encoder.
+          if (controller.signal.aborted) {
+            throw this.createError(
+              "CANCELLED",
+              "Export cancelled by user",
+              "rendering",
+            );
+          }
+
           if (shouldUpscale && this.upscalingEngine?.isInitialized()) {
             const sourceImage = frameImage;
             try {
@@ -675,6 +685,17 @@ export class ExportEngine {
       }
 
       await output.finalize();
+
+      // Finalization can be asynchronous; cancellation during muxing must not
+      // be reported as a successful export or proceed to commit the file.
+      if (controller.signal.aborted) {
+        throw this.createError(
+          "CANCELLED",
+          "Export cancelled by user",
+          "muxing",
+        );
+      }
+
       await writableStream.close();
 
       yield this.createProgress(
@@ -691,6 +712,12 @@ export class ExportEngine {
       };
     } catch (error) {
       try { await writableStream.abort(); } catch {}
+      if (controller.signal.aborted) {
+        return {
+          success: false,
+          error: this.createError("CANCELLED", "Export cancelled by user", "muxing"),
+        };
+      }
       if (error && typeof error === "object" && "code" in error) {
         return { success: false, error: error as ExportError };
       }
