@@ -284,7 +284,16 @@ export class ParticleEngine {
   update(currentTime: number, deltaTime: number): void {
     for (const [effectId, emitter] of this.emitters) {
       const effect = this.effects.get(effectId);
-      if (!effect || !effect.enabled) {
+      if (!effect) {
+        emitter.active = false;
+        emitter.particles = [];
+        emitter.emissionAccumulator = 0;
+        continue;
+      }
+      if (!effect.enabled) {
+        emitter.active = false;
+        emitter.particles = [];
+        emitter.emissionAccumulator = 0;
         continue;
       }
 
