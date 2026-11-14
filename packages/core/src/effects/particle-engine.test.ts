@@ -151,6 +151,37 @@ describe("ParticleEngine timeline behavior", () => {
     },
   });
 
+  it("recreates the same particle state after resetting with the same effect seed", () => {
+    const firstEngine = new ParticleEngine();
+    const secondEngine = new ParticleEngine();
+    const effect = makeTimelineEffect();
+    effect.config.emissionRate = 3;
+    effect.config.particleCount = 8;
+    effect.config.turbulence = 4;
+
+    firstEngine.addEffect(effect);
+    secondEngine.addEffect(effect);
+
+    firstEngine.update(1, 1);
+    secondEngine.update(1, 1);
+
+    expect(firstEngine.getParticles(effect.id)).toEqual(
+      secondEngine.getParticles(effect.id)
+    );
+
+    firstEngine.reset();
+    secondEngine.reset();
+    firstEngine.update(1, 1);
+    secondEngine.update(1, 1);
+
+    expect(firstEngine.getParticles(effect.id)).toEqual(
+      secondEngine.getParticles(effect.id)
+    );
+
+    firstEngine.dispose();
+    secondEngine.dispose();
+  });
+
   it("clears simulated future particles when the playhead moves backwards", () => {
     const engine = new ParticleEngine();
     const effect = makeTimelineEffect();
