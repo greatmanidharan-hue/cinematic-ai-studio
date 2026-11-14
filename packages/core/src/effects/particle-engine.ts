@@ -6,6 +6,7 @@ import {
   type Vector3,
   DEFAULT_PARTICLE_CONFIG,
 } from "./particle-types";
+import { createSeededRandom } from "./particle-random";
 
 function cloneParticleConfig(config: ParticleConfig): ParticleConfig {
   return {
@@ -18,12 +19,10 @@ function cloneParticleConfig(config: ParticleConfig): ParticleConfig {
   };
 }
 
-function generateId(): string {
-  return random().toString(36).substring(2, 11);
-}
+type RandomSource = () => number;
 
-function randomRange(min: number, max: number): number {
-  return min + Math.random() * (max - min);
+function randomRange(min: number, max: number, random: RandomSource): number {
+  return min + random() * (max - min);
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
@@ -45,11 +44,11 @@ function lerpColor(color1: string, color2: string, t: number): string {
   return `rgb(${r},${g},${b})`;
 }
 
-function getEmissionPosition(config: ParticleConfig, center: Vector3): Vector3 {
+function getEmissionPosition(config: ParticleConfig, center: Vector3, random: RandomSource): Vector3 {
   switch (config.emissionShape) {
     case "circle": {
-      const angle = Math.random() * Math.PI * 2;
-      const r = Math.random() * config.emissionRadius;
+      const angle = random() * Math.PI * 2;
+      const r = random() * config.emissionRadius;
       return {
         x: center.x + Math.cos(angle) * r,
         y: center.y + Math.sin(angle) * r,
@@ -57,9 +56,9 @@ function getEmissionPosition(config: ParticleConfig, center: Vector3): Vector3 {
       };
     }
     case "sphere": {
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      const r = Math.random() * config.emissionRadius;
+      const theta = random() * Math.PI * 2;
+      const phi = Math.acos(2 * random() - 1);
+      const r = random() * config.emissionRadius;
       return {
         x: center.x + r * Math.sin(phi) * Math.cos(theta),
         y: center.y + r * Math.sin(phi) * Math.sin(theta),
@@ -69,13 +68,13 @@ function getEmissionPosition(config: ParticleConfig, center: Vector3): Vector3 {
     case "rectangle": {
       return {
         x: center.x + randomRange(-config.emissionRadius, config.emissionRadius, random),
-        y: center.y + randomRange(-config.emissionRadius, config.emissionRadius),
+        y: center.y + randomRange(-config.emissionRadius, config.emissionRadius, random),
         z: center.z,
       };
     }
     case "line": {
       return {
-        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius),
+        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius, random),
         y: center.y,
         z: center.z,
       };
@@ -90,7 +89,8 @@ function getInitialVelocity(
   config: ParticleConfig,
   effectType: string,
   center: Vector3,
-  position: Vector3
+  position: Vector3,
+  random: RandomSource
 ): Vector3 {
   const speed = config.speed + randomRange(-config.speedVariance, config.speedVariance, random);
 
@@ -101,7 +101,7 @@ function getInitialVelocity(
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
       return {
         x: (dx / dist) * speed + randomRange(-20, 20, random),
-        y: (dy / dist) * speed + randomRange(-20, 20),
+        y: (dy / dist) * speed + randomRange(-20, 20, random),
         z: randomRange(-speed * 0.5, speed * 0.5, random),
       };
     }
@@ -124,7 +124,7 @@ function getInitialVelocity(
     }
     case "dust":
     case "sparkle": {
-      const angle = Math.random() * Math.PI * 2;
+      const angle = random() * Math.PI * 2;
       return {
         x: Math.cos(angle) * speed * 0.3,
         y: Math.sin(angle) * speed * 0.3 - speed * 0.2,
@@ -133,22 +133,22 @@ function getInitialVelocity(
     }
     case "disintegrate": {
       return {
-        x: randomRange(-speed * 0.5, speed * 0.5),
-        y: -speed * randomRange(0.3, 0.8),
+        x: randomRange(-speed * 0.5, speed * 0.5, random),
+        y: -speed * randomRange(0.3, 0.8, random),
         z: randomRange(-speed * 0.2, speed * 0.2, random),
       };
     }
     case "shatter": {
-      const angle = Math.random() * Math.PI * 2;
+      const angle = random() * Math.PI * 2;
       return {
         x: Math.cos(angle) * speed,
         y: Math.sin(angle) * speed - speed * 0.5,
-        z: randomRange(-speed * 0.5, speed * 0.5),
+        z: randomRange(-speed * 0.5, speed * 0.5, random),
       };
     }
     case "dissolve":
     default: {
-      const angle = Math.random() * Math.PI * 2;
+      const angle = random() * Math.PI * 2;
       return {
         x: Math.cos(angle) * speed * 0.5,
         y: Math.sin(angle) * speed * 0.5,
@@ -166,6 +166,8 @@ export class ParticleEngine {
   private changeListeners: Set<() => void> = new Set();
   private changeVersion: number = 0;
   private lastUpdateTime: number | null = null;
+  private randomGenerators = new Map<string, RandomSource>();
+  private particleCounters = new Map<string, number>();
 
   onEffectsChange(listener: () => void): () => void {
     this.changeListeners.add(listener);
@@ -196,6 +198,8 @@ export class ParticleEngine {
       ...effect,
       config: cloneParticleConfig(effect.config),
     });
+    this.randomGenerators.set(effect.id, createSeededRandom(effect.id));
+    this.particleCounters.set(effect.id, 0);
     this.emitters.set(effect.id, {
       effectId: effect.id,
       particles: [],
@@ -209,6 +213,8 @@ export class ParticleEngine {
   removeEffect(effectId: string): void {
     this.effects.delete(effectId);
     this.emitters.delete(effectId);
+    this.randomGenerators.delete(effectId);
+    this.particleCounters.delete(effectId);
     this.notifyChange();
   }
 
@@ -251,25 +257,26 @@ export class ParticleEngine {
 
   private createParticle(
     effect: ParticleEffect,
-    center: Vector3
+    center: Vector3,
+    random: RandomSource
   ): Particle {
     const config = effect.config;
-    const position = getEmissionPosition(config, center);
-    const velocity = getInitialVelocity(config, effect.type, center, position);
-    const colorIndex = Math.floor(Math.random() * config.colors.length);
+    const position = getEmissionPosition(config, center, random);
+    const velocity = getInitialVelocity(config, effect.type, center, position, random);
+    const colorIndex = Math.floor(random() * config.colors.length);
 
     return {
-      id: generateId(),
+      id: `${effect.id}-particle-${this.particleCounters.get(effect.id) ?? 0}`,
       blendMode: config.blendMode,
       position,
       velocity,
       acceleration: { x: 0, y: config.gravity, z: 0 },
       color: config.colors[colorIndex],
-      size: randomRange(config.size.min, config.size.max),
+      size: randomRange(config.size.min, config.size.max, random),
       opacity: config.opacity.start,
-      rotation: Math.random() * Math.PI * 2,
-      rotationSpeed: randomRange(-config.rotationSpeed, config.rotationSpeed),
-      lifetime: randomRange(config.lifetime.min, config.lifetime.max),
+      rotation: random() * Math.PI * 2,
+      rotationSpeed: randomRange(-config.rotationSpeed, config.rotationSpeed, random),
+      lifetime: randomRange(config.lifetime.min, config.lifetime.max, random),
       age: 0,
       active: true,
     };
@@ -321,8 +328,10 @@ export class ParticleEngine {
         particle.velocity.z += (particle.acceleration.z + config.wind.z) * safeDeltaTime;
 
         if (config.turbulence > 0) {
-          particle.velocity.x += randomRange(-config.turbulence, config.turbulence) * safeDeltaTime;
-          particle.velocity.y += randomRange(-config.turbulence, config.turbulence) * safeDeltaTime;
+          const random = this.randomGenerators.get(effectId) ?? createSeededRandom(effectId);
+          this.randomGenerators.set(effectId, random);
+          particle.velocity.x += randomRange(-config.turbulence, config.turbulence, random) * safeDeltaTime;
+          particle.velocity.y += randomRange(-config.turbulence, config.turbulence, random) * safeDeltaTime;
         }
 
         particle.position.x += particle.velocity.x * safeDeltaTime;
@@ -357,7 +366,10 @@ export class ParticleEngine {
         emitter.emissionAccumulator >= 1 &&
         emitter.particles.length < config.particleCount
       ) {
-        emitter.particles.push(this.createParticle(effect, center));
+        const random = this.randomGenerators.get(effectId) ?? createSeededRandom(effectId);
+        this.randomGenerators.set(effectId, random);
+        emitter.particles.push(this.createParticle(effect, center, random));
+        this.particleCounters.set(effectId, (this.particleCounters.get(effectId) ?? 0) + 1);
         emitter.emissionAccumulator -= 1;
       }
 
@@ -398,7 +410,9 @@ export class ParticleEngine {
 
   reset(): void {
     this.lastUpdateTime = null;
-    for (const emitter of this.emitters.values()) {
+    for (const [effectId, emitter] of this.emitters) {
+      this.randomGenerators.set(effectId, createSeededRandom(effectId));
+      this.particleCounters.set(effectId, 0);
       emitter.particles = [];
       emitter.elapsedTime = 0;
       emitter.emissionAccumulator = 0;
@@ -409,6 +423,8 @@ export class ParticleEngine {
   dispose(): void {
     this.emitters.clear();
     this.effects.clear();
+    this.randomGenerators.clear();
+    this.particleCounters.clear();
   }
 }
 
