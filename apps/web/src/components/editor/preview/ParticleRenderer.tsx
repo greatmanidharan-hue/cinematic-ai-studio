@@ -112,7 +112,6 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(10000 * 3), 3));
       geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(10000 * 3), 3));
-      geometry.setAttribute("size", new THREE.BufferAttribute(new Float32Array(10000), 1));
       geometry.setAttribute("particleSize", new THREE.BufferAttribute(new Float32Array(10000), 1));
       geometry.setAttribute("alpha", new THREE.BufferAttribute(new Float32Array(10000), 1));
       geometryRefs.current[blendMode] = geometry;
@@ -189,7 +188,6 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         if (!geometry) continue;
         const positions = geometry.attributes.position.array as Float32Array;
         const colors = geometry.attributes.color.array as Float32Array;
-        const sizes = geometry.attributes.size.array as Float32Array;
         const particleSizes = geometry.attributes.particleSize.array as Float32Array;
         const batch = grouped.get(blendMode) ?? [];
         const count = Math.min(batch.length, 10000);
@@ -204,20 +202,17 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
           colors[i3 + 1] = rgb.g;
           colors[i3 + 2] = rgb.b;
           (geometry.attributes.alpha.array as Float32Array)[i] = Math.max(0, Math.min(1, particle.opacity));
-          sizes[i] = particle.size;
           particleSizes[i] = Math.max(1, particle.size);
         }
         for (let i = count; i < 10000; i++) {
           const i3 = i * 3;
           positions[i3] = 0; positions[i3 + 1] = 0; positions[i3 + 2] = -1000;
           (geometry.attributes.alpha.array as Float32Array)[i] = 0;
-          sizes[i] = 0;
           particleSizes[i] = 0;
         }
         geometry.attributes.position.needsUpdate = true;
         geometry.attributes.color.needsUpdate = true;
         geometry.attributes.alpha.needsUpdate = true;
-        geometry.attributes.size.needsUpdate = true;
         geometry.attributes.particleSize.needsUpdate = true;
         geometry.setDrawRange(0, count);
       }
