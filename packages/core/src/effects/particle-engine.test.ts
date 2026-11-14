@@ -481,3 +481,61 @@ describe("ParticleEngine pause and resume timing", () => {
     engine.dispose();
   });
 });
+
+
+describe("ParticleEngine effect time boundaries", () => {
+  it("does not emit before an effect's start-time interval begins", () => {
+    const engine = new ParticleEngine();
+    const effect: ParticleEffect = {
+      id: "start-boundary",
+      clipId: "clip-1",
+      type: "dissolve",
+      startTime: 0.5,
+      duration: 2,
+      enabled: true,
+      config: {
+        ...DEFAULT_PARTICLE_CONFIG,
+        particleCount: 20,
+        emissionRate: 10,
+        lifetime: { min: 5, max: 5 },
+        turbulence: 0,
+      },
+    };
+
+    engine.addEffect(effect);
+    engine.update(0.5, 0.5);
+    expect(engine.getParticles(effect.id)).toHaveLength(0);
+
+    engine.update(0.6, 0.1);
+    expect(engine.getParticles(effect.id)).toHaveLength(1);
+    engine.dispose();
+  });
+
+  it("clears particles after the effect end-time boundary", () => {
+    const engine = new ParticleEngine();
+    const effect: ParticleEffect = {
+      id: "end-boundary",
+      clipId: "clip-1",
+      type: "dissolve",
+      startTime: 0,
+      duration: 0.5,
+      enabled: true,
+      config: {
+        ...DEFAULT_PARTICLE_CONFIG,
+        particleCount: 20,
+        emissionRate: 10,
+        lifetime: { min: 5, max: 5 },
+        turbulence: 0,
+      },
+    };
+
+    engine.addEffect(effect);
+    engine.update(0.5, 0.5);
+    expect(engine.getParticles(effect.id).length).toBeGreaterThan(0);
+
+    engine.update(0.6, 0.1);
+    expect(engine.getParticles(effect.id)).toHaveLength(0);
+    expect(engine.getActiveEffectIds()).not.toContain(effect.id);
+    engine.dispose();
+  });
+});
