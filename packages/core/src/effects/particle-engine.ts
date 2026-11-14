@@ -239,16 +239,26 @@ export class ParticleEngine {
     }
   }
 
+  private cloneEffect(effect: ParticleEffect): ParticleEffect {
+    return {
+      ...effect,
+      config: cloneParticleConfig(effect.config),
+    };
+  }
+
   getEffect(effectId: string): ParticleEffect | undefined {
-    return this.effects.get(effectId);
+    const effect = this.effects.get(effectId);
+    return effect ? this.cloneEffect(effect) : undefined;
   }
 
   getAllEffects(): ParticleEffect[] {
-    return Array.from(this.effects.values());
+    return Array.from(this.effects.values(), effect => this.cloneEffect(effect));
   }
 
   getEffectsForClip(clipId: string): ParticleEffect[] {
-    return Array.from(this.effects.values()).filter(e => e.clipId === clipId);
+    return Array.from(this.effects.values())
+      .filter(effect => effect.clipId === clipId)
+      .map(effect => this.cloneEffect(effect));
   }
 
   toggleEffect(effectId: string, enabled: boolean): void {
