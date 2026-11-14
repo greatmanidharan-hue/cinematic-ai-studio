@@ -7,6 +7,17 @@ import {
   DEFAULT_PARTICLE_CONFIG,
 } from "./particle-types";
 
+function cloneParticleConfig(config: ParticleConfig): ParticleConfig {
+  return {
+    ...config,
+    wind: { ...config.wind },
+    colors: [...config.colors],
+    size: { ...config.size },
+    opacity: { ...config.opacity },
+    lifetime: { ...config.lifetime },
+  };
+}
+
 function generateId(): string {
   return Math.random().toString(36).substring(2, 11);
 }
@@ -179,7 +190,11 @@ export class ParticleEngine {
   }
 
   addEffect(effect: ParticleEffect): void {
-    this.effects.set(effect.id, effect);
+    // Keep engine state independent from mutable objects owned by the UI.
+    this.effects.set(effect.id, {
+      ...effect,
+      config: cloneParticleConfig(effect.config),
+    });
     this.emitters.set(effect.id, {
       effectId: effect.id,
       particles: [],
@@ -199,7 +214,7 @@ export class ParticleEngine {
   updateEffect(effectId: string, updates: Partial<ParticleConfig>): void {
     const effect = this.effects.get(effectId);
     if (effect) {
-      effect.config = { ...effect.config, ...updates };
+      effect.config = cloneParticleConfig({ ...effect.config, ...updates });
       this.notifyChange();
     }
   }
