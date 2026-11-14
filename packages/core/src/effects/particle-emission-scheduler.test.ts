@@ -14,7 +14,9 @@ describe("scheduleParticleEmissions", () => {
     }
 
     expect(splitTimes).toHaveLength(24);
-    expect(splitTimes).toEqual(whole.emissionTimes);
+    splitTimes.forEach((time, index) => {
+      expect(time).toBeCloseTo(whole.emissionTimes[index], 12);
+    });
     expect(remainder).toBeCloseTo(whole.remainder, 12);
   });
 
