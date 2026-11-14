@@ -75,3 +75,60 @@ describe("ParticleEngine effect updates", () => {
     engine.dispose();
   });
 });
+
+
+describe("ParticleEngine configuration ownership", () => {
+  it("does not retain mutable config references supplied by the caller", () => {
+    const engine = new ParticleEngine();
+    const effect = {
+      id: "isolated-effect",
+      clipId: "clip-1",
+      type: "dissolve" as const,
+      startTime: 0,
+      duration: 5,
+      enabled: true,
+      config: {
+        ...DEFAULT_PARTICLE_CONFIG,
+        wind: { ...DEFAULT_PARTICLE_CONFIG.wind },
+        colors: ["#ffffff"],
+        size: { ...DEFAULT_PARTICLE_CONFIG.size },
+        opacity: { ...DEFAULT_PARTICLE_CONFIG.opacity },
+        lifetime: { ...DEFAULT_PARTICLE_CONFIG.lifetime },
+      },
+    };
+
+    engine.addEffect(effect);
+    effect.config.wind.x = 42;
+    effect.config.colors[0] = "#000000";
+    effect.config.size.min = 99;
+
+    expect(engine.getEffect(effect.id)?.config.wind.x).toBe(0);
+    expect(engine.getEffect(effect.id)?.config.colors).toEqual(["#ffffff"]);
+    expect(engine.getEffect(effect.id)?.config.size.min).toBe(DEFAULT_PARTICLE_CONFIG.size.min);
+    engine.dispose();
+  });
+
+  it("copies nested values supplied through partial configuration updates", () => {
+    const engine = new ParticleEngine();
+    const effect: ParticleEffect = {
+      id: "update-isolation",
+      clipId: "clip-1",
+      type: "dissolve",
+      startTime: 0,
+      duration: 5,
+      enabled: true,
+      config: { ...DEFAULT_PARTICLE_CONFIG },
+    };
+    const wind = { x: 1, y: 2, z: 3 };
+    const colors = ["#123456"];
+
+    engine.addEffect(effect);
+    engine.updateEffect(effect.id, { wind, colors });
+    wind.x = 99;
+    colors[0] = "#ffffff";
+
+    expect(engine.getEffect(effect.id)?.config.wind.x).toBe(1);
+    expect(engine.getEffect(effect.id)?.config.colors).toEqual(["#123456"]);
+    engine.dispose();
+  });
+});
