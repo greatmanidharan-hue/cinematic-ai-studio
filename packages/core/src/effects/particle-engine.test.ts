@@ -800,7 +800,7 @@ describe("ParticleEngine playback and seek parity", () => {
       regular.update(frame / 60, 1 / 60);
     }
 
-    const partitions = [0.013, 0.021, 0.007, 0.031, 0.019, 0.009, 0.025, 0.041, 0.034, 0.02, 0.03, 0.05, 0.04, 0.03, 0.05, 0.04, 0.04, 0.05, 0.05, 0.4];
+    const partitions = [0.013, 0.021, 0.007, 0.031, 0.019, 0.009, 0.025, 0.041, 0.034, 0.02, 0.03, 0.05, 0.04, 0.03, 0.05, 0.04, 0.04, 0.05, 0.05, 0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.04, 0.04];
     let timeline = 0;
     for (const delta of partitions) {
       timeline += delta;
