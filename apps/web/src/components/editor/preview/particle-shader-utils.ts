@@ -82,3 +82,21 @@ export const limitParticleBlendRuns = <T>(
 
   return limited;
 };
+
+
+/** Returns a bounded power-of-two capacity suitable for reusable particle buffers. */
+export const getParticleBufferCapacity = (
+  required: number,
+  current: number,
+  maximum: number,
+): number => {
+  const maxCapacity = Math.max(0, Math.floor(maximum));
+  const needed = Math.min(maxCapacity, Math.max(0, Math.ceil(required)));
+  const existing = Math.min(maxCapacity, Math.max(0, Math.floor(current)));
+  if (needed <= existing) return existing;
+  if (needed === 0) return 0;
+
+  let capacity = Math.max(1, existing);
+  while (capacity < needed) capacity = Math.min(maxCapacity, capacity * 2);
+  return capacity;
+};
