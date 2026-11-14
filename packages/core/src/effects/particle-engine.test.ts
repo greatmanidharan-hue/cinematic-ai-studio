@@ -196,6 +196,24 @@ describe("ParticleEngine timeline behavior", () => {
     engine.dispose();
   });
 
+  it("does not release a burst from emissions banked while at capacity", () => {
+    const engine = new ParticleEngine();
+    const effect = makeTimelineEffect();
+    effect.config.particleCount = 2;
+    effect.config.emissionRate = 10;
+    effect.config.lifetime = { min: 0.1, max: 0.1 };
+    engine.addEffect(effect);
+
+    engine.update(1, 1);
+    expect(engine.getParticles(effect.id)).toHaveLength(2);
+
+    engine.updateEffect(effect.id, { emissionRate: 0.1 });
+    engine.update(2, 1);
+
+    expect(engine.getParticles(effect.id)).toHaveLength(0);
+    engine.dispose();
+  });
+
   it("does not advance particle age for negative or non-finite frame deltas", () => {
     const engine = new ParticleEngine();
     const effect = makeTimelineEffect();
