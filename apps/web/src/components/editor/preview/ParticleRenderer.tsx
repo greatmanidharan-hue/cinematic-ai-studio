@@ -327,54 +327,56 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!isReady) return;
+    if (!isReady || !isPlaying) return;
 
-    if (isPlaying) {
-      lastSimulationTimeRef.current = currentTimeRef.current;
+    // Do not depend on currentTime here: the parent updates the playhead every
+    // frame. Reading its ref avoids tearing down and restarting this RAF loop.
+    lastSimulationTimeRef.current = currentTimeRef.current;
 
-      const animate = () => {
-        if (!isPlayingRef.current) return;
+    const animate = () => {
+      if (!isPlayingRef.current) return;
 
-        const now = performance.now();
-        if (document.visibilityState !== "visible") {
-          lastSimulationTimeRef.current = currentTimeRef.current;
-          animationFrameRef.current = requestAnimationFrame(animate);
-          return;
-        }
-
-        // Use the editor's master timeline so 0.5x/2x playback and seeks stay
-        // synchronized with video, audio, and the timeline playhead.
-        const timelineTime = currentTimeRef.current;
-        const deltaTime = getParticleFrameDelta(timelineTime, lastSimulationTimeRef.current);
-        lastSimulationTimeRef.current = timelineTime;
-
-        engine.update(timelineTime, deltaTime);
-        const particles = engine.getParticles();
-        updateParticles(particles);
-        render();
-
+      if (document.visibilityState !== "visible") {
+        lastSimulationTimeRef.current = currentTimeRef.current;
         animationFrameRef.current = requestAnimationFrame(animate);
-      };
-
-      animationFrameRef.current = requestAnimationFrame(animate);
-
-      return () => {
-        if (animationFrameRef.current !== null) {
-          cancelAnimationFrame(animationFrameRef.current);
-          animationFrameRef.current = null;
-        }
-      };
-    } else {
-      // Paused previews must not advance simulation just because React re-rendered.
-      // A manual seek while paused invalidates the old simulation state.
-      if (lastPausedTimeRef.current !== currentTime) {
-        engine.reset();
-        lastPausedTimeRef.current = currentTime;
+        return;
       }
+
+      // Use the editor's master timeline so playback-rate changes and seeks
+      // stay synchronized with video, audio, and the timeline playhead.
+      const timelineTime = currentTimeRef.current;
+      const deltaTime = getParticleFrameDelta(timelineTime, lastSimulationTimeRef.current);
+      lastSimulationTimeRef.current = timelineTime;
+
+      engine.update(timelineTime, deltaTime);
       updateParticles(engine.getParticles());
       render();
+
+      animationFrameRef.current = requestAnimationFrame(animate);
+    };
+
+    animationFrameRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
+  }, [isPlaying, isReady, engine, updateParticles, render, effects]);
+
+  useEffect(() => {
+    if (!isReady || isPlaying) return;
+
+    // Paused previews must not advance simulation just because React re-rendered.
+    // A manual seek while paused invalidates the old simulation state.
+    if (lastPausedTimeRef.current !== currentTime) {
+      engine.reset();
+      lastPausedTimeRef.current = currentTime;
     }
-  }, [isPlaying, isReady, currentTime, engine, updateParticles, render, effects]);
+    updateParticles(engine.getParticles());
+    render();
+  }, [isPlaying, isReady, currentTime, engine, updateParticles, render]);
 
   useEffect(() => {
     if (cameraRef.current) {
