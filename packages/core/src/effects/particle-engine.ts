@@ -226,6 +226,7 @@ export class ParticleEngine {
     const effect = this.effects.get(effectId);
     if (effect) {
       effect.config = cloneParticleConfig({ ...effect.config, ...updates });
+      this.resetEmitterForEffect(effectId);
       this.notifyChange();
     }
   }
@@ -235,8 +236,22 @@ export class ParticleEngine {
     if (effect) {
       effect.startTime = startTime;
       effect.duration = duration;
+      this.resetEmitterForEffect(effectId);
       this.notifyChange();
     }
+  }
+
+  /** Clears only the edited effect's simulation state and restarts its seed. */
+  private resetEmitterForEffect(effectId: string): void {
+    const emitter = this.emitters.get(effectId);
+    if (emitter) {
+      emitter.particles = [];
+      emitter.elapsedTime = 0;
+      emitter.emissionAccumulator = 0;
+      emitter.active = false;
+    }
+    this.randomGenerators.set(effectId, createSeededRandom(effectId));
+    this.particleCounters.set(effectId, 0);
   }
 
   private cloneEffect(effect: ParticleEffect): ParticleEffect {
