@@ -192,6 +192,15 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         const batch = grouped.get(blendMode) ?? [];
         const count = Math.min(batch.length, 10000);
 
+        geometry.setDrawRange(0, count);
+        if (count === 0) continue;
+
+        const alphaAttribute = geometry.attributes.alpha;
+        const positionAttribute = geometry.attributes.position;
+        const colorAttribute = geometry.attributes.color;
+        const sizeAttribute = geometry.attributes.particleSize;
+        const alphas = alphaAttribute.array as Float32Array;
+
         for (let i = 0; i < count; i++) {
           const particle = batch[i], i3 = i * 3;
           positions[i3] = particle.position.x;
@@ -201,20 +210,23 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
           colors[i3] = rgb.r;
           colors[i3 + 1] = rgb.g;
           colors[i3 + 2] = rgb.b;
-          (geometry.attributes.alpha.array as Float32Array)[i] = Math.max(0, Math.min(1, particle.opacity));
-          particleSizes[i] = Math.max(1, particle.size);
+          alphas[i] = Math.max(0, Math.min(1, particle.opacity));
+          particleSizes[i] = Math.max(0, particle.size);
         }
-        for (let i = count; i < 10000; i++) {
-          const i3 = i * 3;
-          positions[i3] = 0; positions[i3 + 1] = 0; positions[i3 + 2] = -1000;
-          (geometry.attributes.alpha.array as Float32Array)[i] = 0;
-          particleSizes[i] = 0;
-        }
-        geometry.attributes.position.needsUpdate = true;
-        geometry.attributes.color.needsUpdate = true;
-        geometry.attributes.alpha.needsUpdate = true;
-        geometry.attributes.particleSize.needsUpdate = true;
-        geometry.setDrawRange(0, count);
+
+        // Upload only the active particle range, not all 10,000 reserved slots.
+        positionAttribute.clearUpdateRanges();
+        positionAttribute.addUpdateRange(0, count * 3);
+        colorAttribute.clearUpdateRanges();
+        colorAttribute.addUpdateRange(0, count * 3);
+        alphaAttribute.clearUpdateRanges();
+        alphaAttribute.addUpdateRange(0, count);
+        sizeAttribute.clearUpdateRanges();
+        sizeAttribute.addUpdateRange(0, count);
+        positionAttribute.needsUpdate = true;
+        colorAttribute.needsUpdate = true;
+        alphaAttribute.needsUpdate = true;
+        sizeAttribute.needsUpdate = true;
       }
     },
     [hexToRgbNormalized, height]
