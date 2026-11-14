@@ -374,3 +374,42 @@ describe("ParticleEngine frame-rate consistency", () => {
     sixtyFps.dispose();
   });
 });
+
+
+  it("emits the same particle count over equal time at 30 FPS and 60 FPS", () => {
+    const makeEngine = () => {
+      const engine = new ParticleEngine();
+      const effect: ParticleEffect = {
+        id: "emission-fps-consistency",
+        clipId: "clip-1",
+        type: "dissolve",
+        startTime: 0,
+        duration: 10,
+        enabled: true,
+        config: {
+          ...DEFAULT_PARTICLE_CONFIG,
+          particleCount: 100,
+          emissionRate: 24,
+          lifetime: { min: 10, max: 10 },
+          turbulence: 0,
+        },
+      };
+      engine.addEffect(effect);
+      engine.update(0, 0);
+      return engine;
+    };
+
+    const thirtyFps = makeEngine();
+    const sixtyFps = makeEngine();
+    for (let frame = 1; frame <= 30; frame++) {
+      thirtyFps.update(frame / 30, 1 / 30);
+    }
+    for (let frame = 1; frame <= 60; frame++) {
+      sixtyFps.update(frame / 60, 1 / 60);
+    }
+
+    expect(thirtyFps.getParticles("emission-fps-consistency")).toHaveLength(24);
+    expect(sixtyFps.getParticles("emission-fps-consistency")).toHaveLength(24);
+    thirtyFps.dispose();
+    sixtyFps.dispose();
+  });
