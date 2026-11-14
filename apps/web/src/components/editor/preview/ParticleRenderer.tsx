@@ -147,17 +147,31 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
 
     return () => {
       setIsReady(false);
+
+      // Stop any scheduled frame before releasing the WebGL resources it may use.
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+
       for (const points of runPoolRef.current) {
         points.geometry.dispose();
         scene.remove(points);
       }
       runPoolRef.current = [];
-      for (const material of materialsRef.current.values()) material.dispose();
-      materialsRef.current.clear();
+
+      // Dispose the materials created by this effect instance, not a later ref value.
+      for (const material of materials.values()) material.dispose();
+      if (materialsRef.current === materials) materialsRef.current.clear();
+
       renderer.dispose();
-      if (containerRef.current && renderer.domElement) {
+      if (containerRef.current?.contains(renderer.domElement)) {
         containerRef.current.removeChild(renderer.domElement);
       }
+
+      if (rendererRef.current === renderer) rendererRef.current = null;
+      if (sceneRef.current === scene) sceneRef.current = null;
+      if (cameraRef.current === camera) cameraRef.current = null;
     };
   }, [width, height]);
 
@@ -307,7 +321,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       animationFrameRef.current = requestAnimationFrame(animate);
 
       return () => {
-        if (animationFrameRef.current) {
+        if (animationFrameRef.current !== null) {
           cancelAnimationFrame(animationFrameRef.current);
           animationFrameRef.current = null;
         }
