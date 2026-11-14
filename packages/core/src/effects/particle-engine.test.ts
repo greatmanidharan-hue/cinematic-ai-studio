@@ -34,3 +34,44 @@ describe("ParticleEngine blend mode propagation", () => {
     },
   );
 });
+
+
+describe("ParticleEngine effect updates", () => {
+  const makeEffect = (id: string): ParticleEffect => ({
+    id,
+    clipId: "clip-1",
+    type: "dissolve",
+    startTime: 1,
+    duration: 5,
+    enabled: true,
+    config: { ...DEFAULT_PARTICLE_CONFIG, colors: ["#ffffff"] },
+  });
+
+  it("applies configuration updates to an existing effect ID", () => {
+    const engine = new ParticleEngine();
+    const effect = makeEffect("editable-effect");
+    engine.addEffect(effect);
+
+    engine.updateEffect(effect.id, { blendMode: "screen", emissionRate: 12 });
+
+    expect(engine.getEffect(effect.id)?.config.blendMode).toBe("screen");
+    expect(engine.getEffect(effect.id)?.config.emissionRate).toBe(12);
+    engine.dispose();
+  });
+
+  it("updates timing and enabled state for an existing effect", () => {
+    const engine = new ParticleEngine();
+    const effect = makeEffect("timed-effect");
+    engine.addEffect(effect);
+
+    engine.updateEffectTiming(effect.id, 3, 8);
+    engine.toggleEffect(effect.id, false);
+
+    expect(engine.getEffect(effect.id)).toMatchObject({
+      startTime: 3,
+      duration: 8,
+      enabled: false,
+    });
+    engine.dispose();
+  });
+});
