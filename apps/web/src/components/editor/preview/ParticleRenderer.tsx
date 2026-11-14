@@ -45,6 +45,8 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   const lastPausedTimeRef = useRef<number | null>(null);
   const isPlayingRef = useRef<boolean>(isPlaying);
   const maxPointSizeRef = useRef<number>(64);
+  const contextLostRef = useRef<boolean>(false);
+  const [contextRevision, setContextRevision] = React.useState(0);
   const [isReady, setIsReady] = React.useState(false);
 
   const engine = useMemo(() => getParticleEngine(), []);
@@ -153,6 +155,25 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
+    // Three.js restores its WebGL resources after the browser emits the
+    // restored event. Pause our own RAF loop while the context is unavailable.
+    const handleContextLost = (event: Event) => {
+      event.preventDefault();
+      contextLostRef.current = true;
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
+    const handleContextRestored = () => {
+      contextLostRef.current = false;
+      lastSimulationTimeRef.current = currentTimeRef.current;
+      lastPausedTimeRef.current = null;
+      setContextRevision((revision) => revision + 1);
+    };
+    renderer.domElement.addEventListener("webglcontextlost", handleContextLost, false);
+    renderer.domElement.addEventListener("webglcontextrestored", handleContextRestored, false);
+
     const blendModes: Particle["blendMode"][] = ["normal", "add", "multiply", "screen"];
     const materials = new Map<Particle["blendMode"], THREE.PointsMaterial>();
 
@@ -201,6 +222,9 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       for (const material of materials.values()) material.dispose();
       if (materialsRef.current === materials) materialsRef.current.clear();
 
+      renderer.domElement.removeEventListener("webglcontextlost", handleContextLost, false);
+      renderer.domElement.removeEventListener("webglcontextrestored", handleContextRestored, false);
+      contextLostRef.current = false;
       renderer.dispose();
       if (containerRef.current?.contains(renderer.domElement)) {
         containerRef.current.removeChild(renderer.domElement);
@@ -320,7 +344,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   );
 
   const render = useCallback(() => {
-    if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return;
+    if (contextLostRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current) return;
     rendererRef.current.render(sceneRef.current, cameraRef.current);
   }, []);
 
@@ -341,7 +365,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   }, []);
 
   useEffect(() => {
-    if (!isReady || !isPlaying) return;
+    if (!isReady || !isPlaying || contextLostRef.current) return;
 
     // Do not depend on currentTime here: the parent updates the playhead every
     // frame. Reading its ref avoids tearing down and restarting this RAF loop.
@@ -349,6 +373,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
 
     const animate = () => {
       if (!isPlayingRef.current) return;
+      if (contextLostRef.current) return;
 
       if (document.visibilityState !== "visible") {
         lastSimulationTimeRef.current = currentTimeRef.current;
@@ -388,10 +413,10 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         animationFrameRef.current = null;
       }
     };
-  }, [isPlaying, isReady, engine, updateParticles, render]);
+  }, [isPlaying, isReady, contextRevision, engine, updateParticles, render]);
 
   useEffect(() => {
-    if (!isReady || isPlaying) return;
+    if (!isReady || isPlaying || contextLostRef.current) return;
 
     // Rebuild particle history incrementally when the paused playhead changes.
     if (lastPausedTimeRef.current !== currentTime) {
@@ -424,7 +449,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         animationFrameRef.current = null;
       }
     };
-  }, [isPlaying, isReady, currentTime, engine, updateParticles, render]);
+  }, [isPlaying, isReady, contextRevision, currentTime, engine, updateParticles, render]);
 
   useEffect(() => {
     if (cameraRef.current) {
