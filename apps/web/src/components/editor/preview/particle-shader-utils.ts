@@ -26,3 +26,31 @@ export const injectParticleShaderAttributes = (shader: ParticleShaderSource): vo
       "#include <color_fragment>\ndiffuseColor.a *= vParticleAlpha;"
     );
 };
+
+export interface ParticleBlendRun<T> {
+  blendMode: "normal" | "add" | "multiply" | "screen";
+  particles: T[];
+}
+
+/**
+ * Groups only adjacent particles with the same blend mode.
+ * Unlike a global mode bucket, this preserves the original run order.
+ */
+export const groupParticlesIntoBlendRuns = <
+  T extends { blendMode: ParticleBlendRun<T>["blendMode"] },
+>(
+  particles: readonly T[],
+): ParticleBlendRun<T>[] => {
+  const runs: ParticleBlendRun<T>[] = [];
+
+  for (const particle of particles) {
+    const lastRun = runs[runs.length - 1];
+    if (lastRun?.blendMode === particle.blendMode) {
+      lastRun.particles.push(particle);
+    } else {
+      runs.push({ blendMode: particle.blendMode, particles: [particle] });
+    }
+  }
+
+  return runs;
+};
