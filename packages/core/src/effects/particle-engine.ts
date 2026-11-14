@@ -312,14 +312,6 @@ export class ParticleEngine {
         z: 0,
       };
 
-      emitter.emissionAccumulator += config.emissionRate * safeDeltaTime;
-      while (
-        emitter.emissionAccumulator >= 1 &&
-        emitter.particles.length < config.particleCount
-      ) {
-        emitter.particles.push(this.createParticle(effect, center));
-        emitter.emissionAccumulator -= 1;
-      }
 
       for (const particle of emitter.particles) {
         if (!particle.active) continue;
@@ -357,6 +349,18 @@ export class ParticleEngine {
       }
 
       emitter.particles = emitter.particles.filter((p) => p.active);
+
+      // Emit at the end of this simulation step so new particles do not
+      // incorrectly receive the entire frame's movement and aging.
+      emitter.emissionAccumulator += config.emissionRate * safeDeltaTime;
+      while (
+        emitter.emissionAccumulator >= 1 &&
+        emitter.particles.length < config.particleCount
+      ) {
+        emitter.particles.push(this.createParticle(effect, center));
+        emitter.emissionAccumulator -= 1;
+      }
+
     }
   }
 
