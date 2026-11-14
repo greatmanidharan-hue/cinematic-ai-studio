@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ParticleEngine } from "./particle-engine";
-import { DEFAULT_PARTICLE_CONFIG, type ParticleEffect } from "./particle-types";
+import { DEFAULT_PARTICLE_CONFIG, type Particle, type ParticleEffect } from "./particle-types";
 
 function advanceEngine(engine: ParticleEngine, currentTime: number, deltaTime: number, frames = 15): void {
   const frameDelta = deltaTime / frames;
