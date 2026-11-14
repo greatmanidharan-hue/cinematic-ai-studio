@@ -369,7 +369,13 @@ export class ParticleEngine {
 
       // Emit at the end of this simulation step so new particles do not
       // incorrectly receive the entire frame's movement and aging.
-      emitter.emissionAccumulator += config.emissionRate * simulatedDeltaTime;
+      const frameStartTime = currentTime - safeDeltaTime;
+      const effectEndTime = effect.startTime + effect.duration;
+      const activeFrameStart = Math.max(frameStartTime, effect.startTime);
+      const activeFrameEnd = Math.min(currentTime, effectEndTime);
+      const activeFrameDelta = Math.max(0, activeFrameEnd - activeFrameStart);
+      const emissionDeltaTime = Math.min(activeFrameDelta, simulatedDeltaTime);
+      emitter.emissionAccumulator += config.emissionRate * emissionDeltaTime;
       while (
         emitter.emissionAccumulator >= 1 &&
         emitter.particles.length < config.particleCount
