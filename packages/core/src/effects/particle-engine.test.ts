@@ -68,6 +68,49 @@ describe("ParticleEngine effect updates", () => {
     engine.dispose();
   });
 
+  it("resets only the edited effect's particles when its configuration changes", () => {
+    const engine = new ParticleEngine();
+    const edited = makeEffect("edited-effect");
+    const untouched = makeEffect("untouched-effect");
+    edited.config.emissionRate = 1;
+    untouched.config.emissionRate = 1;
+    engine.addEffect(edited);
+    engine.addEffect(untouched);
+
+    engine.update(1, 1);
+    expect(engine.getParticles(edited.id)).toHaveLength(1);
+    expect(engine.getParticles(untouched.id)).toHaveLength(1);
+
+    engine.updateEffect(edited.id, { blendMode: "screen" });
+
+    expect(engine.getParticles(edited.id)).toHaveLength(0);
+    expect(engine.getParticles(untouched.id)).toHaveLength(1);
+
+    engine.update(1.1, 0.1);
+    expect(engine.getParticles(edited.id).every((particle) => particle.blendMode === "screen")).toBe(true);
+    engine.dispose();
+  });
+
+  it("resets only the edited effect's particles when its timing changes", () => {
+    const engine = new ParticleEngine();
+    const edited = makeEffect("retimed-effect");
+    const untouched = makeEffect("stable-effect");
+    edited.config.emissionRate = 1;
+    untouched.config.emissionRate = 1;
+    engine.addEffect(edited);
+    engine.addEffect(untouched);
+
+    engine.update(1, 1);
+    expect(engine.getParticles(edited.id)).toHaveLength(1);
+    expect(engine.getParticles(untouched.id)).toHaveLength(1);
+
+    engine.updateEffectTiming(edited.id, 3, 5);
+
+    expect(engine.getParticles(edited.id)).toHaveLength(0);
+    expect(engine.getParticles(untouched.id)).toHaveLength(1);
+    engine.dispose();
+  });
+
   it("updates timing and enabled state for an existing effect", () => {
     const engine = new ParticleEngine();
     const effect = makeEffect("timed-effect");
