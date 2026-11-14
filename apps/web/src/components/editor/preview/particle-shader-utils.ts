@@ -54,3 +54,31 @@ export const groupParticlesIntoBlendRuns = <
 
   return runs;
 };
+
+
+/**
+ * Applies predictable draw-call and particle budgets without reordering runs.
+ * A partially retained final run keeps only its leading particles.
+ */
+export const limitParticleBlendRuns = <T>(
+  runs: readonly ParticleBlendRun<T>[],
+  maxRuns: number,
+  maxParticles: number,
+): ParticleBlendRun<T>[] => {
+  const runLimit = Math.max(0, Math.floor(maxRuns));
+  let remaining = Math.max(0, Math.floor(maxParticles));
+  const limited: ParticleBlendRun<T>[] = [];
+
+  for (const run of runs) {
+    if (limited.length >= runLimit || remaining === 0) break;
+    const count = Math.min(run.particles.length, remaining);
+    if (count === 0) continue;
+    limited.push({
+      blendMode: run.blendMode,
+      particles: run.particles.slice(0, count),
+    });
+    remaining -= count;
+  }
+
+  return limited;
+};
