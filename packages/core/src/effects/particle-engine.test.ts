@@ -2,6 +2,13 @@ import { describe, expect, it } from "vitest";
 import { ParticleEngine } from "./particle-engine";
 import { DEFAULT_PARTICLE_CONFIG, type ParticleEffect } from "./particle-types";
 
+function advanceEngine(engine: ParticleEngine, currentTime: number, deltaTime: number, frames = 15): void {
+  const frameDelta = deltaTime / frames;
+  for (let frame = 0; frame < frames; frame++) {
+    engine.update(currentTime, frameDelta);
+  }
+}
+
 describe("ParticleEngine blend mode propagation", () => {
   it.each(["normal", "add", "multiply", "screen"] as const)(
     "preserves the %s blend mode on emitted particles",
@@ -26,7 +33,7 @@ describe("ParticleEngine blend mode propagation", () => {
       };
 
       engine.addEffect(effect);
-      engine.update(0, 1);
+      advanceEngine(engine, 0, 1);
 
       expect(engine.getParticles(effect.id)).toHaveLength(1);
       expect(engine.getParticles(effect.id)[0].blendMode).toBe(blendMode);
@@ -162,8 +169,8 @@ describe("ParticleEngine timeline behavior", () => {
     firstEngine.addEffect(effect);
     secondEngine.addEffect(effect);
 
-    firstEngine.update(1, 1);
-    secondEngine.update(1, 1);
+    advanceEngine(firstEngine, 1, 1);
+    advanceEngine(secondEngine, 1, 1);
 
     expect(firstEngine.getParticles(effect.id)).toEqual(
       secondEngine.getParticles(effect.id)
@@ -171,8 +178,8 @@ describe("ParticleEngine timeline behavior", () => {
 
     firstEngine.reset();
     secondEngine.reset();
-    firstEngine.update(1, 1);
-    secondEngine.update(1, 1);
+    advanceEngine(firstEngine, 1, 1);
+    advanceEngine(secondEngine, 1, 1);
 
     expect(firstEngine.getParticles(effect.id)).toEqual(
       secondEngine.getParticles(effect.id)
@@ -187,7 +194,7 @@ describe("ParticleEngine timeline behavior", () => {
     const effect = makeTimelineEffect();
     engine.addEffect(effect);
 
-    engine.update(2, 1);
+    advanceEngine(engine, 2, 1);
     expect(engine.getParticles(effect.id).length).toBeGreaterThan(0);
 
     engine.update(1, 0);
@@ -201,7 +208,7 @@ describe("ParticleEngine timeline behavior", () => {
     const effect = makeTimelineEffect();
     engine.addEffect(effect);
 
-    engine.update(2, 1);
+    advanceEngine(engine, 2, 1);
     expect(engine.getParticles(effect.id).length).toBeGreaterThan(0);
 
     engine.toggleEffect(effect.id, false);
@@ -219,7 +226,7 @@ describe("ParticleEngine timeline behavior", () => {
     effect.config.particleCount = 1;
     engine.addEffect(effect);
 
-    engine.update(1, 1);
+    advanceEngine(engine, 1, 1);
 
     expect(engine.getParticles(effect.id)).toHaveLength(1);
     expect(engine.getParticles(effect.id)[0].age).toBe(0);
@@ -235,11 +242,11 @@ describe("ParticleEngine timeline behavior", () => {
     effect.config.lifetime = { min: 0.1, max: 0.1 };
     engine.addEffect(effect);
 
-    engine.update(1, 1);
+    advanceEngine(engine, 1, 1);
     expect(engine.getParticles(effect.id)).toHaveLength(2);
 
     engine.updateEffect(effect.id, { emissionRate: 0.1 });
-    engine.update(2, 1);
+    advanceEngine(engine, 2, 1);
 
     expect(engine.getParticles(effect.id)).toHaveLength(0);
     engine.dispose();
@@ -250,7 +257,7 @@ describe("ParticleEngine timeline behavior", () => {
     const effect = makeTimelineEffect();
     engine.addEffect(effect);
 
-    engine.update(1, 1);
+    advanceEngine(engine, 1, 1);
     const particle = engine.getParticles(effect.id)[0];
     expect(particle).toBeDefined();
     const originalAge = particle.age;
@@ -285,7 +292,7 @@ describe("ParticleEngine fixed-step integration", () => {
     };
 
     engine.addEffect(effect);
-    engine.update(1, 1);
+    advanceEngine(engine, 1, 1);
     const particle = engine.getParticles(effect.id)[0];
     expect(particle).toBeDefined();
     expect(particle.age).toBe(0);
@@ -339,7 +346,7 @@ describe("ParticleEngine frame-rate consistency", () => {
         },
       };
       engine.addEffect(effect);
-      engine.update(0, 1);
+      advanceEngine(engine, 0, 1);
       engine.updateEffect(effect.id, { emissionRate: 0 });
       return engine;
     };
