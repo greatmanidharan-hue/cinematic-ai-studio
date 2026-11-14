@@ -186,10 +186,10 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       // Reuse Points/BufferGeometry objects between frames to avoid per-frame GPU allocations.
       while (runPoolRef.current.length < runs.length) {
         const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_RUN * 3), 3));
-        geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_RUN * 3), 3));
-        geometry.setAttribute("particleSize", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_RUN), 1));
-        geometry.setAttribute("alpha", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_RUN), 1));
+        geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_FRAME * 3), 3));
+        geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_FRAME * 3), 3));
+        geometry.setAttribute("particleSize", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_FRAME), 1));
+        geometry.setAttribute("alpha", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_FRAME), 1));
         const points = new THREE.Points(geometry, materialsRef.current.get(runs[runPoolRef.current.length].blendMode)!);
         points.frustumCulled = false;
         runPoolRef.current.push(points);
