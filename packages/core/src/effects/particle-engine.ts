@@ -7,7 +7,8 @@ import {
   DEFAULT_PARTICLE_CONFIG,
 } from "./particle-types";
 import { createSeededRandom } from "./particle-random";
-import { consumeFixedSteps } from "./particle-fixed-step";
+import { getBoundedSimulationWindow } from "./particle-simulation-window";
+import { scheduleParticleEmissions } from "./particle-emission-scheduler";
 
 function cloneParticleConfig(config: ParticleConfig): ParticleConfig {
   return {
@@ -318,9 +319,15 @@ export class ParticleEngine {
     }
     this.lastUpdateTime = currentTime;
     const safeDeltaTime = Number.isFinite(deltaTime) ? Math.max(0, deltaTime) : 0;
-    const fixedStepResult = consumeFixedSteps(safeDeltaTime, this.fixedStepAccumulator, this.fixedStep, this.maxFixedStepsPerUpdate);
-    this.fixedStepAccumulator = fixedStepResult.remainder;
-    const simulatedDeltaTime = fixedStepResult.steps * this.fixedStep;
+    const frameStartTime = currentTime - safeDeltaTime;
+    const simulationWindow = getBoundedSimulationWindow(
+      frameStartTime,
+      safeDeltaTime,
+      this.fixedStepAccumulator,
+      this.fixedStep,
+      this.maxFixedStepsPerUpdate,
+    );
+    this.fixedStepAccumulator = simulationWindow.remainder;
 
     for (const [effectId, emitter] of this.emitters) {
       const effect = this.effects.get(effectId);
@@ -354,7 +361,7 @@ export class ParticleEngine {
 
       // Integrate existing particles at a stable timestep; new emissions remain
       // at the end of the frame to preserve the established emission contract.
-      for (let stepIndex = 0; stepIndex < fixedStepResult.steps; stepIndex++) {
+      for (let stepIndex = 0; stepIndex < simulationWindow.steps; stepIndex++) {
         for (const particle of emitter.particles) {
           if (!particle.active) continue;
 
@@ -394,29 +401,30 @@ export class ParticleEngine {
 
       // Emit at the end of this simulation step so new particles do not
       // incorrectly receive the entire frame's movement and aging.
-      const frameStartTime = currentTime - safeDeltaTime;
       const effectEndTime = effect.startTime + effect.duration;
-      const activeFrameStart = Math.max(frameStartTime, effect.startTime);
-      const activeFrameEnd = Math.min(currentTime, effectEndTime);
-      const activeFrameDelta = Math.max(0, activeFrameEnd - activeFrameStart);
-      // Emission follows elapsed timeline time, even when the fixed-step
-      // simulation intentionally drops catch-up steps after a long frame.
-      const emissionDeltaTime = activeFrameDelta;
-      emitter.emissionAccumulator += config.emissionRate * emissionDeltaTime;
-      while (
-        emitter.emissionAccumulator >= 1 &&
-        emitter.particles.length < config.particleCount
-      ) {
+      const activeSimulationStart = Math.max(simulationWindow.startTime, effect.startTime);
+      const activeSimulationEnd = Math.min(simulationWindow.endTime, effectEndTime);
+      const schedule = scheduleParticleEmissions(
+        activeSimulationStart,
+        activeSimulationEnd,
+        config.emissionRate,
+        emitter.emissionAccumulator,
+        Math.max(0, config.particleCount - emitter.particles.length),
+      );
+      emitter.emissionAccumulator = schedule.remainder;
+
+      // This stage aligns emission counts with accepted simulation time and
+      // drops events inside catch-up time intentionally skipped by the
+      // bounded simulation window. Birth-time sub-step integration follows
+      // in the next deterministic-simulation step.
+      for (const _emissionTime of schedule.emissionTimes) {
         const random = this.randomGenerators.get(effectId) ?? createSeededRandom(effectId);
         this.randomGenerators.set(effectId, random);
         emitter.particles.push(this.createParticle(effect, center, random));
         this.particleCounters.set(effectId, (this.particleCounters.get(effectId) ?? 0) + 1);
-        emitter.emissionAccumulator -= 1;
       }
 
-      // Do not bank whole emissions while the emitter is at capacity.
-      // Keeping only the fractional remainder prevents a burst when slots
-      // become available again after existing particles expire.
+      // Never bank whole emissions while at capacity.
       if (emitter.particles.length >= config.particleCount) {
         emitter.emissionAccumulator %= 1;
       }
