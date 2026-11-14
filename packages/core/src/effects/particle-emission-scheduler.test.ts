@@ -68,6 +68,27 @@ describe("scheduleParticleEmissions", () => {
     expect(remainder).toBeCloseTo(whole.remainder, 11);
   });
 
+  it("keeps event timestamps stable across long high-frequency partitions", () => {
+    const whole = scheduleParticleEmissions(0, 10, 29.97, 0.37, 1000);
+    let remainder = 0.37;
+    const partitionedTimes: number[] = [];
+    const frameCount = 1200;
+
+    for (let frame = 1; frame <= frameCount; frame++) {
+      const start = ((frame - 1) / frameCount) * 10;
+      const end = (frame / frameCount) * 10;
+      const result = scheduleParticleEmissions(start, end, 29.97, remainder, 1000 - partitionedTimes.length);
+      partitionedTimes.push(...result.emissionTimes);
+      remainder = result.remainder;
+    }
+
+    expect(partitionedTimes).toHaveLength(whole.emissionTimes.length);
+    partitionedTimes.forEach((time, index) => {
+      expect(time).toBeCloseTo(whole.emissionTimes[index], 9);
+    });
+    expect(remainder).toBeCloseTo(whole.remainder, 9);
+  });
+
   it("keeps the fractional remainder when capacity is zero", () => {
     const result = scheduleParticleEmissions(0, 0.5, 3, 0.25, 0);
 
