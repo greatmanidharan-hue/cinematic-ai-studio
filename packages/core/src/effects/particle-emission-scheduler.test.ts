@@ -45,4 +45,34 @@ describe("scheduleParticleEmissions", () => {
     expect(result.emissionTimes).toHaveLength(3);
     expect(result.remainder).toBe(0);
   });
+  it("produces matching timestamps for 30 FPS and irregular frame partitions", () => {
+    const whole = scheduleParticleEmissions(0, 2, 17.5, 0.3, 100);
+    const partitions = [0.07, 0.19, 0.23, 0.41, 0.62, 0.48];
+    let cursor = 0;
+    let remainder = 0;
+    const times: number[] = [];
+
+    for (const delta of partitions) {
+      const result = scheduleParticleEmissions(cursor, cursor + delta, 17.5, remainder, 100 - times.length);
+      times.push(...result.emissionTimes);
+      remainder = result.remainder;
+      cursor += delta;
+    }
+
+    expect(cursor).toBeCloseTo(2, 12);
+    expect(times).toHaveLength(35);
+    expect(times).toHaveLength(whole.emissionTimes.length);
+    times.forEach((time, index) => {
+      expect(time).toBeCloseTo(whole.emissionTimes[index], 11);
+    });
+    expect(remainder).toBeCloseTo(whole.remainder, 11);
+  });
+
+  it("keeps the fractional remainder when capacity is zero", () => {
+    const result = scheduleParticleEmissions(0, 0.5, 3, 0.25, 0);
+
+    expect(result.emissionTimes).toHaveLength(0);
+    expect(result.remainder).toBeCloseTo(0.75, 12);
+  });
+
 });
