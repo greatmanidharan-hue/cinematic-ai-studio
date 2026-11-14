@@ -616,3 +616,65 @@ describe("ParticleEngine read isolation", () => {
     engine.dispose();
   });
 });
+
+
+describe("ParticleEngine incremental seek reconstruction", () => {
+  const makeEffect = (): ParticleEffect => ({
+    id: "incremental-seek",
+    clipId: "clip-seek",
+    type: "dissolve",
+    startTime: 0,
+    duration: 20,
+    enabled: true,
+    config: {
+      ...DEFAULT_PARTICLE_CONFIG,
+      particleCount: 100,
+      emissionRate: 24,
+      lifetime: { min: 20, max: 20 },
+      turbulence: 5,
+    },
+  });
+
+  it("reconstructs the same state as normal playback at a target time", () => {
+    const playback = new ParticleEngine();
+    const seek = new ParticleEngine();
+    const effect = makeEffect();
+    playback.addEffect(effect);
+    seek.addEffect(effect);
+
+    for (let frame = 1; frame <= 120; frame++) {
+      playback.update(frame / 60, 1 / 60);
+    }
+
+    seek.beginSeek(2);
+    let iterations = 0;
+    while (!seek.advanceSeek()) {
+      iterations++;
+      expect(iterations).toBeLessThan(100);
+    }
+
+    expect(seek.isSeeking()).toBe(false);
+    expect(seek.getParticles(effect.id)).toEqual(playback.getParticles(effect.id));
+    playback.dispose();
+    seek.dispose();
+  });
+
+  it("supports restarting an in-progress seek at a new target", () => {
+    const engine = new ParticleEngine();
+    engine.addEffect(makeEffect());
+
+    engine.beginSeek(8);
+    expect(engine.advanceSeek()).toBe(false);
+    engine.beginSeek(0.25);
+
+    let iterations = 0;
+    while (!engine.advanceSeek()) {
+      iterations++;
+      expect(iterations).toBeLessThan(10);
+    }
+
+    expect(engine.isSeeking()).toBe(false);
+    expect(engine.getParticles("incremental-seek")).toHaveLength(6);
+    engine.dispose();
+  });
+});
