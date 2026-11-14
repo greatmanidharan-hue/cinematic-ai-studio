@@ -706,10 +706,21 @@ describe("ParticleEngine effect time boundaries", () => {
 
   it("replays identical seeded particle state after rewinding to the timeline start", () => {
     const engine = new ParticleEngine();
-    const effect = makeTimelineEffect();
-    effect.config.emissionRate = 18;
-    effect.config.particleCount = 40;
-    effect.config.turbulence = 6;
+    const effect: ParticleEffect = {
+      id: "replay-seeded-state",
+      clipId: "clip-1",
+      type: "dissolve",
+      startTime: 0,
+      duration: 10,
+      enabled: true,
+      config: {
+        ...DEFAULT_PARTICLE_CONFIG,
+        particleCount: 40,
+        emissionRate: 18,
+        lifetime: { min: 20, max: 20 },
+        turbulence: 6,
+      },
+    };
     engine.addEffect(effect);
 
     for (let frame = 1; frame <= 60; frame++) {
