@@ -100,3 +100,10 @@ export const getParticleBufferCapacity = (
   while (capacity < needed) capacity = Math.min(maxCapacity, capacity * 2);
   return capacity;
 };
+
+
+/** Clamp point sizes to the range supported by the active WebGL device. */
+export const clampParticlePointSize = (size: number, maximum: number): number => {
+  if (!Number.isFinite(size) || !Number.isFinite(maximum) || maximum <= 0) return 0;
+  return Math.min(maximum, Math.max(0, size));
+};
