@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import fc from "fast-check";
 import {
   groupParticlesIntoBlendRuns,
   injectParticleShaderAttributes,
@@ -113,6 +114,35 @@ describe("limitParticleBlendRuns", () => {
     const limited = limitParticleBlendRuns(runs, 10, 2);
 
     expect(limited).toEqual([{ blendMode: "add", particles: [{ id: "a", blendMode: "add" }, { id: "b", blendMode: "add" }] }]);
+  });
+
+
+
+  it("never exceeds either budget or changes the retained particle prefix (property-based)", () => {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.record({
+            id: fc.nat(),
+            blendMode: fc.constantFrom("normal" as const, "add" as const, "multiply" as const, "screen" as const),
+          }),
+          { maxLength: 100 },
+        ),
+        fc.integer({ min: 0, max: 20 }),
+        fc.integer({ min: 0, max: 100 }),
+        (particles, maxRuns, maxParticles) => {
+          const runs = groupParticlesIntoBlendRuns(particles);
+          const limited = limitParticleBlendRuns(runs, maxRuns, maxParticles);
+          const retained = limited.flatMap((run) => run.particles);
+          const originalPrefix = particles.slice(0, retained.length);
+
+          expect(limited.length).toBeLessThanOrEqual(maxRuns);
+          expect(retained.length).toBeLessThanOrEqual(maxParticles);
+          expect(retained).toEqual(originalPrefix);
+        },
+      ),
+      { numRuns: 200 },
+    );
   });
 
   it("returns no runs for zero or negative budgets", () => {
