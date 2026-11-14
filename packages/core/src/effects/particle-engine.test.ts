@@ -72,8 +72,10 @@ describe("ParticleEngine effect updates", () => {
     const engine = new ParticleEngine();
     const edited = makeEffect("edited-effect");
     const untouched = makeEffect("untouched-effect");
-    edited.config.emissionRate = 1;
-    untouched.config.emissionRate = 1;
+    edited.config.emissionRate = 10;
+    untouched.config.emissionRate = 10;
+    edited.config.particleCount = 1;
+    untouched.config.particleCount = 1;
     engine.addEffect(edited);
     engine.addEffect(untouched);
 
@@ -95,8 +97,10 @@ describe("ParticleEngine effect updates", () => {
     const engine = new ParticleEngine();
     const edited = makeEffect("retimed-effect");
     const untouched = makeEffect("stable-effect");
-    edited.config.emissionRate = 1;
-    untouched.config.emissionRate = 1;
+    edited.config.emissionRate = 10;
+    untouched.config.emissionRate = 10;
+    edited.config.particleCount = 1;
+    untouched.config.particleCount = 1;
     engine.addEffect(edited);
     engine.addEffect(untouched);
 
