@@ -1,5 +1,6 @@
 import React, { useRef, useEffect, useCallback, useMemo } from "react";
 import * as THREE from "three";
+import { getParticleFrameDelta } from "./particle-time-utils";
 import { getParticleBufferCapacity, groupParticlesIntoBlendRuns, injectParticleShaderAttributes, limitParticleBlendRuns } from "./particle-shader-utils";
 import {
   getParticleEngine,
@@ -40,9 +41,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   const runPoolRef = useRef<THREE.Points[]>([]);
   const animationFrameRef = useRef<number | null>(null);
   const currentTimeRef = useRef<number>(currentTime);
-  const lastFrameTimeRef = useRef<number>(performance.now());
-  const playStartTimeRef = useRef<number>(0);
-  const playStartPlayheadRef = useRef<number>(0);
+  const lastSimulationTimeRef = useRef<number>(currentTime);
   const lastPausedTimeRef = useRef<number | null>(null);
   const isPlayingRef = useRef<boolean>(isPlaying);
   const [isReady, setIsReady] = React.useState(false);
@@ -319,13 +318,8 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     const handleVisibilityChange = () => {
       if (document.visibilityState !== "visible" || !isPlayingRef.current) return;
 
-      // Re-anchor the preview clock after background throttling. The editor's
-      // latest playhead is authoritative; hidden time must not become one huge
-      // simulation delta when requestAnimationFrame resumes.
-      const now = performance.now();
-      playStartTimeRef.current = now;
-      playStartPlayheadRef.current = currentTimeRef.current;
-      lastFrameTimeRef.current = now;
+      // Skip elapsed hidden-tab time; the editor timeline remains authoritative.
+      lastSimulationTimeRef.current = currentTimeRef.current;
     };
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
@@ -336,28 +330,25 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     if (!isReady) return;
 
     if (isPlaying) {
-      playStartTimeRef.current = performance.now();
-      playStartPlayheadRef.current = currentTimeRef.current;
-      lastFrameTimeRef.current = performance.now();
+      lastSimulationTimeRef.current = currentTimeRef.current;
 
       const animate = () => {
         if (!isPlayingRef.current) return;
 
         const now = performance.now();
         if (document.visibilityState !== "visible") {
-          lastFrameTimeRef.current = now;
+          lastSimulationTimeRef.current = currentTimeRef.current;
           animationFrameRef.current = requestAnimationFrame(animate);
           return;
         }
 
-        const deltaMs = now - lastFrameTimeRef.current;
-        lastFrameTimeRef.current = now;
-        const deltaTime = deltaMs / 1000;
+        // Use the editor's master timeline so 0.5x/2x playback and seeks stay
+        // synchronized with video, audio, and the timeline playhead.
+        const timelineTime = currentTimeRef.current;
+        const deltaTime = getParticleFrameDelta(timelineTime, lastSimulationTimeRef.current);
+        lastSimulationTimeRef.current = timelineTime;
 
-        const elapsedSinceStart = (now - playStartTimeRef.current) / 1000;
-        const estimatedCurrentTime = playStartPlayheadRef.current + elapsedSinceStart;
-
-        engine.update(estimatedCurrentTime, deltaTime);
+        engine.update(timelineTime, deltaTime);
         const particles = engine.getParticles();
         updateParticles(particles);
         render();
