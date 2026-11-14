@@ -263,3 +263,55 @@ describe("ParticleEngine timeline behavior", () => {
     engine.dispose();
   });
 });
+
+
+describe("ParticleEngine fixed-step integration", () => {
+  it("bounds particle aging to the configured catch-up steps", () => {
+    const engine = new ParticleEngine();
+    const effect: ParticleEffect = {
+      id: "fixed-step-effect",
+      clipId: "clip-1",
+      type: "dissolve",
+      startTime: 0,
+      duration: 10,
+      enabled: true,
+      config: {
+        ...DEFAULT_PARTICLE_CONFIG,
+        particleCount: 1,
+        emissionRate: 1,
+        lifetime: { min: 10, max: 10 },
+        turbulence: 0,
+      },
+    };
+
+    engine.addEffect(effect);
+    engine.update(1, 1);
+    const particle = engine.getParticles(effect.id)[0];
+    expect(particle).toBeDefined();
+    expect(particle.age).toBe(0);
+
+    engine.update(1.1, 0.1);
+    expect(particle.age).toBeCloseTo(8 / 120);
+    engine.dispose();
+  });
+
+  it("clears the fixed-step remainder on timeline rewind", () => {
+    const engine = new ParticleEngine();
+    const effect: ParticleEffect = {
+      id: "fixed-step-rewind",
+      clipId: "clip-1",
+      type: "dissolve",
+      startTime: 0,
+      duration: 10,
+      enabled: true,
+      config: { ...DEFAULT_PARTICLE_CONFIG, emissionRate: 0, turbulence: 0 },
+    };
+
+    engine.addEffect(effect);
+    engine.update(2, 0.005);
+    engine.update(1, 0);
+    engine.update(1.005, 0.005);
+    expect(engine.getParticles(effect.id)).toHaveLength(0);
+    engine.dispose();
+  });
+});
