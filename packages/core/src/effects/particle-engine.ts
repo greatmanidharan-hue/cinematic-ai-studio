@@ -328,7 +328,7 @@ export class ParticleEngine {
         particle.velocity.z += (particle.acceleration.z + config.wind.z) * safeDeltaTime;
 
         if (config.turbulence > 0) {
-          const random = this.randomGenerators.get(effectId) ?? createSeededRandom(effectId);
+              const random = this.randomGenerators.get(effectId) ?? createSeededRandom(effectId);
           this.randomGenerators.set(effectId, random);
           particle.velocity.x += randomRange(-config.turbulence, config.turbulence, random) * safeDeltaTime;
           particle.velocity.y += randomRange(-config.turbulence, config.turbulence, random) * safeDeltaTime;
