@@ -79,7 +79,7 @@ describe("ParticleEngine effect updates", () => {
     engine.addEffect(edited);
     engine.addEffect(untouched);
 
-    engine.update(1, 1);
+    advanceEngine(engine, 1, 1);
     expect(engine.getParticles(edited.id)).toHaveLength(1);
     expect(engine.getParticles(untouched.id)).toHaveLength(1);
 
@@ -104,7 +104,7 @@ describe("ParticleEngine effect updates", () => {
     engine.addEffect(edited);
     engine.addEffect(untouched);
 
-    engine.update(1, 1);
+    advanceEngine(engine, 1, 1);
     expect(engine.getParticles(edited.id)).toHaveLength(1);
     expect(engine.getParticles(untouched.id)).toHaveLength(1);
 
@@ -316,6 +316,35 @@ describe("ParticleEngine timeline behavior", () => {
     engine.update(1, -1);
     expect(particle.age).toBe(originalAge);
 
+    engine.dispose();
+  });
+});
+
+
+describe("ParticleEngine bounded emission time", () => {
+  it("does not emit particles for timeline time dropped by the catch-up budget", () => {
+    const engine = new ParticleEngine();
+    const effect: ParticleEffect = {
+      id: "bounded-emission-window",
+      clipId: "clip-1",
+      type: "dissolve",
+      startTime: 0,
+      duration: 10,
+      enabled: true,
+      config: {
+        ...DEFAULT_PARTICLE_CONFIG,
+        particleCount: 100,
+        emissionRate: 120,
+        lifetime: { min: 10, max: 10 },
+        turbulence: 0,
+      },
+    };
+
+    engine.addEffect(effect);
+    engine.update(1, 1);
+
+    // The engine simulates only the newest eight 1/120-second steps.
+    expect(engine.getParticles(effect.id)).toHaveLength(8);
     engine.dispose();
   });
 });
@@ -552,10 +581,10 @@ describe("ParticleEngine effect time boundaries", () => {
     };
 
     engine.addEffect(effect);
-    engine.update(0.5, 0.5);
+    advanceEngine(engine, 0.5, 0.5);
     expect(engine.getParticles(effect.id)).toHaveLength(0);
 
-    engine.update(0.6, 0.1);
+    advanceEngine(engine, 0.6, 0.1);
     expect(engine.getParticles(effect.id)).toHaveLength(1);
     engine.dispose();
   });
