@@ -35,12 +35,14 @@ export function scheduleParticleEmissions(
   const initialProgress = Math.min(1 - Number.EPSILON, Math.max(0, accumulator % 1));
   const totalProgress = initialProgress + emissionRate * duration;
   const dueCount = Math.floor(totalProgress + Number.EPSILON * Math.max(1, totalProgress));
-  const remainder = Math.max(0, totalProgress - dueCount);
+  // Floating-point tolerance may round a value just below an integer up.
+  // Keep the carried progress in the valid fractional range in that case.
+  const remainder = Math.min(1 - Number.EPSILON, Math.max(0, totalProgress - dueCount));
   const emitCount = Math.min(dueCount, Math.max(0, Math.floor(availableCapacity)));
   const firstOffset = (1 - initialProgress) / emissionRate;
   const emissionTimes = Array.from(
     { length: emitCount },
-    (_, index) => startTime + firstOffset + index / emissionRate,
+    (_, index) => Math.min(endTime, startTime + firstOffset + index / emissionRate),
   );
 
   return { emissionTimes, remainder };
