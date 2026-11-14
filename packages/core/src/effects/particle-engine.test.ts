@@ -132,3 +132,70 @@ describe("ParticleEngine configuration ownership", () => {
     engine.dispose();
   });
 });
+
+
+describe("ParticleEngine timeline behavior", () => {
+  const makeTimelineEffect = (): ParticleEffect => ({
+    id: "timeline-effect",
+    clipId: "clip-1",
+    type: "dissolve",
+    startTime: 0,
+    duration: 10,
+    enabled: true,
+    config: {
+      ...DEFAULT_PARTICLE_CONFIG,
+      particleCount: 10,
+      emissionRate: 2,
+      lifetime: { min: 20, max: 20 },
+      turbulence: 0,
+    },
+  });
+
+  it("clears simulated future particles when the playhead moves backwards", () => {
+    const engine = new ParticleEngine();
+    const effect = makeTimelineEffect();
+    engine.addEffect(effect);
+
+    engine.update(2, 1);
+    expect(engine.getParticles(effect.id).length).toBeGreaterThan(0);
+
+    engine.update(1, 0);
+    expect(engine.getParticles(effect.id)).toHaveLength(0);
+
+    engine.dispose();
+  });
+
+  it("clears particles and emission remainder when an effect is disabled", () => {
+    const engine = new ParticleEngine();
+    const effect = makeTimelineEffect();
+    engine.addEffect(effect);
+
+    engine.update(2, 1);
+    expect(engine.getParticles(effect.id).length).toBeGreaterThan(0);
+
+    engine.toggleEffect(effect.id, false);
+    engine.update(2, 0);
+
+    expect(engine.getParticles(effect.id)).toHaveLength(0);
+    expect(engine.getActiveEffectIds()).not.toContain(effect.id);
+    engine.dispose();
+  });
+
+  it("does not advance particle age for negative or non-finite frame deltas", () => {
+    const engine = new ParticleEngine();
+    const effect = makeTimelineEffect();
+    engine.addEffect(effect);
+
+    engine.update(1, 1);
+    const particle = engine.getParticles(effect.id)[0];
+    expect(particle).toBeDefined();
+    const originalAge = particle.age;
+
+    engine.update(1, Number.NaN);
+    expect(particle.age).toBe(originalAge);
+    engine.update(1, -1);
+    expect(particle.age).toBe(originalAge);
+
+    engine.dispose();
+  });
+});
