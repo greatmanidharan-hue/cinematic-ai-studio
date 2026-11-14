@@ -122,7 +122,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         size: 12, vertexColors: true, transparent: true, opacity: 1, blending,
         ...(blendMode === "screen" ? {
           blendEquation: THREE.AddEquation,
-          blendSrc: THREE.OneFactor,
+          blendSrc: THREE.SrcAlphaFactor,
           blendDst: THREE.OneMinusSrcColorFactor,
           blendEquationAlpha: THREE.AddEquation,
           blendSrcAlpha: THREE.OneFactor,
@@ -130,6 +130,18 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         } : {}),
         depthWrite: false, sizeAttenuation: false,
       });
+
+      // PointsMaterial has no built-in per-vertex alpha attribute. Inject one so
+      // particle opacity participates in the blend equation instead of only
+      // darkening RGB while leaving the fragment fully opaque.
+      material.onBeforeCompile = (shader) => {
+        shader.vertexShader = shader.vertexShader
+          .replace("#include <common>", "#include <common>\nattribute float alpha;\nvarying float vParticleAlpha;")
+          .replace("#include <color_vertex>", "#include <color_vertex>\nvParticleAlpha = alpha;");
+        shader.fragmentShader = shader.fragmentShader
+          .replace("#include <common>", "#include <common>\nvarying float vParticleAlpha;")
+          .replace("#include <color_fragment>", "#include <color_fragment>\ndiffuseColor.a *= vParticleAlpha;");
+      };
       materials.set(blendMode, material);
       scene.add(new THREE.Points(geometry, material));
     }
@@ -194,18 +206,21 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
           positions[i3 + 1] = height - particle.position.y;
           positions[i3 + 2] = particle.position.z;
           const rgb = hexToRgbNormalized(particle.color);
-          colors[i3] = rgb.r * particle.opacity;
-          colors[i3 + 1] = rgb.g * particle.opacity;
-          colors[i3 + 2] = rgb.b * particle.opacity;
+          colors[i3] = rgb.r;
+          colors[i3 + 1] = rgb.g;
+          colors[i3 + 2] = rgb.b;
+          (geometry.attributes.alpha.array as Float32Array)[i] = Math.max(0, Math.min(1, particle.opacity));
           sizes[i] = particle.size;
         }
         for (let i = count; i < 10000; i++) {
           const i3 = i * 3;
           positions[i3] = 0; positions[i3 + 1] = 0; positions[i3 + 2] = -1000;
+          (geometry.attributes.alpha.array as Float32Array)[i] = 0;
           sizes[i] = 0;
         }
         geometry.attributes.position.needsUpdate = true;
         geometry.attributes.color.needsUpdate = true;
+        geometry.attributes.alpha.needsUpdate = true;
         geometry.attributes.size.needsUpdate = true;
         geometry.setDrawRange(0, count);
       }
