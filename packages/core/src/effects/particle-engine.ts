@@ -7,6 +7,7 @@ import {
   DEFAULT_PARTICLE_CONFIG,
 } from "./particle-types";
 import { createSeededRandom } from "./particle-random";
+import { consumeFixedSteps } from "./particle-fixed-step";
 
 function cloneParticleConfig(config: ParticleConfig): ParticleConfig {
   return {
@@ -166,6 +167,9 @@ export class ParticleEngine {
   private changeListeners: Set<() => void> = new Set();
   private changeVersion: number = 0;
   private lastUpdateTime: number | null = null;
+  private fixedStepAccumulator = 0;
+  private readonly fixedStep = 1 / 120;
+  private readonly maxFixedStepsPerUpdate = 8;
   private randomGenerators = new Map<string, RandomSource>();
   private particleCounters = new Map<string, number>();
 
@@ -289,6 +293,8 @@ export class ParticleEngine {
     }
     this.lastUpdateTime = currentTime;
     const safeDeltaTime = Number.isFinite(deltaTime) ? Math.max(0, deltaTime) : 0;
+    const fixedStepResult = consumeFixedSteps(safeDeltaTime, this.fixedStepAccumulator, this.fixedStep, this.maxFixedStepsPerUpdate);
+    this.fixedStepAccumulator = fixedStepResult.remainder;
 
     for (const [effectId, emitter] of this.emitters) {
       const effect = this.effects.get(effectId);
@@ -320,40 +326,41 @@ export class ParticleEngine {
       };
 
 
-      for (const particle of emitter.particles) {
-        if (!particle.active) continue;
+      // Integrate existing particles at a stable timestep; new emissions remain
+      // at the end of the frame to preserve the established emission contract.
+      for (let stepIndex = 0; stepIndex < fixedStepResult.steps; stepIndex++) {
+        for (const particle of emitter.particles) {
+          if (!particle.active) continue;
 
-        particle.velocity.x += (particle.acceleration.x + config.wind.x) * safeDeltaTime;
-        particle.velocity.y += (particle.acceleration.y + config.wind.y) * safeDeltaTime;
-        particle.velocity.z += (particle.acceleration.z + config.wind.z) * safeDeltaTime;
+          particle.velocity.x += (particle.acceleration.x + config.wind.x) * this.fixedStep;
+          particle.velocity.y += (particle.acceleration.y + config.wind.y) * this.fixedStep;
+          particle.velocity.z += (particle.acceleration.z + config.wind.z) * this.fixedStep;
 
-        if (config.turbulence > 0) {
-              const random = this.randomGenerators.get(effectId) ?? createSeededRandom(effectId);
-          this.randomGenerators.set(effectId, random);
-          particle.velocity.x += randomRange(-config.turbulence, config.turbulence, random) * safeDeltaTime;
-          particle.velocity.y += randomRange(-config.turbulence, config.turbulence, random) * safeDeltaTime;
-        }
+          if (config.turbulence > 0) {
+            const random = this.randomGenerators.get(effectId) ?? createSeededRandom(effectId);
+            this.randomGenerators.set(effectId, random);
+            particle.velocity.x += randomRange(-config.turbulence, config.turbulence, random) * this.fixedStep;
+            particle.velocity.y += randomRange(-config.turbulence, config.turbulence, random) * this.fixedStep;
+          }
 
-        particle.position.x += particle.velocity.x * safeDeltaTime;
-        particle.position.y += particle.velocity.y * safeDeltaTime;
-        particle.position.z += particle.velocity.z * safeDeltaTime;
+          particle.position.x += particle.velocity.x * this.fixedStep;
+          particle.position.y += particle.velocity.y * this.fixedStep;
+          particle.position.z += particle.velocity.z * this.fixedStep;
+          particle.rotation += particle.rotationSpeed * this.fixedStep;
+          particle.age += this.fixedStep;
 
-        particle.rotation += particle.rotationSpeed * safeDeltaTime;
-        particle.age += safeDeltaTime;
+          const lifeProgress = particle.age / particle.lifetime;
+          if (lifeProgress < config.fadeIn) {
+            particle.opacity = config.opacity.start * (lifeProgress / config.fadeIn);
+          } else if (lifeProgress > 1 - config.fadeOut) {
+            const fadeProgress = (1 - lifeProgress) / config.fadeOut;
+            particle.opacity = config.opacity.end + (config.opacity.start - config.opacity.end) * fadeProgress;
+          } else {
+            const midProgress = (lifeProgress - config.fadeIn) / (1 - config.fadeIn - config.fadeOut);
+            particle.opacity = config.opacity.start + (config.opacity.end - config.opacity.start) * midProgress;
+          }
 
-        const lifeProgress = particle.age / particle.lifetime;
-        if (lifeProgress < config.fadeIn) {
-          particle.opacity = config.opacity.start * (lifeProgress / config.fadeIn);
-        } else if (lifeProgress > 1 - config.fadeOut) {
-          const fadeProgress = (1 - lifeProgress) / config.fadeOut;
-          particle.opacity = config.opacity.end + (config.opacity.start - config.opacity.end) * fadeProgress;
-        } else {
-          const midProgress = (lifeProgress - config.fadeIn) / (1 - config.fadeIn - config.fadeOut);
-          particle.opacity = config.opacity.start + (config.opacity.end - config.opacity.start) * midProgress;
-        }
-
-        if (particle.age >= particle.lifetime) {
-          particle.active = false;
+          if (particle.age >= particle.lifetime) particle.active = false;
         }
       }
 
@@ -410,6 +417,7 @@ export class ParticleEngine {
 
   reset(): void {
     this.lastUpdateTime = null;
+    this.fixedStepAccumulator = 0;
     for (const [effectId, emitter] of this.emitters) {
       this.randomGenerators.set(effectId, createSeededRandom(effectId));
       this.particleCounters.set(effectId, 0);
