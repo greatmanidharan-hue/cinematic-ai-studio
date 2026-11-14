@@ -25,7 +25,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
-  const geometryRef = useRef<THREE.BufferGeometry | null>(null);
+  const geometryRefs = useRef<Record<Particle["blendMode"], THREE.BufferGeometry | null>>({ normal: null, add: null, multiply: null, screen: null });
   const animationFrameRef = useRef<number | null>(null);
   const currentTimeRef = useRef<number>(currentTime);
   const lastFrameTimeRef = useRef<number>(performance.now());
@@ -104,37 +104,45 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(10000 * 3);
-    const colors = new Float32Array(10000 * 3);
-    const sizes = new Float32Array(10000);
-    const alphas = new Float32Array(10000);
+    const blendModes: Particle["blendMode"][] = ["normal", "add", "multiply", "screen"];
+    const materials = new Map<Particle["blendMode"], THREE.PointsMaterial>();
 
-    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    geometry.setAttribute("size", new THREE.BufferAttribute(sizes, 1));
-    geometry.setAttribute("alpha", new THREE.BufferAttribute(alphas, 1));
-    geometryRef.current = geometry;
+    for (const blendMode of blendModes) {
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(10000 * 3), 3));
+      geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(10000 * 3), 3));
+      geometry.setAttribute("size", new THREE.BufferAttribute(new Float32Array(10000), 1));
+      geometry.setAttribute("alpha", new THREE.BufferAttribute(new Float32Array(10000), 1));
+      geometryRefs.current[blendMode] = geometry;
 
-    const material = new THREE.PointsMaterial({
-      size: 12,
-      vertexColors: true,
-      transparent: true,
-      opacity: 1,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      sizeAttenuation: false,
-    });
-
-    const points = new THREE.Points(geometry, material);
-    scene.add(points);
+      const blending = blendMode === "normal" ? THREE.NormalBlending
+        : blendMode === "multiply" ? THREE.MultiplyBlending
+        : blendMode === "screen" ? THREE.CustomBlending : THREE.AdditiveBlending;
+      const material = new THREE.PointsMaterial({
+        size: 12, vertexColors: true, transparent: true, opacity: 1, blending,
+        ...(blendMode === "screen" ? {
+          blendEquation: THREE.AddEquation,
+          blendSrc: THREE.OneFactor,
+          blendDst: THREE.OneMinusSrcColorFactor,
+          blendEquationAlpha: THREE.AddEquation,
+          blendSrcAlpha: THREE.OneFactor,
+          blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+        } : {}),
+        depthWrite: false, sizeAttenuation: false,
+      });
+      materials.set(blendMode, material);
+      scene.add(new THREE.Points(geometry, material));
+    }
 
     setIsReady(true);
 
     return () => {
       setIsReady(false);
-      geometry.dispose();
-      material.dispose();
+      for (const blendMode of ["normal", "add", "multiply", "screen"] as const) {
+        geometryRefs.current[blendMode]?.dispose();
+        geometryRefs.current[blendMode] = null;
+        materials.get(blendMode)?.dispose();
+      }
       renderer.dispose();
       if (containerRef.current && renderer.domElement) {
         containerRef.current.removeChild(renderer.domElement);
@@ -167,42 +175,40 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
 
   const updateParticles = useCallback(
     (particles: Particle[]) => {
-      if (!geometryRef.current) return;
+      const blendModes: Particle["blendMode"][] = ["normal", "add", "multiply", "screen"];
+      const grouped = new Map<Particle["blendMode"], Particle[]>(blendModes.map(mode => [mode, []]));
+      for (const particle of particles) grouped.get(particle.blendMode)?.push(particle);
 
-      const positions = geometryRef.current.attributes.position.array as Float32Array;
-      const colors = geometryRef.current.attributes.color.array as Float32Array;
-      const sizes = geometryRef.current.attributes.size.array as Float32Array;
+      for (const blendMode of blendModes) {
+        const geometry = geometryRefs.current[blendMode];
+        if (!geometry) continue;
+        const positions = geometry.attributes.position.array as Float32Array;
+        const colors = geometry.attributes.color.array as Float32Array;
+        const sizes = geometry.attributes.size.array as Float32Array;
+        const batch = grouped.get(blendMode) ?? [];
+        const count = Math.min(batch.length, 10000);
 
-      const count = Math.min(particles.length, 10000);
-
-      for (let i = 0; i < count; i++) {
-        const particle = particles[i];
-        const i3 = i * 3;
-
-        positions[i3] = particle.position.x;
-        positions[i3 + 1] = height - particle.position.y;
-        positions[i3 + 2] = particle.position.z;
-
-        const rgb = hexToRgbNormalized(particle.color);
-        colors[i3] = rgb.r * particle.opacity;
-        colors[i3 + 1] = rgb.g * particle.opacity;
-        colors[i3 + 2] = rgb.b * particle.opacity;
-
-        sizes[i] = particle.size;
+        for (let i = 0; i < count; i++) {
+          const particle = batch[i], i3 = i * 3;
+          positions[i3] = particle.position.x;
+          positions[i3 + 1] = height - particle.position.y;
+          positions[i3 + 2] = particle.position.z;
+          const rgb = hexToRgbNormalized(particle.color);
+          colors[i3] = rgb.r * particle.opacity;
+          colors[i3 + 1] = rgb.g * particle.opacity;
+          colors[i3 + 2] = rgb.b * particle.opacity;
+          sizes[i] = particle.size;
+        }
+        for (let i = count; i < 10000; i++) {
+          const i3 = i * 3;
+          positions[i3] = 0; positions[i3 + 1] = 0; positions[i3 + 2] = -1000;
+          sizes[i] = 0;
+        }
+        geometry.attributes.position.needsUpdate = true;
+        geometry.attributes.color.needsUpdate = true;
+        geometry.attributes.size.needsUpdate = true;
+        geometry.setDrawRange(0, count);
       }
-
-      for (let i = count; i < 10000; i++) {
-        const i3 = i * 3;
-        positions[i3] = 0;
-        positions[i3 + 1] = 0;
-        positions[i3 + 2] = -1000;
-        sizes[i] = 0;
-      }
-
-      geometryRef.current.attributes.position.needsUpdate = true;
-      geometryRef.current.attributes.color.needsUpdate = true;
-      geometryRef.current.attributes.size.needsUpdate = true;
-      geometryRef.current.setDrawRange(0, count);
     },
     [hexToRgbNormalized, height]
   );
