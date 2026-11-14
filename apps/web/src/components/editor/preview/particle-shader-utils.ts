@@ -10,10 +10,7 @@ export const injectParticleShaderAttributes = (shader: ParticleShaderSource): vo
       "#include <common>",
       "#include <common>\nattribute float alpha;\nattribute float particleSize;\nvarying float vParticleAlpha;"
     )
-    .replace(
-      "#include <project_vertex>",
-      "#include <project_vertex>\ngl_PointSize = particleSize;"
-    )
+    .replace("gl_PointSize = size;", "gl_PointSize = particleSize;")
     .replace(
       "#include <color_vertex>",
       "#include <color_vertex>\nvParticleAlpha = alpha;"
