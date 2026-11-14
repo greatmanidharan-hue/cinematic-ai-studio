@@ -4,8 +4,10 @@ import { DEFAULT_PARTICLE_CONFIG, type ParticleEffect } from "./particle-types";
 
 function advanceEngine(engine: ParticleEngine, currentTime: number, deltaTime: number, frames = 15): void {
   const frameDelta = deltaTime / frames;
+  const startTime = currentTime - deltaTime;
   for (let frame = 0; frame < frames; frame++) {
-    engine.update(currentTime, frameDelta);
+    const frameTime = startTime + frameDelta * (frame + 1);
+    engine.update(frameTime, frameDelta);
   }
 }
 
