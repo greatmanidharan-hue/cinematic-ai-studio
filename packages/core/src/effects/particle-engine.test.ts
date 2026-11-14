@@ -351,6 +351,35 @@ describe("ParticleEngine bounded emission time", () => {
     engine.dispose();
   });
 
+  it("ages newly emitted particles only after their scheduled birth timestamps", () => {
+    const engine = new ParticleEngine();
+    const effect: ParticleEffect = {
+      id: "particle-birth-age",
+      clipId: "clip-1",
+      type: "dissolve",
+      startTime: 0,
+      duration: 5,
+      enabled: true,
+      config: {
+        ...DEFAULT_PARTICLE_CONFIG,
+        particleCount: 10,
+        emissionRate: 4,
+        lifetime: { min: 5, max: 5 },
+        turbulence: 0,
+      },
+    };
+
+    engine.addEffect(effect);
+    advanceEngine(engine, 1, 1);
+
+    const particles = engine.getParticles(effect.id);
+    expect(particles).toHaveLength(4);
+    particles.forEach((particle) => {
+      expect(particle.age).toBeCloseTo(1 - particle.birthTime, 8);
+    });
+    engine.dispose();
+  });
+
   it("does not emit particles for timeline time dropped by the catch-up budget", () => {
     const engine = new ParticleEngine();
     const effect: ParticleEffect = {
