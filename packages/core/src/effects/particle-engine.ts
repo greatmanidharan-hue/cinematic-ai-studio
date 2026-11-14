@@ -19,7 +19,7 @@ function cloneParticleConfig(config: ParticleConfig): ParticleConfig {
 }
 
 function generateId(): string {
-  return Math.random().toString(36).substring(2, 11);
+  return random().toString(36).substring(2, 11);
 }
 
 function randomRange(min: number, max: number): number {
@@ -68,7 +68,7 @@ function getEmissionPosition(config: ParticleConfig, center: Vector3): Vector3 {
     }
     case "rectangle": {
       return {
-        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius),
+        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius, random),
         y: center.y + randomRange(-config.emissionRadius, config.emissionRadius),
         z: center.z,
       };
@@ -92,7 +92,7 @@ function getInitialVelocity(
   center: Vector3,
   position: Vector3
 ): Vector3 {
-  const speed = config.speed + randomRange(-config.speedVariance, config.speedVariance);
+  const speed = config.speed + randomRange(-config.speedVariance, config.speedVariance, random);
 
   switch (effectType) {
     case "explode": {
@@ -100,9 +100,9 @@ function getInitialVelocity(
       const dy = position.y - center.y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
       return {
-        x: (dx / dist) * speed + randomRange(-20, 20),
+        x: (dx / dist) * speed + randomRange(-20, 20, random),
         y: (dy / dist) * speed + randomRange(-20, 20),
-        z: randomRange(-speed * 0.5, speed * 0.5),
+        z: randomRange(-speed * 0.5, speed * 0.5, random),
       };
     }
     case "implode": {
@@ -117,9 +117,9 @@ function getInitialVelocity(
     }
     case "confetti": {
       return {
-        x: randomRange(-speed, speed),
-        y: -Math.abs(speed) * randomRange(0.5, 1.5),
-        z: randomRange(-speed * 0.3, speed * 0.3),
+        x: randomRange(-speed, speed, random),
+        y: -Math.abs(speed) * randomRange(0.5, 1.5, random),
+        z: randomRange(-speed * 0.3, speed * 0.3, random),
       };
     }
     case "dust":
@@ -128,14 +128,14 @@ function getInitialVelocity(
       return {
         x: Math.cos(angle) * speed * 0.3,
         y: Math.sin(angle) * speed * 0.3 - speed * 0.2,
-        z: randomRange(-10, 10),
+        z: randomRange(-10, 10, random),
       };
     }
     case "disintegrate": {
       return {
         x: randomRange(-speed * 0.5, speed * 0.5),
         y: -speed * randomRange(0.3, 0.8),
-        z: randomRange(-speed * 0.2, speed * 0.2),
+        z: randomRange(-speed * 0.2, speed * 0.2, random),
       };
     }
     case "shatter": {
