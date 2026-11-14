@@ -1,7 +1,7 @@
 import React, { useRef, useEffect, useCallback, useMemo } from "react";
 import * as THREE from "three";
 import { getParticleFrameDelta } from "./particle-time-utils";
-import { getParticleBufferCapacity, groupParticlesIntoBlendRuns, injectParticleShaderAttributes, limitParticleBlendRuns } from "./particle-shader-utils";
+import { clampParticlePointSize, getParticleBufferCapacity, groupParticlesIntoBlendRuns, injectParticleShaderAttributes, limitParticleBlendRuns } from "./particle-shader-utils";
 import {
   getParticleEngine,
   type Particle,
@@ -44,6 +44,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   const lastSimulationTimeRef = useRef<number>(currentTime);
   const lastPausedTimeRef = useRef<number | null>(null);
   const isPlayingRef = useRef<boolean>(isPlaying);
+  const maxPointSizeRef = useRef<number>(64);
   const [isReady, setIsReady] = React.useState(false);
 
   const engine = useMemo(() => getParticleEngine(), []);
@@ -135,6 +136,11 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       console.warn("Particle preview WebGL renderer is unavailable.", error);
       return;
     }
+    const gl = renderer.getContext();
+    const pointSizeRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE) as Float32Array;
+    maxPointSizeRef.current = Number.isFinite(pointSizeRange?.[1]) && pointSizeRange[1] > 0
+      ? pointSizeRange[1]
+      : 64;
     renderer.setSize(width, height, false);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x000000, 0);
@@ -294,7 +300,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
           colors[i3 + 1] = rgb.g;
           colors[i3 + 2] = rgb.b;
           alphas[i] = Math.max(0, Math.min(1, particle.opacity));
-          particleSizes[i] = Math.max(0, particle.size);
+          particleSizes[i] = clampParticlePointSize(particle.size, maxPointSizeRef.current);
         }
 
         const attributes = [
