@@ -181,6 +181,20 @@ describe("ParticleEngine timeline behavior", () => {
     engine.dispose();
   });
 
+  it("does not age particles during the frame in which they are emitted", () => {
+    const engine = new ParticleEngine();
+    const effect = makeTimelineEffect();
+    engine.updateEffect(effect.id, { emissionRate: 1, particleCount: 1 });
+    engine.addEffect(effect);
+
+    engine.update(1, 1);
+
+    expect(engine.getParticles(effect.id)).toHaveLength(1);
+    expect(engine.getParticles(effect.id)[0].age).toBe(0);
+
+    engine.dispose();
+  });
+
   it("does not advance particle age for negative or non-finite frame deltas", () => {
     const engine = new ParticleEngine();
     const effect = makeTimelineEffect();
