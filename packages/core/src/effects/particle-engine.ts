@@ -322,10 +322,11 @@ export class ParticleEngine {
     this.lastUpdateTime = currentTime;
     const safeDeltaTime = Number.isFinite(deltaTime) ? Math.max(0, deltaTime) : 0;
     const frameStartTime = currentTime - safeDeltaTime;
+    const previousFixedStepAccumulator = this.fixedStepAccumulator;
     const simulationWindow = getBoundedSimulationWindow(
       frameStartTime,
       safeDeltaTime,
-      this.fixedStepAccumulator,
+      previousFixedStepAccumulator,
       this.fixedStep,
       this.maxFixedStepsPerUpdate,
     );
@@ -365,6 +366,26 @@ export class ParticleEngine {
       // created at their scheduled timestamp before that step is integrated,
       // so a new particle receives only the portion after its birth time.
       const effectEndTime = effect.startTime + effect.duration;
+      // Advance emission progress through deliberately dropped simulation
+      // time without creating particles, so skipped emissions are discarded
+      // while their fractional progress remains aligned with the timeline.
+      if (simulationWindow.droppedTime > 0) {
+        const droppedStart = frameStartTime - previousFixedStepAccumulator;
+        const droppedEnd = simulationWindow.startTime;
+        const activeDroppedStart = Math.max(droppedStart, effect.startTime);
+        const activeDroppedEnd = Math.min(droppedEnd, effectEndTime);
+        if (activeDroppedEnd > activeDroppedStart) {
+          const droppedSchedule = scheduleParticleEmissions(
+            activeDroppedStart,
+            activeDroppedEnd,
+            config.emissionRate,
+            emitter.emissionAccumulator,
+            0,
+          );
+          emitter.emissionAccumulator = droppedSchedule.remainder;
+        }
+      }
+
       for (let stepIndex = 0; stepIndex < simulationWindow.steps; stepIndex++) {
         const stepStart = simulationWindow.startTime + stepIndex * this.fixedStep;
         const stepEnd = stepStart + this.fixedStep;
