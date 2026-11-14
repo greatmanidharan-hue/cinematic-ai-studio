@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useCallback, useMemo } from "react";
 import * as THREE from "three";
-import { injectParticleShaderAttributes } from "./particle-shader-utils";
+import { groupParticlesIntoBlendRuns, injectParticleShaderAttributes } from "./particle-shader-utils";
 import {
   getParticleEngine,
   type Particle,
@@ -26,7 +26,8 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
-  const geometryRefs = useRef<Record<Particle["blendMode"], THREE.BufferGeometry | null>>({ normal: null, add: null, multiply: null, screen: null });
+  const materialsRef = useRef<Map<Particle["blendMode"], THREE.PointsMaterial>>(new Map());
+  const runPoolRef = useRef<THREE.Points[]>([]);
   const animationFrameRef = useRef<number | null>(null);
   const currentTimeRef = useRef<number>(currentTime);
   const lastFrameTimeRef = useRef<number>(performance.now());
@@ -109,13 +110,6 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     const materials = new Map<Particle["blendMode"], THREE.PointsMaterial>();
 
     for (const blendMode of blendModes) {
-      const geometry = new THREE.BufferGeometry();
-      geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(10000 * 3), 3));
-      geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(10000 * 3), 3));
-      geometry.setAttribute("particleSize", new THREE.BufferAttribute(new Float32Array(10000), 1));
-      geometry.setAttribute("alpha", new THREE.BufferAttribute(new Float32Array(10000), 1));
-      geometryRefs.current[blendMode] = geometry;
-
       const blending = blendMode === "normal" ? THREE.NormalBlending
         : blendMode === "multiply" ? THREE.MultiplyBlending
         : blendMode === "screen" ? THREE.CustomBlending : THREE.AdditiveBlending;
@@ -131,22 +125,23 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         } : {}),
         depthWrite: false, sizeAttenuation: false,
       });
-
-      // Extend PointsMaterial with per-particle size and opacity attributes.
       material.onBeforeCompile = injectParticleShaderAttributes;
       materials.set(blendMode, material);
-      scene.add(new THREE.Points(geometry, material));
     }
 
+    materialsRef.current = materials;
+    runPoolRef.current = [];
     setIsReady(true);
 
     return () => {
       setIsReady(false);
-      for (const blendMode of ["normal", "add", "multiply", "screen"] as const) {
-        geometryRefs.current[blendMode]?.dispose();
-        geometryRefs.current[blendMode] = null;
-        materials.get(blendMode)?.dispose();
+      for (const points of runPoolRef.current) {
+        points.geometry.dispose();
+        scene.remove(points);
       }
+      runPoolRef.current = [];
+      for (const material of materialsRef.current.values()) material.dispose();
+      materialsRef.current.clear();
       renderer.dispose();
       if (containerRef.current && renderer.domElement) {
         containerRef.current.removeChild(renderer.domElement);
@@ -179,30 +174,49 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
 
   const updateParticles = useCallback(
     (particles: Particle[]) => {
-      const blendModes: Particle["blendMode"][] = ["normal", "add", "multiply", "screen"];
-      const grouped = new Map<Particle["blendMode"], Particle[]>(blendModes.map(mode => [mode, []]));
-      for (const particle of particles) grouped.get(particle.blendMode)?.push(particle);
+      const scene = sceneRef.current;
+      if (!scene) return;
 
-      for (const blendMode of blendModes) {
-        const geometry = geometryRefs.current[blendMode];
-        if (!geometry) continue;
-        const positions = geometry.attributes.position.array as Float32Array;
-        const colors = geometry.attributes.color.array as Float32Array;
-        const particleSizes = geometry.attributes.particleSize.array as Float32Array;
-        const batch = grouped.get(blendMode) ?? [];
-        const count = Math.min(batch.length, 10000);
+      const runs = groupParticlesIntoBlendRuns(particles);
+      const MAX_PARTICLES_PER_RUN = 10000;
 
+      // Reuse Points/BufferGeometry objects between frames to avoid per-frame GPU allocations.
+      while (runPoolRef.current.length < runs.length) {
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_RUN * 3), 3));
+        geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_RUN * 3), 3));
+        geometry.setAttribute("particleSize", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_RUN), 1));
+        geometry.setAttribute("alpha", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_RUN), 1));
+        const points = new THREE.Points(geometry, materialsRef.current.get(runs[runPoolRef.current.length].blendMode)!);
+        points.frustumCulled = false;
+        runPoolRef.current.push(points);
+        scene.add(points);
+      }
+
+      for (let runIndex = 0; runIndex < runPoolRef.current.length; runIndex++) {
+        const points = runPoolRef.current[runIndex];
+        const run = runs[runIndex];
+        if (!run) {
+          points.visible = false;
+          continue;
+        }
+
+        points.visible = true;
+        points.renderOrder = runIndex;
+        points.material = materialsRef.current.get(run.blendMode)!;
+        const geometry = points.geometry;
+        const count = Math.min(run.particles.length, MAX_PARTICLES_PER_RUN);
         geometry.setDrawRange(0, count);
         if (count === 0) continue;
 
-        const alphaAttribute = geometry.attributes.alpha;
-        const positionAttribute = geometry.attributes.position;
-        const colorAttribute = geometry.attributes.color;
-        const sizeAttribute = geometry.attributes.particleSize;
-        const alphas = alphaAttribute.array as Float32Array;
+        const positions = geometry.attributes.position.array as Float32Array;
+        const colors = geometry.attributes.color.array as Float32Array;
+        const particleSizes = geometry.attributes.particleSize.array as Float32Array;
+        const alphas = geometry.attributes.alpha.array as Float32Array;
 
         for (let i = 0; i < count; i++) {
-          const particle = batch[i], i3 = i * 3;
+          const particle = run.particles[i];
+          const i3 = i * 3;
           positions[i3] = particle.position.x;
           positions[i3 + 1] = height - particle.position.y;
           positions[i3 + 2] = particle.position.z;
@@ -214,19 +228,17 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
           particleSizes[i] = Math.max(0, particle.size);
         }
 
-        // Upload only the active particle range, not all 10,000 reserved slots.
-        positionAttribute.clearUpdateRanges();
-        positionAttribute.addUpdateRange(0, count * 3);
-        colorAttribute.clearUpdateRanges();
-        colorAttribute.addUpdateRange(0, count * 3);
-        alphaAttribute.clearUpdateRanges();
-        alphaAttribute.addUpdateRange(0, count);
-        sizeAttribute.clearUpdateRanges();
-        sizeAttribute.addUpdateRange(0, count);
-        positionAttribute.needsUpdate = true;
-        colorAttribute.needsUpdate = true;
-        alphaAttribute.needsUpdate = true;
-        sizeAttribute.needsUpdate = true;
+        const attributes = [
+          [geometry.attributes.position, count * 3],
+          [geometry.attributes.color, count * 3],
+          [geometry.attributes.particleSize, count],
+          [geometry.attributes.alpha, count],
+        ] as const;
+        for (const [attribute, activeLength] of attributes) {
+          attribute.clearUpdateRanges();
+          attribute.addUpdateRange(0, activeLength);
+          attribute.needsUpdate = true;
+        }
       }
     },
     [hexToRgbNormalized, height]
