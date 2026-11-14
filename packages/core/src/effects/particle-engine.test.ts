@@ -539,3 +539,31 @@ describe("ParticleEngine effect time boundaries", () => {
     engine.dispose();
   });
 });
+
+
+  it("replays identical seeded particle state after rewinding to the timeline start", () => {
+    const engine = new ParticleEngine();
+    const effect = makeTimelineEffect();
+    effect.config.emissionRate = 18;
+    effect.config.particleCount = 40;
+    effect.config.turbulence = 6;
+    engine.addEffect(effect);
+
+    for (let frame = 1; frame <= 60; frame++) {
+      engine.update(frame / 60, 1 / 60);
+    }
+    const firstPlayback = engine.getParticles(effect.id).map((particle) => ({ ...particle,
+      position: { ...particle.position },
+      velocity: { ...particle.velocity },
+      acceleration: { ...particle.acceleration },
+    }));
+
+    engine.update(0, 0);
+    expect(engine.getParticles(effect.id)).toHaveLength(0);
+
+    for (let frame = 1; frame <= 60; frame++) {
+      engine.update(frame / 60, 1 / 60);
+    }
+    expect(engine.getParticles(effect.id)).toEqual(firstPlayback);
+    engine.dispose();
+  });
