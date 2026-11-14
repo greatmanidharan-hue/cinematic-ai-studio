@@ -165,6 +165,7 @@ export class ParticleEngine {
   private canvasHeight: number = 1080;
   private changeListeners: Set<() => void> = new Set();
   private changeVersion: number = 0;
+  private lastUpdateTime: number | null = null;
 
   onEffectsChange(listener: () => void): () => void {
     this.changeListeners.add(listener);
@@ -275,9 +276,19 @@ export class ParticleEngine {
   }
 
   update(currentTime: number, deltaTime: number): void {
+    // A backwards timeline seek invalidates particles simulated in the future.
+    if (this.lastUpdateTime !== null && currentTime < this.lastUpdateTime) {
+      this.reset();
+    }
+    this.lastUpdateTime = currentTime;
+    const safeDeltaTime = Number.isFinite(deltaTime) ? Math.max(0, deltaTime) : 0;
+
     for (const [effectId, emitter] of this.emitters) {
       const effect = this.effects.get(effectId);
       if (!effect || !effect.enabled) {
+        emitter.active = false;
+        emitter.particles = [];
+        emitter.emissionAccumulator = 0;
         continue;
       }
 
@@ -286,6 +297,8 @@ export class ParticleEngine {
 
       if (!effectStarted || effectEnded) {
         emitter.active = false;
+        emitter.particles = [];
+        emitter.emissionAccumulator = 0;
         continue;
       }
 
@@ -299,7 +312,7 @@ export class ParticleEngine {
         z: 0,
       };
 
-      emitter.emissionAccumulator += config.emissionRate * deltaTime;
+      emitter.emissionAccumulator += config.emissionRate * safeDeltaTime;
       while (
         emitter.emissionAccumulator >= 1 &&
         emitter.particles.length < config.particleCount
@@ -311,20 +324,20 @@ export class ParticleEngine {
       for (const particle of emitter.particles) {
         if (!particle.active) continue;
 
-        particle.velocity.x += (particle.acceleration.x + config.wind.x) * deltaTime;
-        particle.velocity.y += (particle.acceleration.y + config.wind.y) * deltaTime;
-        particle.velocity.z += (particle.acceleration.z + config.wind.z) * deltaTime;
+        particle.velocity.x += (particle.acceleration.x + config.wind.x) * safeDeltaTime;
+        particle.velocity.y += (particle.acceleration.y + config.wind.y) * safeDeltaTime;
+        particle.velocity.z += (particle.acceleration.z + config.wind.z) * safeDeltaTime;
 
         if (config.turbulence > 0) {
-          particle.velocity.x += randomRange(-config.turbulence, config.turbulence) * deltaTime;
-          particle.velocity.y += randomRange(-config.turbulence, config.turbulence) * deltaTime;
+          particle.velocity.x += randomRange(-config.turbulence, config.turbulence) * safeDeltaTime;
+          particle.velocity.y += randomRange(-config.turbulence, config.turbulence) * safeDeltaTime;
         }
 
-        particle.position.x += particle.velocity.x * deltaTime;
-        particle.position.y += particle.velocity.y * deltaTime;
-        particle.position.z += particle.velocity.z * deltaTime;
+        particle.position.x += particle.velocity.x * safeDeltaTime;
+        particle.position.y += particle.velocity.y * safeDeltaTime;
+        particle.position.z += particle.velocity.z * safeDeltaTime;
 
-        particle.rotation += particle.rotationSpeed * deltaTime;
+        particle.rotation += particle.rotationSpeed * safeDeltaTime;
         particle.age += deltaTime;
 
         const lifeProgress = particle.age / particle.lifetime;
@@ -373,6 +386,7 @@ export class ParticleEngine {
   }
 
   reset(): void {
+    this.lastUpdateTime = null;
     for (const emitter of this.emitters.values()) {
       emitter.particles = [];
       emitter.elapsedTime = 0;
