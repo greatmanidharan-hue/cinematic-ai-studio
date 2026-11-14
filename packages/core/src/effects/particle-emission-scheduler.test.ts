@@ -75,4 +75,21 @@ describe("scheduleParticleEmissions", () => {
     expect(result.remainder).toBeCloseTo(0.75, 12);
   });
 
+  it("keeps rounded boundary emissions inside the requested interval", () => {
+    const result = scheduleParticleEmissions(0, 0.1, 10, 0, 10);
+
+    expect(result.emissionTimes).toHaveLength(1);
+    expect(result.emissionTimes[0]).toBeLessThanOrEqual(0.1);
+    expect(result.emissionTimes[0]).toBeCloseTo(0.1, 12);
+    expect(result.remainder).toBeGreaterThanOrEqual(0);
+    expect(result.remainder).toBeLessThan(1);
+  });
+
+  it("normalizes negative fractional accumulators without emitting early", () => {
+    const result = scheduleParticleEmissions(0, 0.25, 2, -0.25, 10);
+
+    expect(result.emissionTimes).toHaveLength(0);
+    expect(result.remainder).toBeCloseTo(0.25, 12);
+  });
+
 });
