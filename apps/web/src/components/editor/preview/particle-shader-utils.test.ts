@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as fc from "fast-check";
 import {
+  getParticleBufferCapacity,
   groupParticlesIntoBlendRuns,
   injectParticleShaderAttributes,
   limitParticleBlendRuns,
@@ -150,5 +151,28 @@ describe("limitParticleBlendRuns", () => {
 
     expect(limitParticleBlendRuns(runs, 0, 10)).toEqual([]);
     expect(limitParticleBlendRuns(runs, 10, -1)).toEqual([]);
+  });
+});
+
+
+describe("getParticleBufferCapacity", () => {
+  it("starts small and grows geometrically to fit required particles", () => {
+    expect(getParticleBufferCapacity(1, 0, 10000)).toBe(1);
+    expect(getParticleBufferCapacity(5, 1, 10000)).toBe(8);
+    expect(getParticleBufferCapacity(9, 8, 10000)).toBe(16);
+  });
+
+  it("reuses sufficient capacity without shrinking", () => {
+    expect(getParticleBufferCapacity(4, 16, 10000)).toBe(16);
+  });
+
+  it("never exceeds the configured maximum", () => {
+    expect(getParticleBufferCapacity(9000, 8192, 10000)).toBe(10000);
+    expect(getParticleBufferCapacity(20000, 0, 10000)).toBe(10000);
+  });
+
+  it("handles zero and negative inputs safely", () => {
+    expect(getParticleBufferCapacity(-2, 0, 10000)).toBe(0);
+    expect(getParticleBufferCapacity(10, 0, -1)).toBe(0);
   });
 });
