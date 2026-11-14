@@ -35,7 +35,7 @@ describe("ParticleEngine blend mode propagation", () => {
       };
 
       engine.addEffect(effect);
-      advanceEngine(engine, 0, 1);
+      advanceEngine(engine, 1, 1);
 
       expect(engine.getParticles(effect.id)).toHaveLength(1);
       expect(engine.getParticles(effect.id)[0].blendMode).toBe(blendMode);
@@ -509,7 +509,7 @@ describe("ParticleEngine frame-rate consistency", () => {
         },
       };
       engine.addEffect(effect);
-      advanceEngine(engine, 0, 1);
+      advanceEngine(engine, 1, 1);
       engine.updateEffect(effect.id, { emissionRate: 0 });
       return engine;
     };
