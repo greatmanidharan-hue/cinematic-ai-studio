@@ -295,6 +295,7 @@ export class ParticleEngine {
     const safeDeltaTime = Number.isFinite(deltaTime) ? Math.max(0, deltaTime) : 0;
     const fixedStepResult = consumeFixedSteps(safeDeltaTime, this.fixedStepAccumulator, this.fixedStep, this.maxFixedStepsPerUpdate);
     this.fixedStepAccumulator = fixedStepResult.remainder;
+    const simulatedDeltaTime = fixedStepResult.steps * this.fixedStep;
 
     for (const [effectId, emitter] of this.emitters) {
       const effect = this.effects.get(effectId);
@@ -368,7 +369,7 @@ export class ParticleEngine {
 
       // Emit at the end of this simulation step so new particles do not
       // incorrectly receive the entire frame's movement and aging.
-      emitter.emissionAccumulator += config.emissionRate * safeDeltaTime;
+      emitter.emissionAccumulator += config.emissionRate * simulatedDeltaTime;
       while (
         emitter.emissionAccumulator >= 1 &&
         emitter.particles.length < config.particleCount
