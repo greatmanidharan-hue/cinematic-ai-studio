@@ -338,7 +338,7 @@ export class ParticleEngine {
         particle.position.z += particle.velocity.z * safeDeltaTime;
 
         particle.rotation += particle.rotationSpeed * safeDeltaTime;
-        particle.age += deltaTime;
+        particle.age += safeDeltaTime;
 
         const lifeProgress = particle.age / particle.lifetime;
         if (lifeProgress < config.fadeIn) {
