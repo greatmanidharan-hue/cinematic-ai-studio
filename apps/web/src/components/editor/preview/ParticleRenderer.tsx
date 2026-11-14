@@ -1,5 +1,7 @@
 import React, { useRef, useEffect, useCallback, useMemo } from "react";
 import * as THREE from "three";
+import { getParticleFrameDelta } from "./particle-time-utils";
+import { clampParticlePointSize, getParticleBufferCapacity, groupParticlesIntoBlendRuns, injectParticleShaderAttributes, limitParticleBlendRuns } from "./particle-shader-utils";
 import {
   getParticleEngine,
   type Particle,
@@ -14,6 +16,16 @@ interface ParticleRendererProps {
   isPlaying: boolean;
 }
 
+const createParticleGeometry = (capacity: number): THREE.BufferGeometry => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.userData.particleCapacity = capacity;
+  geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(capacity * 3), 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(capacity * 3), 3));
+  geometry.setAttribute("particleSize", new THREE.BufferAttribute(new Float32Array(capacity), 1));
+  geometry.setAttribute("alpha", new THREE.BufferAttribute(new Float32Array(capacity), 1));
+  return geometry;
+};
+
 export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   effects,
   width,
@@ -25,13 +37,18 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
   const cameraRef = useRef<THREE.OrthographicCamera | null>(null);
-  const geometryRef = useRef<THREE.BufferGeometry | null>(null);
+  const materialsRef = useRef<Map<Particle["blendMode"], THREE.PointsMaterial>>(new Map());
+  const runPoolRef = useRef<THREE.Points[]>([]);
   const animationFrameRef = useRef<number | null>(null);
   const currentTimeRef = useRef<number>(currentTime);
-  const lastFrameTimeRef = useRef<number>(performance.now());
-  const playStartTimeRef = useRef<number>(0);
-  const playStartPlayheadRef = useRef<number>(0);
+  const lastSimulationTimeRef = useRef<number>(currentTime);
+  const lastPausedTimeRef = useRef<number | null>(null);
+  const lastPausedEffectsRevisionRef = useRef<number>(-1);
   const isPlayingRef = useRef<boolean>(isPlaying);
+  const maxPointSizeRef = useRef<number>(64);
+  const contextLostRef = useRef<boolean>(false);
+  const [contextRevision, setContextRevision] = React.useState(0);
+  const [effectsRevision, setEffectsRevision] = React.useState(0);
   const [isReady, setIsReady] = React.useState(false);
 
   const engine = useMemo(() => getParticleEngine(), []);
@@ -46,26 +63,56 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
 
   const prevEffectIdsRef = useRef<Set<string>>(new Set());
 
+  // The particle engine is shared; release this component's effects on unmount.
+  useEffect(() => {
+    return () => {
+      for (const effectId of prevEffectIdsRef.current) {
+        engine.removeEffect(effectId);
+      }
+      prevEffectIdsRef.current.clear();
+    };
+  }, [engine]);
+
   useEffect(() => {
     const currentIds = new Set(effects.map(e => e.id));
     const prevIds = prevEffectIdsRef.current;
+    let changed = false;
 
     for (const effect of effects) {
       const existingEffect = engine.getEffect(effect.id);
       if (!existingEffect) {
         engine.addEffect(effect);
-      } else if (!prevIds.has(effect.id)) {
+        changed = true;
+        continue;
+      }
+
+      // Existing IDs can still receive edited configuration, timing, and enabled state.
+      if (JSON.stringify(existingEffect.config) !== JSON.stringify(effect.config)) {
         engine.updateEffect(effect.id, effect.config);
+        changed = true;
+      }
+      if (
+        existingEffect.startTime !== effect.startTime ||
+        existingEffect.duration !== effect.duration
+      ) {
+        engine.updateEffectTiming(effect.id, effect.startTime, effect.duration);
+        changed = true;
+      }
+      if (existingEffect.enabled !== effect.enabled) {
+        engine.toggleEffect(effect.id, effect.enabled);
+        changed = true;
       }
     }
 
     for (const prevId of prevIds) {
       if (!currentIds.has(prevId)) {
         engine.removeEffect(prevId);
+        changed = true;
       }
     }
 
     prevEffectIdsRef.current = currentIds;
+    if (changed) setEffectsRevision((revision) => revision + 1);
   }, [effects, engine]);
 
   useEffect(() => {
@@ -87,11 +134,24 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     camera.position.z = 100;
     cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({
-      alpha: true,
-      antialias: true,
-      premultipliedAlpha: false,
-    });
+    // WebGL may be unavailable or blocked by the browser/device. Keep the
+    // editor usable instead of letting renderer construction crash the effect.
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: true,
+        premultipliedAlpha: false,
+      });
+    } catch (error) {
+      console.warn("Particle preview WebGL renderer is unavailable.", error);
+      return;
+    }
+    const gl = renderer.getContext();
+    const pointSizeRange = gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE) as Float32Array;
+    maxPointSizeRef.current = Number.isFinite(pointSizeRange?.[1]) && pointSizeRange[1] > 0
+      ? pointSizeRange[1]
+      : 64;
     renderer.setSize(width, height, false);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x000000, 0);
@@ -104,41 +164,84 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     containerRef.current.appendChild(renderer.domElement);
     rendererRef.current = renderer;
 
-    const geometry = new THREE.BufferGeometry();
-    const positions = new Float32Array(10000 * 3);
-    const colors = new Float32Array(10000 * 3);
-    const sizes = new Float32Array(10000);
-    const alphas = new Float32Array(10000);
+    // Three.js restores its WebGL resources after the browser emits the
+    // restored event. Pause our own RAF loop while the context is unavailable.
+    const handleContextLost = (event: Event) => {
+      event.preventDefault();
+      contextLostRef.current = true;
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
+    const handleContextRestored = () => {
+      contextLostRef.current = false;
+      lastSimulationTimeRef.current = currentTimeRef.current;
+      lastPausedTimeRef.current = null;
+      setContextRevision((revision) => revision + 1);
+    };
+    renderer.domElement.addEventListener("webglcontextlost", handleContextLost, false);
+    renderer.domElement.addEventListener("webglcontextrestored", handleContextRestored, false);
 
-    geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
-    geometry.setAttribute("size", new THREE.BufferAttribute(sizes, 1));
-    geometry.setAttribute("alpha", new THREE.BufferAttribute(alphas, 1));
-    geometryRef.current = geometry;
+    const blendModes: Particle["blendMode"][] = ["normal", "add", "multiply", "screen"];
+    const materials = new Map<Particle["blendMode"], THREE.PointsMaterial>();
 
-    const material = new THREE.PointsMaterial({
-      size: 12,
-      vertexColors: true,
-      transparent: true,
-      opacity: 1,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-      sizeAttenuation: false,
-    });
+    for (const blendMode of blendModes) {
+      const blending = blendMode === "normal" ? THREE.NormalBlending
+        : blendMode === "multiply" ? THREE.MultiplyBlending
+        : blendMode === "screen" ? THREE.CustomBlending : THREE.AdditiveBlending;
+      const material = new THREE.PointsMaterial({
+        size: 12, vertexColors: true, transparent: true, opacity: 1, blending,
+        ...(blendMode === "screen" ? {
+          blendEquation: THREE.AddEquation,
+          blendSrc: THREE.SrcAlphaFactor,
+          blendDst: THREE.OneMinusSrcColorFactor,
+          blendEquationAlpha: THREE.AddEquation,
+          blendSrcAlpha: THREE.OneFactor,
+          blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
+        } : {}),
+        // Three.js r182 requires premultiplied alpha for built-in MultiplyBlending.
+        premultipliedAlpha: blendMode === "multiply",
+        depthWrite: false, sizeAttenuation: false,
+      });
+      material.onBeforeCompile = injectParticleShaderAttributes;
+      materials.set(blendMode, material);
+    }
 
-    const points = new THREE.Points(geometry, material);
-    scene.add(points);
-
+    materialsRef.current = materials;
+    runPoolRef.current = [];
     setIsReady(true);
 
     return () => {
       setIsReady(false);
-      geometry.dispose();
-      material.dispose();
+
+      // Stop any scheduled frame before releasing the WebGL resources it may use.
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+
+      for (const points of runPoolRef.current) {
+        points.geometry.dispose();
+        scene.remove(points);
+      }
+      runPoolRef.current = [];
+
+      // Dispose the materials created by this effect instance, not a later ref value.
+      for (const material of materials.values()) material.dispose();
+      if (materialsRef.current === materials) materialsRef.current.clear();
+
+      renderer.domElement.removeEventListener("webglcontextlost", handleContextLost, false);
+      renderer.domElement.removeEventListener("webglcontextrestored", handleContextRestored, false);
+      contextLostRef.current = false;
       renderer.dispose();
-      if (containerRef.current && renderer.domElement) {
+      if (containerRef.current?.contains(renderer.domElement)) {
         containerRef.current.removeChild(renderer.domElement);
       }
+
+      if (rendererRef.current === renderer) rendererRef.current = null;
+      if (sceneRef.current === scene) sceneRef.current = null;
+      if (cameraRef.current === camera) cameraRef.current = null;
     };
   }, [width, height]);
 
@@ -167,48 +270,90 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
 
   const updateParticles = useCallback(
     (particles: Particle[]) => {
-      if (!geometryRef.current) return;
+      const scene = sceneRef.current;
+      if (!scene) return;
 
-      const positions = geometryRef.current.attributes.position.array as Float32Array;
-      const colors = geometryRef.current.attributes.color.array as Float32Array;
-      const sizes = geometryRef.current.attributes.size.array as Float32Array;
+      const MAX_PARTICLES_PER_FRAME = 10000;
+      const MAX_BLEND_RUNS = 64;
+      const runs = limitParticleBlendRuns(
+        groupParticlesIntoBlendRuns(particles),
+        MAX_BLEND_RUNS,
+        MAX_PARTICLES_PER_FRAME,
+      );
 
-      const count = Math.min(particles.length, 10000);
-
-      for (let i = 0; i < count; i++) {
-        const particle = particles[i];
-        const i3 = i * 3;
-
-        positions[i3] = particle.position.x;
-        positions[i3 + 1] = height - particle.position.y;
-        positions[i3 + 2] = particle.position.z;
-
-        const rgb = hexToRgbNormalized(particle.color);
-        colors[i3] = rgb.r * particle.opacity;
-        colors[i3 + 1] = rgb.g * particle.opacity;
-        colors[i3 + 2] = rgb.b * particle.opacity;
-
-        sizes[i] = particle.size;
+      // Keep draw objects pooled; allocate attribute storage only when a run grows.
+      while (runPoolRef.current.length < runs.length) {
+        const geometry = createParticleGeometry(0);
+        const points = new THREE.Points(geometry, materialsRef.current.get(runs[runPoolRef.current.length].blendMode)!);
+        points.frustumCulled = false;
+        runPoolRef.current.push(points);
+        scene.add(points);
       }
 
-      for (let i = count; i < 10000; i++) {
-        const i3 = i * 3;
-        positions[i3] = 0;
-        positions[i3 + 1] = 0;
-        positions[i3 + 2] = -1000;
-        sizes[i] = 0;
-      }
+      for (let runIndex = 0; runIndex < runPoolRef.current.length; runIndex++) {
+        const points = runPoolRef.current[runIndex];
+        const run = runs[runIndex];
+        if (!run) {
+          points.visible = false;
+          continue;
+        }
 
-      geometryRef.current.attributes.position.needsUpdate = true;
-      geometryRef.current.attributes.color.needsUpdate = true;
-      geometryRef.current.attributes.size.needsUpdate = true;
-      geometryRef.current.setDrawRange(0, count);
+        points.visible = true;
+        points.renderOrder = runIndex;
+        points.material = materialsRef.current.get(run.blendMode)!;
+        let geometry = points.geometry;
+        const count = run.particles.length;
+        const currentCapacity = Number(geometry.userData.particleCapacity ?? 0);
+        const nextCapacity = getParticleBufferCapacity(count, currentCapacity, MAX_PARTICLES_PER_FRAME);
+        if (nextCapacity > currentCapacity) {
+          const replacement = createParticleGeometry(nextCapacity);
+          geometry.dispose();
+          points.geometry = replacement;
+          geometry = replacement;
+        }
+        geometry.setDrawRange(0, count);
+        if (count === 0) {
+          points.visible = false;
+          continue;
+        }
+
+        const positions = geometry.attributes.position.array as Float32Array;
+        const colors = geometry.attributes.color.array as Float32Array;
+        const particleSizes = geometry.attributes.particleSize.array as Float32Array;
+        const alphas = geometry.attributes.alpha.array as Float32Array;
+
+        for (let i = 0; i < count; i++) {
+          const particle = run.particles[i];
+          const i3 = i * 3;
+          positions[i3] = particle.position.x;
+          positions[i3 + 1] = height - particle.position.y;
+          positions[i3 + 2] = particle.position.z;
+          const rgb = hexToRgbNormalized(particle.color);
+          colors[i3] = rgb.r;
+          colors[i3 + 1] = rgb.g;
+          colors[i3 + 2] = rgb.b;
+          alphas[i] = Math.max(0, Math.min(1, particle.opacity));
+          particleSizes[i] = clampParticlePointSize(particle.size, maxPointSizeRef.current);
+        }
+
+        const attributes = [
+          [geometry.attributes.position, count * 3],
+          [geometry.attributes.color, count * 3],
+          [geometry.attributes.particleSize, count],
+          [geometry.attributes.alpha, count],
+        ] as const;
+        for (const [attribute, activeLength] of attributes) {
+          attribute.clearUpdateRanges();
+          attribute.addUpdateRange(0, activeLength);
+          attribute.needsUpdate = true;
+        }
+      }
     },
     [hexToRgbNormalized, height]
   );
 
   const render = useCallback(() => {
-    if (!rendererRef.current || !sceneRef.current || !cameraRef.current) return;
+    if (contextLostRef.current || !rendererRef.current || !sceneRef.current || !cameraRef.current) return;
     rendererRef.current.render(sceneRef.current, cameraRef.current);
   }, []);
 
@@ -217,47 +362,107 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   }, [isPlaying]);
 
   useEffect(() => {
-    if (!isReady) return;
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible" || !isPlayingRef.current) return;
 
-    if (isPlaying) {
-      playStartTimeRef.current = performance.now();
-      playStartPlayheadRef.current = currentTimeRef.current;
-      lastFrameTimeRef.current = performance.now();
+      // Skip elapsed hidden-tab time; the editor timeline remains authoritative.
+      lastSimulationTimeRef.current = currentTimeRef.current;
+    };
 
-      const animate = () => {
-        if (!isPlayingRef.current) return;
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
 
-        const now = performance.now();
-        const deltaMs = now - lastFrameTimeRef.current;
-        lastFrameTimeRef.current = now;
-        const deltaTime = deltaMs / 1000;
+  useEffect(() => {
+    if (!isReady || !isPlaying || contextLostRef.current) return;
 
-        const elapsedSinceStart = (now - playStartTimeRef.current) / 1000;
-        const estimatedCurrentTime = playStartPlayheadRef.current + elapsedSinceStart;
+    // Do not depend on currentTime here: the parent updates the playhead every
+    // frame. Reading its ref avoids tearing down and restarting this RAF loop.
+    lastSimulationTimeRef.current = currentTimeRef.current;
 
-        engine.update(estimatedCurrentTime, deltaTime);
-        const particles = engine.getParticles();
-        updateParticles(particles);
-        render();
+    const animate = () => {
+      if (!isPlayingRef.current) return;
+      if (contextLostRef.current) return;
 
+      if (document.visibilityState !== "visible") {
+        lastSimulationTimeRef.current = currentTimeRef.current;
         animationFrameRef.current = requestAnimationFrame(animate);
-      };
+        return;
+      }
+
+      // Finish an incremental paused-seek reconstruction before resuming
+      // live playback, so playback never continues from a partial particle state.
+      if (engine.isSeeking()) {
+        engine.advanceSeek();
+        lastSimulationTimeRef.current = currentTimeRef.current;
+        updateParticles(engine.getParticles());
+        render();
+        animationFrameRef.current = requestAnimationFrame(animate);
+        return;
+      }
+
+      // Use the editor's master timeline so playback-rate changes and seeks
+      // stay synchronized with video, audio, and the timeline playhead.
+      const timelineTime = currentTimeRef.current;
+      const deltaTime = getParticleFrameDelta(timelineTime, lastSimulationTimeRef.current);
+      lastSimulationTimeRef.current = timelineTime;
+
+      engine.update(timelineTime, deltaTime);
+      updateParticles(engine.getParticles());
+      render();
 
       animationFrameRef.current = requestAnimationFrame(animate);
+    };
 
-      return () => {
-        if (animationFrameRef.current) {
-          cancelAnimationFrame(animationFrameRef.current);
-          animationFrameRef.current = null;
-        }
-      };
+    animationFrameRef.current = requestAnimationFrame(animate);
+
+    return () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
+  }, [isPlaying, isReady, contextRevision, engine, updateParticles, render]);
+
+  useEffect(() => {
+    if (!isReady || isPlaying || contextLostRef.current) return;
+
+    // Rebuild particle history incrementally when the paused playhead changes.
+    if (
+      lastPausedTimeRef.current !== currentTime ||
+      lastPausedEffectsRevisionRef.current !== effectsRevision
+    ) {
+      engine.beginSeek(currentTime);
+      lastPausedTimeRef.current = currentTime;
+      lastPausedEffectsRevisionRef.current = effectsRevision;
+    }
+
+    const advancePausedSeek = () => {
+      const complete = engine.advanceSeek();
+      updateParticles(engine.getParticles());
+      render();
+
+      if (!complete) {
+        animationFrameRef.current = requestAnimationFrame(advancePausedSeek);
+      } else {
+        animationFrameRef.current = null;
+      }
+    };
+
+    if (engine.isSeeking()) {
+      advancePausedSeek();
     } else {
-      engine.update(currentTime, 1 / 30);
-      const particles = engine.getParticles();
-      updateParticles(particles);
+      updateParticles(engine.getParticles());
       render();
     }
-  }, [isPlaying, isReady, currentTime, engine, updateParticles, render, effects]);
+
+    return () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
+  }, [isPlaying, isReady, contextRevision, effectsRevision, currentTime, engine, updateParticles, render]);
 
   useEffect(() => {
     if (cameraRef.current) {
