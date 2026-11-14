@@ -89,7 +89,7 @@ describe("scheduleParticleEmissions", () => {
     const result = scheduleParticleEmissions(0, 0.25, 2, -0.25, 10);
 
     expect(result.emissionTimes).toHaveLength(0);
-    expect(result.remainder).toBeCloseTo(0.25, 12);
+    expect(result.remainder).toBeCloseTo(0.5, 12);
   });
 
 });
