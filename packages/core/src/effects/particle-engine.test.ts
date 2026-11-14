@@ -315,3 +315,55 @@ describe("ParticleEngine fixed-step integration", () => {
     engine.dispose();
   });
 });
+
+
+describe("ParticleEngine frame-rate consistency", () => {
+  it("keeps existing particle motion consistent across 30 FPS and 60 FPS updates", () => {
+    const makeEngine = () => {
+      const engine = new ParticleEngine();
+      const effect: ParticleEffect = {
+        id: "fps-consistency",
+        clipId: "clip-1",
+        type: "dissolve",
+        startTime: 0,
+        duration: 10,
+        enabled: true,
+        config: {
+          ...DEFAULT_PARTICLE_CONFIG,
+          particleCount: 1,
+          emissionRate: 1,
+          lifetime: { min: 10, max: 10 },
+          turbulence: 8,
+          gravity: 12,
+          wind: { x: 2, y: -1, z: 0 },
+        },
+      };
+      engine.addEffect(effect);
+      engine.update(0, 1);
+      engine.updateEffect(effect.id, { emissionRate: 0 });
+      return engine;
+    };
+
+    const thirtyFps = makeEngine();
+    const sixtyFps = makeEngine();
+    for (let frame = 1; frame <= 30; frame++) {
+      thirtyFps.update(frame / 30, 1 / 30);
+    }
+    for (let frame = 1; frame <= 60; frame++) {
+      sixtyFps.update(frame / 60, 1 / 60);
+    }
+
+    const particle30 = thirtyFps.getParticles("fps-consistency")[0];
+    const particle60 = sixtyFps.getParticles("fps-consistency")[0];
+    expect(particle30).toBeDefined();
+    expect(particle60).toBeDefined();
+    expect(particle30.age).toBeCloseTo(particle60.age, 8);
+    expect(particle30.position.x).toBeCloseTo(particle60.position.x, 8);
+    expect(particle30.position.y).toBeCloseTo(particle60.position.y, 8);
+    expect(particle30.velocity.x).toBeCloseTo(particle60.velocity.x, 8);
+    expect(particle30.velocity.y).toBeCloseTo(particle60.velocity.y, 8);
+
+    thirtyFps.dispose();
+    sixtyFps.dispose();
+  });
+});
