@@ -57,7 +57,7 @@ export function getBoundedSimulationWindow(
   const simulatedDuration = steps * fixedStep;
 
   return {
-    startTime: endTime - simulatedDuration,
+    startTime: endTime - simulatedDuration - remainder,
     endTime: endTime - remainder,
     steps,
     droppedTime,
