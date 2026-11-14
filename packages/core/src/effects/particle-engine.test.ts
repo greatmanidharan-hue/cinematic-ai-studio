@@ -567,3 +567,50 @@ describe("ParticleEngine effect time boundaries", () => {
     expect(engine.getParticles(effect.id)).toEqual(firstPlayback);
     engine.dispose();
   });
+
+
+describe("ParticleEngine read isolation", () => {
+  const makeEffect = (id: string, clipId = "clip-read"): ParticleEffect => ({
+    id,
+    clipId,
+    type: "dissolve",
+    startTime: 0,
+    duration: 5,
+    enabled: true,
+    config: {
+      ...DEFAULT_PARTICLE_CONFIG,
+      wind: { ...DEFAULT_PARTICLE_CONFIG.wind },
+      colors: ["#ffffff"],
+      size: { ...DEFAULT_PARTICLE_CONFIG.size },
+      opacity: { ...DEFAULT_PARTICLE_CONFIG.opacity },
+      lifetime: { ...DEFAULT_PARTICLE_CONFIG.lifetime },
+    },
+  });
+
+  it("does not expose mutable internal state through effect getters", () => {
+    const engine = new ParticleEngine();
+    engine.addEffect(makeEffect("read-isolation"));
+
+    const single = engine.getEffect("read-isolation")!;
+    single.config.wind.x = 99;
+    single.config.colors[0] = "#000000";
+    single.startTime = 99;
+
+    const all = engine.getAllEffects();
+    all[0].config.size.min = 99;
+
+    const byClip = engine.getEffectsForClip("clip-read");
+    byClip[0].config.opacity.start = 0;
+
+    expect(engine.getEffect("read-isolation")).toMatchObject({
+      startTime: 0,
+      config: {
+        wind: { x: 0 },
+        colors: ["#ffffff"],
+        size: { min: DEFAULT_PARTICLE_CONFIG.size.min },
+        opacity: { start: DEFAULT_PARTICLE_CONFIG.opacity.start },
+      },
+    });
+    engine.dispose();
+  });
+});
