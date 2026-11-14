@@ -374,7 +374,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         animationFrameRef.current = null;
       }
     };
-  }, [isPlaying, isReady, engine, updateParticles, render, effects]);
+  }, [isPlaying, isReady, engine, updateParticles, render]);
 
   useEffect(() => {
     if (!isReady || isPlaying) return;
