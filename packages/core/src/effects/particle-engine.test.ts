@@ -380,6 +380,33 @@ describe("ParticleEngine bounded emission time", () => {
     engine.dispose();
   });
 
+  it("advances fractional emission progress across dropped time without replaying old emissions", () => {
+    const engine = new ParticleEngine();
+    const effect: ParticleEffect = {
+      id: "dropped-emission-fraction",
+      clipId: "clip-1",
+      type: "dissolve",
+      startTime: 0,
+      duration: 10,
+      enabled: true,
+      config: {
+        ...DEFAULT_PARTICLE_CONFIG,
+        particleCount: 100,
+        emissionRate: 121,
+        lifetime: { min: 10, max: 10 },
+        turbulence: 0,
+      },
+    };
+
+    engine.addEffect(effect);
+    engine.update(1, 1);
+
+    // 112.93 emissions accrue in the skipped interval; its fractional
+    // progress combines with the eight retained steps to schedule nine.
+    expect(engine.getParticles(effect.id)).toHaveLength(9);
+    engine.dispose();
+  });
+
   it("does not emit particles for timeline time dropped by the catch-up budget", () => {
     const engine = new ParticleEngine();
     const effect: ParticleEffect = {
