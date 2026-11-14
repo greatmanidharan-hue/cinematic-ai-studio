@@ -123,6 +123,8 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
           blendSrcAlpha: THREE.OneFactor,
           blendDstAlpha: THREE.OneMinusSrcAlphaFactor,
         } : {}),
+        // Three.js r182 requires premultiplied alpha for built-in MultiplyBlending.
+        premultipliedAlpha: blendMode === "multiply",
         depthWrite: false, sizeAttenuation: false,
       });
       material.onBeforeCompile = injectParticleShaderAttributes;
