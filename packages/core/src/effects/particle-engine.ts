@@ -409,6 +409,48 @@ export class ParticleEngine {
     }
   }
 
+  private seekTargetTime: number | null = null;
+  private seekCursorTime = 0;
+
+  /**
+   * Starts a deterministic rebuild from timeline zero to the requested time.
+   * Call advanceSeek() repeatedly to spread the work across animation frames.
+   */
+  beginSeek(targetTime: number): void {
+    this.reset();
+    this.seekTargetTime = Number.isFinite(targetTime) ? Math.max(0, targetTime) : 0;
+    this.seekCursorTime = 0;
+    this.update(0, 0);
+  }
+
+  /**
+   * Advances at most maxFixedStepsPerUpdate fixed steps toward the seek target.
+   * Returns true when the target time has been reconstructed.
+   */
+  advanceSeek(): boolean {
+    if (this.seekTargetTime === null) return true;
+    const remaining = this.seekTargetTime - this.seekCursorTime;
+    if (remaining <= 0) {
+      this.seekTargetTime = null;
+      return true;
+    }
+
+    const maxDelta = this.fixedStep * this.maxFixedStepsPerUpdate;
+    const deltaTime = Math.min(remaining, maxDelta);
+    this.seekCursorTime += deltaTime;
+    this.update(this.seekCursorTime, deltaTime);
+
+    if (this.seekCursorTime >= this.seekTargetTime) {
+      this.seekTargetTime = null;
+      return true;
+    }
+    return false;
+  }
+
+  isSeeking(): boolean {
+    return this.seekTargetTime !== null;
+  }
+
   getParticles(effectId?: string): Particle[] {
     if (effectId) {
       const emitter = this.emitters.get(effectId);
