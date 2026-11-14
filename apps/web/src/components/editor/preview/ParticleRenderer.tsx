@@ -43,6 +43,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   const lastFrameTimeRef = useRef<number>(performance.now());
   const playStartTimeRef = useRef<number>(0);
   const playStartPlayheadRef = useRef<number>(0);
+  const lastPausedTimeRef = useRef<number | null>(null);
   const isPlayingRef = useRef<boolean>(isPlaying);
   const [isReady, setIsReady] = React.useState(false);
 
@@ -350,9 +351,13 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         }
       };
     } else {
-      engine.update(currentTime, 1 / 30);
-      const particles = engine.getParticles();
-      updateParticles(particles);
+      // Paused previews must not advance simulation just because React re-rendered.
+      // A manual seek while paused invalidates the old simulation state.
+      if (lastPausedTimeRef.current !== currentTime) {
+        engine.reset();
+        lastPausedTimeRef.current = currentTime;
+      }
+      updateParticles(engine.getParticles());
       render();
     }
   }, [isPlaying, isReady, currentTime, engine, updateParticles, render, effects]);
