@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useCallback, useMemo } from "react";
 import * as THREE from "three";
-import { groupParticlesIntoBlendRuns, injectParticleShaderAttributes, limitParticleBlendRuns } from "./particle-shader-utils";
+import { getParticleBufferCapacity, groupParticlesIntoBlendRuns, injectParticleShaderAttributes, limitParticleBlendRuns } from "./particle-shader-utils";
 import {
   getParticleEngine,
   type Particle,
@@ -14,6 +14,16 @@ interface ParticleRendererProps {
   currentTime: number;
   isPlaying: boolean;
 }
+
+const createParticleGeometry = (capacity: number): THREE.BufferGeometry => {
+  const geometry = new THREE.BufferGeometry();
+  geometry.userData.particleCapacity = capacity;
+  geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(capacity * 3), 3));
+  geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(capacity * 3), 3));
+  geometry.setAttribute("particleSize", new THREE.BufferAttribute(new Float32Array(capacity), 1));
+  geometry.setAttribute("alpha", new THREE.BufferAttribute(new Float32Array(capacity), 1));
+  return geometry;
+};
 
 export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   effects,
@@ -187,13 +197,9 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         MAX_PARTICLES_PER_FRAME,
       );
 
-      // Reuse Points/BufferGeometry objects between frames to avoid per-frame GPU allocations.
+      // Keep draw objects pooled; allocate attribute storage only when a run grows.
       while (runPoolRef.current.length < runs.length) {
-        const geometry = new THREE.BufferGeometry();
-        geometry.setAttribute("position", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_FRAME * 3), 3));
-        geometry.setAttribute("color", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_FRAME * 3), 3));
-        geometry.setAttribute("particleSize", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_FRAME), 1));
-        geometry.setAttribute("alpha", new THREE.BufferAttribute(new Float32Array(MAX_PARTICLES_PER_FRAME), 1));
+        const geometry = createParticleGeometry(0);
         const points = new THREE.Points(geometry, materialsRef.current.get(runs[runPoolRef.current.length].blendMode)!);
         points.frustumCulled = false;
         runPoolRef.current.push(points);
@@ -211,8 +217,16 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         points.visible = true;
         points.renderOrder = runIndex;
         points.material = materialsRef.current.get(run.blendMode)!;
-        const geometry = points.geometry;
+        let geometry = points.geometry;
         const count = run.particles.length;
+        const currentCapacity = Number(geometry.userData.particleCapacity ?? 0);
+        const nextCapacity = getParticleBufferCapacity(count, currentCapacity, MAX_PARTICLES_PER_FRAME);
+        if (nextCapacity > currentCapacity) {
+          const replacement = createParticleGeometry(nextCapacity);
+          geometry.dispose();
+          points.geometry = replacement;
+          geometry = replacement;
+        }
         geometry.setDrawRange(0, count);
         if (count === 0) {
           points.visible = false;
