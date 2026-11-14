@@ -316,6 +316,23 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   }, [isPlaying]);
 
   useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible" || !isPlayingRef.current) return;
+
+      // Re-anchor the preview clock after background throttling. The editor's
+      // latest playhead is authoritative; hidden time must not become one huge
+      // simulation delta when requestAnimationFrame resumes.
+      const now = performance.now();
+      playStartTimeRef.current = now;
+      playStartPlayheadRef.current = currentTimeRef.current;
+      lastFrameTimeRef.current = now;
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, []);
+
+  useEffect(() => {
     if (!isReady) return;
 
     if (isPlaying) {
@@ -327,6 +344,12 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         if (!isPlayingRef.current) return;
 
         const now = performance.now();
+        if (document.visibilityState !== "visible") {
+          lastFrameTimeRef.current = now;
+          animationFrameRef.current = requestAnimationFrame(animate);
+          return;
+        }
+
         const deltaMs = now - lastFrameTimeRef.current;
         lastFrameTimeRef.current = now;
         const deltaTime = deltaMs / 1000;
