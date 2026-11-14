@@ -39,4 +39,36 @@ describe("consumeFixedSteps", () => {
       droppedTime: 0,
     });
   });
+
+  it("produces the same fixed-step count for equal elapsed time at 30 and 60 FPS", () => {
+    const fixedStep = 1 / 120;
+    let thirtyAccumulator = 0;
+    let sixtyAccumulator = 0;
+    let thirtySteps = 0;
+    let sixtySteps = 0;
+
+    for (let frame = 0; frame < 30; frame++) {
+      const result = consumeFixedSteps(1 / 30, thirtyAccumulator, fixedStep, 8);
+      thirtyAccumulator = result.remainder;
+      thirtySteps += result.steps;
+    }
+
+    for (let frame = 0; frame < 60; frame++) {
+      const result = consumeFixedSteps(1 / 60, sixtyAccumulator, fixedStep, 8);
+      sixtyAccumulator = result.remainder;
+      sixtySteps += result.steps;
+    }
+
+    expect(thirtySteps).toBe(120);
+    expect(sixtySteps).toBe(120);
+    expect(thirtyAccumulator).toBeCloseTo(sixtyAccumulator);
+    expect(thirtyAccumulator).toBeCloseTo(0);
+  });
+
+  it("keeps each ordinary frame within the configured catch-up budget", () => {
+    const result = consumeFixedSteps(1 / 30, 0, 1 / 120, 8);
+    expect(result.steps).toBe(4);
+    expect(result.droppedTime).toBe(0);
+  });
+
 });
