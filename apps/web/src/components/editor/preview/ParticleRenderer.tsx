@@ -177,8 +177,11 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       const scene = sceneRef.current;
       if (!scene) return;
 
-      const runs = groupParticlesIntoBlendRuns(particles);
-      const MAX_PARTICLES_PER_RUN = 10000;
+      const MAX_PARTICLES_PER_FRAME = 10000;
+      const MAX_BLEND_RUNS = 64;
+      const runs = groupParticlesIntoBlendRuns(particles).slice(0, MAX_BLEND_RUNS);
+      let remainingParticleBudget = MAX_PARTICLES_PER_FRAME;
+      // Bound draw calls and GPU buffer memory for pathological alternating blend modes.
 
       // Reuse Points/BufferGeometry objects between frames to avoid per-frame GPU allocations.
       while (runPoolRef.current.length < runs.length) {
@@ -205,9 +208,13 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         points.renderOrder = runIndex;
         points.material = materialsRef.current.get(run.blendMode)!;
         const geometry = points.geometry;
-        const count = Math.min(run.particles.length, MAX_PARTICLES_PER_RUN);
+        const count = Math.min(run.particles.length, remainingParticleBudget);
+        remainingParticleBudget -= count;
         geometry.setDrawRange(0, count);
-        if (count === 0) continue;
+        if (count === 0) {
+          points.visible = false;
+          continue;
+        }
 
         const positions = geometry.attributes.position.array as Float32Array;
         const colors = geometry.attributes.color.array as Float32Array;
