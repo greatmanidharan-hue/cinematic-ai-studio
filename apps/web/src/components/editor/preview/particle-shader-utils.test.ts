@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   groupParticlesIntoBlendRuns,
   injectParticleShaderAttributes,
+  limitParticleBlendRuns,
 } from "./particle-shader-utils";
 
 describe("injectParticleShaderAttributes", () => {
@@ -81,5 +82,43 @@ describe("groupParticlesIntoBlendRuns", () => {
 
   it("returns no runs for an empty particle list", () => {
     expect(groupParticlesIntoBlendRuns([])).toEqual([]);
+  });
+});
+
+
+describe("limitParticleBlendRuns", () => {
+  it("caps run count and total particles without changing retained order", () => {
+    const runs = groupParticlesIntoBlendRuns([
+      { id: "a", blendMode: "add" as const },
+      { id: "b", blendMode: "normal" as const },
+      { id: "c", blendMode: "screen" as const },
+      { id: "d", blendMode: "multiply" as const },
+    ]);
+
+    const limited = limitParticleBlendRuns(runs, 3, 2);
+
+    expect(limited.map((run) => run.blendMode)).toEqual(["add", "normal"]);
+    expect(limited.flatMap((run) => run.particles.map((particle) => particle.id)))
+      .toEqual(["a", "b"]);
+  });
+
+  it("keeps a leading portion of the final run when the particle budget ends mid-run", () => {
+    const runs = groupParticlesIntoBlendRuns([
+      { id: "a", blendMode: "add" as const },
+      { id: "b", blendMode: "add" as const },
+      { id: "c", blendMode: "add" as const },
+      { id: "d", blendMode: "normal" as const },
+    ]);
+
+    const limited = limitParticleBlendRuns(runs, 10, 2);
+
+    expect(limited).toEqual([{ blendMode: "add", particles: [{ id: "a", blendMode: "add" }, { id: "b", blendMode: "add" }] }]);
+  });
+
+  it("returns no runs for zero or negative budgets", () => {
+    const runs = groupParticlesIntoBlendRuns([{ id: "a", blendMode: "add" as const }]);
+
+    expect(limitParticleBlendRuns(runs, 0, 10)).toEqual([]);
+    expect(limitParticleBlendRuns(runs, 10, -1)).toEqual([]);
   });
 });
