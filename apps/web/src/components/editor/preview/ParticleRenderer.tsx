@@ -58,6 +58,16 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
 
   const prevEffectIdsRef = useRef<Set<string>>(new Set());
 
+  // The particle engine is shared; release this component's effects on unmount.
+  useEffect(() => {
+    return () => {
+      for (const effectId of prevEffectIdsRef.current) {
+        engine.removeEffect(effectId);
+      }
+      prevEffectIdsRef.current.clear();
+    };
+  }, [engine]);
+
   useEffect(() => {
     const currentIds = new Set(effects.map(e => e.id));
     const prevIds = prevEffectIdsRef.current;
