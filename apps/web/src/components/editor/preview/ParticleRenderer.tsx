@@ -43,10 +43,12 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   const currentTimeRef = useRef<number>(currentTime);
   const lastSimulationTimeRef = useRef<number>(currentTime);
   const lastPausedTimeRef = useRef<number | null>(null);
+  const lastPausedEffectsRevisionRef = useRef<number>(-1);
   const isPlayingRef = useRef<boolean>(isPlaying);
   const maxPointSizeRef = useRef<number>(64);
   const contextLostRef = useRef<boolean>(false);
   const [contextRevision, setContextRevision] = React.useState(0);
+  const [effectsRevision, setEffectsRevision] = React.useState(0);
   const [isReady, setIsReady] = React.useState(false);
 
   const engine = useMemo(() => getParticleEngine(), []);
@@ -74,36 +76,43 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   useEffect(() => {
     const currentIds = new Set(effects.map(e => e.id));
     const prevIds = prevEffectIdsRef.current;
+    let changed = false;
 
     for (const effect of effects) {
       const existingEffect = engine.getEffect(effect.id);
       if (!existingEffect) {
         engine.addEffect(effect);
+        changed = true;
         continue;
       }
 
       // Existing IDs can still receive edited configuration, timing, and enabled state.
       if (JSON.stringify(existingEffect.config) !== JSON.stringify(effect.config)) {
         engine.updateEffect(effect.id, effect.config);
+        changed = true;
       }
       if (
         existingEffect.startTime !== effect.startTime ||
         existingEffect.duration !== effect.duration
       ) {
         engine.updateEffectTiming(effect.id, effect.startTime, effect.duration);
+        changed = true;
       }
       if (existingEffect.enabled !== effect.enabled) {
         engine.toggleEffect(effect.id, effect.enabled);
+        changed = true;
       }
     }
 
     for (const prevId of prevIds) {
       if (!currentIds.has(prevId)) {
         engine.removeEffect(prevId);
+        changed = true;
       }
     }
 
     prevEffectIdsRef.current = currentIds;
+    if (changed) setEffectsRevision((revision) => revision + 1);
   }, [effects, engine]);
 
   useEffect(() => {
@@ -419,9 +428,13 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     if (!isReady || isPlaying || contextLostRef.current) return;
 
     // Rebuild particle history incrementally when the paused playhead changes.
-    if (lastPausedTimeRef.current !== currentTime) {
+    if (
+      lastPausedTimeRef.current !== currentTime ||
+      lastPausedEffectsRevisionRef.current !== effectsRevision
+    ) {
       engine.beginSeek(currentTime);
       lastPausedTimeRef.current = currentTime;
+      lastPausedEffectsRevisionRef.current = effectsRevision;
     }
 
     const advancePausedSeek = () => {
@@ -449,7 +462,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         animationFrameRef.current = null;
       }
     };
-  }, [isPlaying, isReady, contextRevision, currentTime, engine, updateParticles, render]);
+  }, [isPlaying, isReady, contextRevision, effectsRevision, currentTime, engine, updateParticles, render]);
 
   useEffect(() => {
     if (cameraRef.current) {
