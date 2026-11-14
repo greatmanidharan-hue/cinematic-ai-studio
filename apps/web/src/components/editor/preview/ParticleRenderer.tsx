@@ -342,6 +342,17 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         return;
       }
 
+      // Finish an incremental paused-seek reconstruction before resuming
+      // live playback, so playback never continues from a partial particle state.
+      if (engine.isSeeking()) {
+        engine.advanceSeek();
+        lastSimulationTimeRef.current = currentTimeRef.current;
+        updateParticles(engine.getParticles());
+        render();
+        animationFrameRef.current = requestAnimationFrame(animate);
+        return;
+      }
+
       // Use the editor's master timeline so playback-rate changes and seeks
       // stay synchronized with video, audio, and the timeline playhead.
       const timelineTime = currentTimeRef.current;
@@ -368,14 +379,37 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
   useEffect(() => {
     if (!isReady || isPlaying) return;
 
-    // Paused previews must not advance simulation just because React re-rendered.
-    // A manual seek while paused invalidates the old simulation state.
+    // Rebuild particle history incrementally when the paused playhead changes.
     if (lastPausedTimeRef.current !== currentTime) {
-      engine.reset();
+      engine.beginSeek(currentTime);
       lastPausedTimeRef.current = currentTime;
     }
-    updateParticles(engine.getParticles());
-    render();
+
+    const advancePausedSeek = () => {
+      const complete = engine.advanceSeek();
+      updateParticles(engine.getParticles());
+      render();
+
+      if (!complete) {
+        animationFrameRef.current = requestAnimationFrame(advancePausedSeek);
+      } else {
+        animationFrameRef.current = null;
+      }
+    };
+
+    if (engine.isSeeking()) {
+      advancePausedSeek();
+    } else {
+      updateParticles(engine.getParticles());
+      render();
+    }
+
+    return () => {
+      if (animationFrameRef.current !== null) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = null;
+      }
+    };
   }, [isPlaying, isReady, currentTime, engine, updateParticles, render]);
 
   useEffect(() => {
