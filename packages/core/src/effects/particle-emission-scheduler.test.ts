@@ -113,11 +113,14 @@ describe("scheduleParticleEmissions", () => {
     expect(result.remainder).toBeLessThan(1);
   });
 
-  it("normalizes negative fractional accumulators without emitting early", () => {
+  it("normalizes negative fractional accumulators consistently before scheduling", () => {
     const result = scheduleParticleEmissions(0, 0.25, 2, -0.25, 10);
 
-    expect(result.emissionTimes).toHaveLength(0);
-    expect(result.remainder).toBeCloseTo(0.5, 12);
+    // -0.25 wraps to 0.75 fractional progress; another 0.5 progress
+    // crosses one whole emission, with 0.25 left for the next interval.
+    expect(result.emissionTimes).toHaveLength(1);
+    expect(result.emissionTimes[0]).toBeCloseTo(0.125, 12);
+    expect(result.remainder).toBeCloseTo(0.25, 12);
   });
 
 });
