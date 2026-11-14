@@ -288,7 +288,8 @@ export class ParticleEngine {
   private createParticle(
     effect: ParticleEffect,
     center: Vector3,
-    random: RandomSource
+    random: RandomSource,
+    birthTime: number,
   ): Particle {
     const config = effect.config;
     const position = getEmissionPosition(config, center, random);
@@ -297,6 +298,7 @@ export class ParticleEngine {
 
     return {
       id: `${effect.id}-particle-${this.particleCounters.get(effect.id) ?? 0}`,
+      birthTime,
       blendMode: config.blendMode,
       position,
       velocity,
@@ -417,10 +419,10 @@ export class ParticleEngine {
       // drops events inside catch-up time intentionally skipped by the
       // bounded simulation window. Birth-time sub-step integration follows
       // in the next deterministic-simulation step.
-      for (const _emissionTime of schedule.emissionTimes) {
+      for (const emissionTime of schedule.emissionTimes) {
         const random = this.randomGenerators.get(effectId) ?? createSeededRandom(effectId);
         this.randomGenerators.set(effectId, random);
-        emitter.particles.push(this.createParticle(effect, center, random));
+        emitter.particles.push(this.createParticle(effect, center, random, emissionTime));
         this.particleCounters.set(effectId, (this.particleCounters.get(effectId) ?? 0) + 1);
       }
 
