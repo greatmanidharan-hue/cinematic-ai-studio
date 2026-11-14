@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import * as fc from "fast-check";
 import {
+  clampParticlePointSize,
   getParticleBufferCapacity,
   groupParticlesIntoBlendRuns,
   injectParticleShaderAttributes,
@@ -174,5 +175,20 @@ describe("getParticleBufferCapacity", () => {
   it("handles zero and negative inputs safely", () => {
     expect(getParticleBufferCapacity(-2, 0, 10000)).toBe(0);
     expect(getParticleBufferCapacity(10, 0, -1)).toBe(0);
+  });
+});
+
+
+describe("clampParticlePointSize", () => {
+  it("clamps sizes to the supported range", () => {
+    expect(clampParticlePointSize(-2, 64)).toBe(0);
+    expect(clampParticlePointSize(24, 64)).toBe(24);
+    expect(clampParticlePointSize(120, 64)).toBe(64);
+  });
+
+  it("safely handles non-finite sizes and invalid device limits", () => {
+    expect(clampParticlePointSize(Number.NaN, 64)).toBe(0);
+    expect(clampParticlePointSize(10, Number.POSITIVE_INFINITY)).toBe(0);
+    expect(clampParticlePointSize(10, 0)).toBe(0);
   });
 });
