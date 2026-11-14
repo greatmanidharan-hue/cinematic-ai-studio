@@ -28,6 +28,25 @@ describe("injectParticleShaderAttributes", () => {
     expect(shader.fragmentShader).toContain("diffuseColor.a *= vParticleAlpha;");
   });
 
+
+  it("replaces the built-in PointsMaterial size assignment", () => {
+    const shader = {
+      vertexShader: [
+        "#include <common>",
+        "void main() {",
+        "  #include <project_vertex>",
+        "  gl_PointSize = size;",
+        "}",
+      ].join("\n"),
+      fragmentShader: "#include <common>\nvoid main() {}",
+    };
+
+    injectParticleShaderAttributes(shader);
+
+    expect(shader.vertexShader).toContain("gl_PointSize = particleSize;");
+    expect(shader.vertexShader).not.toContain("gl_PointSize = size;");
+  });
+
   it("keeps shader source unchanged when expected Three.js chunks are absent", () => {
     const shader = { vertexShader: "void main() {}", fragmentShader: "void main() {}" };
 
