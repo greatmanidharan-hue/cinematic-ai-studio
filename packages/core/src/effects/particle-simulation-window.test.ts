@@ -31,6 +31,26 @@ describe("getBoundedSimulationWindow", () => {
     expect(result.droppedTime).toBe(0);
   });
 
+  it("does not subtract the fractional remainder twice when steps are retained", () => {
+    const result = getBoundedSimulationWindow(0, 0.011, 0, 0.008, 8);
+
+    expect(result.steps).toBe(1);
+    expect(result.startTime).toBeCloseTo(0, 12);
+    expect(result.endTime).toBeCloseTo(0.008, 12);
+    expect(result.remainder).toBeCloseTo(0.003, 12);
+  });
+
+  it("keeps the retained step window contiguous after carrying a remainder", () => {
+    const first = getBoundedSimulationWindow(0, 0.011, 0, 0.008, 8);
+    const second = getBoundedSimulationWindow(0.011, 0.005, first.remainder, 0.008, 8);
+
+    expect(first.steps).toBe(1);
+    expect(second.steps).toBe(1);
+    expect(second.startTime).toBeCloseTo(first.endTime, 12);
+    expect(second.endTime).toBeCloseTo(0.016, 12);
+    expect(second.remainder).toBeCloseTo(0, 12);
+  });
+
   it("returns an empty safe window for invalid inputs", () => {
     expect(getBoundedSimulationWindow(1, Number.NaN, 0)).toEqual({
       startTime: 1,
