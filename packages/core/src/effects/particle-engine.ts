@@ -361,6 +361,13 @@ export class ParticleEngine {
         emitter.emissionAccumulator -= 1;
       }
 
+      // Do not bank whole emissions while the emitter is at capacity.
+      // Keeping only the fractional remainder prevents a burst when slots
+      // become available again after existing particles expire.
+      if (emitter.particles.length >= config.particleCount) {
+        emitter.emissionAccumulator %= 1;
+      }
+
     }
   }
 
