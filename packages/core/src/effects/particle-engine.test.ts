@@ -427,8 +427,8 @@ describe("ParticleEngine pause and resume timing", () => {
       enabled: true,
       config: {
         ...DEFAULT_PARTICLE_CONFIG,
-        particleCount: 1,
-        emissionRate: 1,
+        particleCount: 10,
+        emissionRate: 120,
         lifetime: { min: 10, max: 10 },
         turbulence: 0,
       },
@@ -447,7 +447,7 @@ describe("ParticleEngine pause and resume timing", () => {
 
     expect(engine.getParticles(effect.id)).toHaveLength(0);
     engine.update(0.016, 0.008);
-    expect(engine.getParticles(effect.id)).toHaveLength(0);
+    expect(engine.getParticles(effect.id)).toHaveLength(1);
     engine.dispose();
   });
 
