@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useCallback, useMemo } from "react";
 import * as THREE from "three";
-import { groupParticlesIntoBlendRuns, injectParticleShaderAttributes } from "./particle-shader-utils";
+import { groupParticlesIntoBlendRuns, injectParticleShaderAttributes, limitParticleBlendRuns } from "./particle-shader-utils";
 import {
   getParticleEngine,
   type Particle,
@@ -179,9 +179,11 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
 
       const MAX_PARTICLES_PER_FRAME = 10000;
       const MAX_BLEND_RUNS = 64;
-      const runs = groupParticlesIntoBlendRuns(particles).slice(0, MAX_BLEND_RUNS);
-      let remainingParticleBudget = MAX_PARTICLES_PER_FRAME;
-      // Bound draw calls and GPU buffer memory for pathological alternating blend modes.
+      const runs = limitParticleBlendRuns(
+        groupParticlesIntoBlendRuns(particles),
+        MAX_BLEND_RUNS,
+        MAX_PARTICLES_PER_FRAME,
+      );
 
       // Reuse Points/BufferGeometry objects between frames to avoid per-frame GPU allocations.
       while (runPoolRef.current.length < runs.length) {
@@ -208,8 +210,7 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
         points.renderOrder = runIndex;
         points.material = materialsRef.current.get(run.blendMode)!;
         const geometry = points.geometry;
-        const count = Math.min(run.particles.length, remainingParticleBudget);
-        remainingParticleBudget -= count;
+        const count = run.particles.length;
         geometry.setDrawRange(0, count);
         if (count === 0) {
           points.visible = false;
