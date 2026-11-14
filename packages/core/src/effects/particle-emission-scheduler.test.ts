@@ -75,6 +75,13 @@ describe("scheduleParticleEmissions", () => {
     expect(result.remainder).toBeCloseTo(0.75, 12);
   });
 
+  it("normalizes negative fractional progress for empty intervals", () => {
+    const result = scheduleParticleEmissions(1, 1, 2, -0.25, 10);
+
+    expect(result.emissionTimes).toHaveLength(0);
+    expect(result.remainder).toBeCloseTo(0.75, 12);
+  });
+
   it("keeps rounded boundary emissions inside the requested interval", () => {
     const result = scheduleParticleEmissions(0, 0.1, 10, 0, 10);
 
