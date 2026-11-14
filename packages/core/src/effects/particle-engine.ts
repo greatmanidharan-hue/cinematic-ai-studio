@@ -361,28 +361,58 @@ export class ParticleEngine {
       };
 
 
-      // Integrate existing particles at a stable timestep; new emissions remain
-      // at the end of the frame to preserve the established emission contract.
+      // Process every accepted fixed step chronologically. Emissions are
+      // created at their scheduled timestamp before that step is integrated,
+      // so a new particle receives only the portion after its birth time.
+      const effectEndTime = effect.startTime + effect.duration;
       for (let stepIndex = 0; stepIndex < simulationWindow.steps; stepIndex++) {
-        for (const particle of emitter.particles) {
-          if (!particle.active) continue;
+        const stepStart = simulationWindow.startTime + stepIndex * this.fixedStep;
+        const stepEnd = stepStart + this.fixedStep;
+        const activeStepStart = Math.max(stepStart, effect.startTime);
+        const activeStepEnd = Math.min(stepEnd, effectEndTime);
 
-          particle.velocity.x += (particle.acceleration.x + config.wind.x) * this.fixedStep;
-          particle.velocity.y += (particle.acceleration.y + config.wind.y) * this.fixedStep;
-          particle.velocity.z += (particle.acceleration.z + config.wind.z) * this.fixedStep;
+        if (activeStepEnd > activeStepStart) {
+          const schedule = scheduleParticleEmissions(
+            activeStepStart,
+            activeStepEnd,
+            config.emissionRate,
+            emitter.emissionAccumulator,
+            Math.max(0, config.particleCount - emitter.particles.length),
+          );
+          emitter.emissionAccumulator = schedule.remainder;
+
+          for (const emissionTime of schedule.emissionTimes) {
+            const random = this.randomGenerators.get(effectId) ?? createSeededRandom(effectId);
+            this.randomGenerators.set(effectId, random);
+            emitter.particles.push(this.createParticle(effect, center, random, emissionTime));
+            this.particleCounters.set(effectId, (this.particleCounters.get(effectId) ?? 0) + 1);
+          }
+        }
+
+        for (const particle of emitter.particles) {
+          if (!particle.active || particle.birthTime >= stepEnd) continue;
+
+          const integrationStart = Math.max(stepStart, particle.birthTime);
+          const integrationEnd = Math.min(stepEnd, effectEndTime);
+          const stepDelta = Math.max(0, integrationEnd - integrationStart);
+          if (stepDelta <= 0) continue;
+
+          particle.velocity.x += (particle.acceleration.x + config.wind.x) * stepDelta;
+          particle.velocity.y += (particle.acceleration.y + config.wind.y) * stepDelta;
+          particle.velocity.z += (particle.acceleration.z + config.wind.z) * stepDelta;
 
           if (config.turbulence > 0) {
             const random = this.randomGenerators.get(effectId) ?? createSeededRandom(effectId);
             this.randomGenerators.set(effectId, random);
-            particle.velocity.x += randomRange(-config.turbulence, config.turbulence, random) * this.fixedStep;
-            particle.velocity.y += randomRange(-config.turbulence, config.turbulence, random) * this.fixedStep;
+            particle.velocity.x += randomRange(-config.turbulence, config.turbulence, random) * stepDelta;
+            particle.velocity.y += randomRange(-config.turbulence, config.turbulence, random) * stepDelta;
           }
 
-          particle.position.x += particle.velocity.x * this.fixedStep;
-          particle.position.y += particle.velocity.y * this.fixedStep;
-          particle.position.z += particle.velocity.z * this.fixedStep;
-          particle.rotation += particle.rotationSpeed * this.fixedStep;
-          particle.age += this.fixedStep;
+          particle.position.x += particle.velocity.x * stepDelta;
+          particle.position.y += particle.velocity.y * stepDelta;
+          particle.position.z += particle.velocity.z * stepDelta;
+          particle.rotation += particle.rotationSpeed * stepDelta;
+          particle.age += stepDelta;
 
           const lifeProgress = particle.age / particle.lifetime;
           if (lifeProgress < config.fadeIn) {
@@ -397,40 +427,16 @@ export class ParticleEngine {
 
           if (particle.age >= particle.lifetime) particle.active = false;
         }
+
+        emitter.particles = emitter.particles.filter((particle) => particle.active);
+        if (emitter.particles.length >= config.particleCount) {
+          emitter.emissionAccumulator %= 1;
+        }
       }
 
-      emitter.particles = emitter.particles.filter((p) => p.active);
-
-      // Emit at the end of this simulation step so new particles do not
-      // incorrectly receive the entire frame's movement and aging.
-      const effectEndTime = effect.startTime + effect.duration;
-      const activeSimulationStart = Math.max(simulationWindow.startTime, effect.startTime);
-      const activeSimulationEnd = Math.min(simulationWindow.endTime, effectEndTime);
-      const schedule = scheduleParticleEmissions(
-        activeSimulationStart,
-        activeSimulationEnd,
-        config.emissionRate,
-        emitter.emissionAccumulator,
-        Math.max(0, config.particleCount - emitter.particles.length),
-      );
-      emitter.emissionAccumulator = schedule.remainder;
-
-      // This stage aligns emission counts with accepted simulation time and
-      // drops events inside catch-up time intentionally skipped by the
-      // bounded simulation window. Birth-time sub-step integration follows
-      // in the next deterministic-simulation step.
-      for (const emissionTime of schedule.emissionTimes) {
-        const random = this.randomGenerators.get(effectId) ?? createSeededRandom(effectId);
-        this.randomGenerators.set(effectId, random);
-        emitter.particles.push(this.createParticle(effect, center, random, emissionTime));
-        this.particleCounters.set(effectId, (this.particleCounters.get(effectId) ?? 0) + 1);
-      }
-
-      // Never bank whole emissions while at capacity.
-      if (emitter.particles.length >= config.particleCount) {
-        emitter.emissionAccumulator %= 1;
-      }
-
+      // Keep the emitter's fractional emission progress; whole due emissions
+      // are discarded at capacity and are never banked for a later burst.
+      emitter.particles = emitter.particles.filter((particle) => particle.active);
     }
   }
 
