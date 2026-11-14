@@ -413,3 +413,71 @@ describe("ParticleEngine frame-rate consistency", () => {
     thirtyFps.dispose();
     sixtyFps.dispose();
   });
+
+
+describe("ParticleEngine pause and resume timing", () => {
+  it("preserves a fractional fixed-step remainder while paused", () => {
+    const engine = new ParticleEngine();
+    const effect: ParticleEffect = {
+      id: "pause-resume-remainder",
+      clipId: "clip-1",
+      type: "dissolve",
+      startTime: 0,
+      duration: 10,
+      enabled: true,
+      config: {
+        ...DEFAULT_PARTICLE_CONFIG,
+        particleCount: 1,
+        emissionRate: 1,
+        lifetime: { min: 10, max: 10 },
+        turbulence: 0,
+      },
+    };
+
+    engine.addEffect(effect);
+    engine.update(0, 0);
+    engine.update(0.004, 0.004);
+    const particle = engine.getParticles(effect.id)[0];
+    expect(particle).toBeUndefined();
+
+    // A paused frame contributes no simulation time and must not consume
+    // the fractional remainder accumulated before the pause.
+    engine.update(0.004, 0);
+    engine.update(0.008, 0.004);
+
+    expect(engine.getParticles(effect.id)).toHaveLength(0);
+    engine.update(0.016, 0.008);
+    expect(engine.getParticles(effect.id)).toHaveLength(0);
+    engine.dispose();
+  });
+
+  it("does not advance existing particle age during a paused update", () => {
+    const engine = new ParticleEngine();
+    const effect: ParticleEffect = {
+      id: "pause-freeze",
+      clipId: "clip-1",
+      type: "dissolve",
+      startTime: 0,
+      duration: 10,
+      enabled: true,
+      config: {
+        ...DEFAULT_PARTICLE_CONFIG,
+        particleCount: 1,
+        emissionRate: 1,
+        lifetime: { min: 10, max: 10 },
+        turbulence: 0,
+      },
+    };
+
+    engine.addEffect(effect);
+    engine.update(0, 0);
+    engine.update(1 / 120, 1 / 120);
+    const particle = engine.getParticles(effect.id)[0];
+    expect(particle).toBeDefined();
+    const ageBeforePause = particle.age;
+
+    engine.update(1 / 120, 0);
+    expect(particle.age).toBe(ageBeforePause);
+    engine.dispose();
+  });
+});
