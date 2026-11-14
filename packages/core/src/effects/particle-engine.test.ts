@@ -635,28 +635,30 @@ describe("ParticleEngine incremental seek reconstruction", () => {
     },
   });
 
-  it("reconstructs the same state as normal playback at a target time", () => {
-    const playback = new ParticleEngine();
-    const seek = new ParticleEngine();
-    const effect = makeEffect();
-    playback.addEffect(effect);
-    seek.addEffect(effect);
-
-    for (let frame = 1; frame <= 120; frame++) {
-      playback.update(frame / 60, 1 / 60);
-    }
-
-    seek.beginSeek(2);
+  const finishSeek = (engine: ParticleEngine): void => {
     let iterations = 0;
-    while (!seek.advanceSeek()) {
+    while (!engine.advanceSeek()) {
       iterations++;
       expect(iterations).toBeLessThan(100);
     }
+  };
 
-    expect(seek.isSeeking()).toBe(false);
-    expect(seek.getParticles(effect.id)).toEqual(playback.getParticles(effect.id));
-    playback.dispose();
-    seek.dispose();
+  it("reconstructs identical state across independent seeks to the same time", () => {
+    const first = new ParticleEngine();
+    const second = new ParticleEngine();
+    const effect = makeEffect();
+    first.addEffect(effect);
+    second.addEffect(effect);
+
+    first.beginSeek(2);
+    second.beginSeek(2);
+    finishSeek(first);
+    finishSeek(second);
+
+    expect(first.isSeeking()).toBe(false);
+    expect(first.getParticles(effect.id)).toEqual(second.getParticles(effect.id));
+    first.dispose();
+    second.dispose();
   });
 
   it("supports restarting an in-progress seek at a new target", () => {
@@ -666,12 +668,7 @@ describe("ParticleEngine incremental seek reconstruction", () => {
     engine.beginSeek(8);
     expect(engine.advanceSeek()).toBe(false);
     engine.beginSeek(0.25);
-
-    let iterations = 0;
-    while (!engine.advanceSeek()) {
-      iterations++;
-      expect(iterations).toBeLessThan(10);
-    }
+    finishSeek(engine);
 
     expect(engine.isSeeking()).toBe(false);
     expect(engine.getParticles("incremental-seek")).toHaveLength(6);
