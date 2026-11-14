@@ -76,8 +76,21 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
       const existingEffect = engine.getEffect(effect.id);
       if (!existingEffect) {
         engine.addEffect(effect);
-      } else if (!prevIds.has(effect.id)) {
+        continue;
+      }
+
+      // Existing IDs can still receive edited configuration, timing, and enabled state.
+      if (JSON.stringify(existingEffect.config) !== JSON.stringify(effect.config)) {
         engine.updateEffect(effect.id, effect.config);
+      }
+      if (
+        existingEffect.startTime !== effect.startTime ||
+        existingEffect.duration !== effect.duration
+      ) {
+        engine.updateEffectTiming(effect.id, effect.startTime, effect.duration);
+      }
+      if (existingEffect.enabled !== effect.enabled) {
+        engine.toggleEffect(effect.id, effect.enabled);
       }
     }
 
