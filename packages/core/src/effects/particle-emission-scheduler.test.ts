@@ -49,7 +49,7 @@ describe("scheduleParticleEmissions", () => {
     const whole = scheduleParticleEmissions(0, 2, 17.5, 0.3, 100);
     const partitions = [0.07, 0.19, 0.23, 0.41, 0.62, 0.48];
     let cursor = 0;
-    let remainder = 0;
+    let remainder = 0.3;
     const times: number[] = [];
 
     for (const delta of partitions) {
