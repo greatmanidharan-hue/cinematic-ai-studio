@@ -122,11 +122,19 @@ export const ParticleRenderer: React.FC<ParticleRendererProps> = ({
     camera.position.z = 100;
     cameraRef.current = camera;
 
-    const renderer = new THREE.WebGLRenderer({
-      alpha: true,
-      antialias: true,
-      premultipliedAlpha: false,
-    });
+    // WebGL may be unavailable or blocked by the browser/device. Keep the
+    // editor usable instead of letting renderer construction crash the effect.
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        alpha: true,
+        antialias: true,
+        premultipliedAlpha: false,
+      });
+    } catch (error) {
+      console.warn("Particle preview WebGL renderer is unavailable.", error);
+      return;
+    }
     renderer.setSize(width, height, false);
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.setClearColor(0x000000, 0);
