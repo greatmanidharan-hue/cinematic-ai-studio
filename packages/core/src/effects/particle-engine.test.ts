@@ -789,6 +789,34 @@ describe("ParticleEngine playback and seek parity", () => {
     });
   };
 
+  it("keeps particle state aligned across irregular frame partitions", () => {
+    const regular = new ParticleEngine();
+    const irregular = new ParticleEngine();
+    const effect = makeEffect();
+    regular.addEffect(effect);
+    irregular.addEffect(effect);
+
+    for (let frame = 1; frame <= 60; frame++) {
+      regular.update(frame / 60, 1 / 60);
+    }
+
+    const partitions = [0.013, 0.021, 0.007, 0.031, 0.019, 0.009, 0.025, 0.041, 0.034, 0.02, 0.03, 0.05, 0.04, 0.03, 0.05, 0.04, 0.04, 0.05, 0.05, 0.4];
+    let timeline = 0;
+    for (const delta of partitions) {
+      timeline += delta;
+      irregular.update(timeline, delta);
+    }
+
+    expect(timeline).toBeCloseTo(1, 12);
+    expectParticleStatesClose(
+      irregular.getParticles(effect.id),
+      regular.getParticles(effect.id),
+    );
+
+    regular.dispose();
+    irregular.dispose();
+  });
+
   it("keeps particle state aligned across 30 FPS, 60 FPS, and incremental seek", () => {
     const thirtyFps = new ParticleEngine();
     const sixtyFps = new ParticleEngine();
