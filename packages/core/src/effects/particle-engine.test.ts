@@ -752,6 +752,79 @@ describe("ParticleEngine read isolation", () => {
 });
 
 
+describe("ParticleEngine playback and seek parity", () => {
+  const makeEffect = (): ParticleEffect => ({
+    id: "playback-seek-parity",
+    clipId: "clip-parity",
+    type: "dissolve",
+    startTime: 0,
+    duration: 10,
+    enabled: true,
+    config: {
+      ...DEFAULT_PARTICLE_CONFIG,
+      particleCount: 100,
+      emissionRate: 12,
+      lifetime: { min: 10, max: 10 },
+      turbulence: 3,
+      gravity: 8,
+      wind: { x: 1, y: -0.5, z: 0 },
+    },
+  });
+
+  const expectParticleStatesClose = (actual: Particle[], expected: Particle[]): void => {
+    expect(actual).toHaveLength(expected.length);
+    actual.forEach((particle, index) => {
+      const other = expected[index];
+      expect(particle.id).toBe(other.id);
+      expect(particle.birthTime).toBeCloseTo(other.birthTime, 9);
+      expect(particle.age).toBeCloseTo(other.age, 9);
+      expect(particle.position.x).toBeCloseTo(other.position.x, 7);
+      expect(particle.position.y).toBeCloseTo(other.position.y, 7);
+      expect(particle.position.z).toBeCloseTo(other.position.z, 7);
+      expect(particle.velocity.x).toBeCloseTo(other.velocity.x, 7);
+      expect(particle.velocity.y).toBeCloseTo(other.velocity.y, 7);
+      expect(particle.velocity.z).toBeCloseTo(other.velocity.z, 7);
+      expect(particle.rotation).toBeCloseTo(other.rotation, 7);
+      expect(particle.opacity).toBeCloseTo(other.opacity, 7);
+    });
+  };
+
+  it("keeps particle state aligned across 30 FPS, 60 FPS, and incremental seek", () => {
+    const thirtyFps = new ParticleEngine();
+    const sixtyFps = new ParticleEngine();
+    const sought = new ParticleEngine();
+    const effect = makeEffect();
+    thirtyFps.addEffect(effect);
+    sixtyFps.addEffect(effect);
+    sought.addEffect(effect);
+
+    for (let frame = 1; frame <= 30; frame++) {
+      thirtyFps.update(frame / 30, 1 / 30);
+    }
+    for (let frame = 1; frame <= 60; frame++) {
+      sixtyFps.update(frame / 60, 1 / 60);
+    }
+
+    sought.beginSeek(1);
+    let iterations = 0;
+    while (!sought.advanceSeek()) {
+      iterations++;
+      expect(iterations).toBeLessThan(100);
+    }
+
+    const thirty = thirtyFps.getParticles(effect.id);
+    const sixty = sixtyFps.getParticles(effect.id);
+    const seek = sought.getParticles(effect.id);
+    expectParticleStatesClose(sixty, thirty);
+    expectParticleStatesClose(seek, thirty);
+
+    thirtyFps.dispose();
+    sixtyFps.dispose();
+    sought.dispose();
+  });
+});
+
+
 describe("ParticleEngine incremental seek reconstruction", () => {
   const makeEffect = (): ParticleEffect => ({
     id: "incremental-seek",
