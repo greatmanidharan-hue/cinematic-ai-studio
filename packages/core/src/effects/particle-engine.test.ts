@@ -184,7 +184,8 @@ describe("ParticleEngine timeline behavior", () => {
   it("does not age particles during the frame in which they are emitted", () => {
     const engine = new ParticleEngine();
     const effect = makeTimelineEffect();
-    engine.updateEffect(effect.id, { emissionRate: 1, particleCount: 1 });
+    effect.config.emissionRate = 1;
+    effect.config.particleCount = 1;
     engine.addEffect(effect);
 
     engine.update(1, 1);
