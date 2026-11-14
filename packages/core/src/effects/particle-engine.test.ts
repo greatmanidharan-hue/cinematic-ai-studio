@@ -93,6 +93,49 @@ describe("ParticleEngine effect updates", () => {
     engine.dispose();
   });
 
+  it("reconstructs edited configuration deterministically when seeking while paused", () => {
+    const editedEngine = new ParticleEngine();
+    const referenceEngine = new ParticleEngine();
+    const original = makeEffect("edited-seek-effect");
+    original.config.emissionRate = 10;
+    original.config.particleCount = 8;
+    original.config.lifetime = { min: 10, max: 10 };
+    original.config.turbulence = 2;
+
+    const editedConfig = { ...original.config, blendMode: "screen" as const };
+    const referenceEffect: ParticleEffect = {
+      ...original,
+      config: editedConfig,
+    };
+
+    editedEngine.addEffect(original);
+    editedEngine.updateEffect(original.id, { blendMode: "screen" });
+    referenceEngine.addEffect(referenceEffect);
+
+    editedEngine.beginSeek(2);
+    referenceEngine.beginSeek(2);
+    let iterations = 0;
+    while (!editedEngine.advanceSeek()) {
+      iterations++;
+      expect(iterations).toBeLessThan(100);
+    }
+    iterations = 0;
+    while (!referenceEngine.advanceSeek()) {
+      iterations++;
+      expect(iterations).toBeLessThan(100);
+    }
+
+    expect(editedEngine.getParticles(original.id)).toEqual(
+      referenceEngine.getParticles(referenceEffect.id),
+    );
+    expect(editedEngine.getParticles(original.id).every(
+      (particle) => particle.blendMode === "screen",
+    )).toBe(true);
+
+    editedEngine.dispose();
+    referenceEngine.dispose();
+  });
+
   it("resets only the edited effect's particles when its timing changes", () => {
     const engine = new ParticleEngine();
     const edited = makeEffect("retimed-effect");
