@@ -303,6 +303,16 @@ export class VideoEngine {
   }
 
   private setCachedInterpFrame(key: string, bitmap: ImageBitmap): void {
+    const existing = this.interpFrameCache.get(key);
+    if (existing) {
+      try {
+        existing.bitmap.close();
+      } catch {
+        // The cached bitmap may already have been closed.
+      }
+      this.interpFrameCache.delete(key);
+    }
+
     if (this.interpFrameCache.size >= VideoEngine.INTERP_FRAME_CACHE_MAX) {
       let oldestKey = "";
       let oldestTime = Infinity;
@@ -2528,6 +2538,17 @@ export class VideoEngine {
   }
 
   private cacheFrame(key: string, image: ImageBitmap, mediaId: string): void {
+    // A repeated decode for the same frame key must release the old bitmap.
+    const existing = this.frameCache.get(key);
+    if (existing) {
+      try {
+        existing.image.close();
+      } catch {
+        // The cached bitmap may already have been closed.
+      }
+      this.frameCache.delete(key);
+    }
+
     // Estimate frame size (4 bytes per pixel for RGBA)
     const sizeBytes = image.width * image.height * 4;
     this.evictIfNeeded(sizeBytes);
@@ -2612,6 +2633,15 @@ export class VideoEngine {
     }
     this.frameCache.clear();
     this.cacheStats = { hits: 0, misses: 0 };
+
+    for (const entry of this.interpFrameCache.values()) {
+      try {
+        entry.bitmap.close();
+      } catch {
+        // Continue clearing remaining cached frames.
+      }
+    }
+    this.interpFrameCache.clear();
 
     for (const gifCache of this.gifFrameCache.values()) {
       for (const frame of gifCache.frames) {
