@@ -30,7 +30,7 @@ export interface InitResponse {
 export type WorkerRequest = DecodeRequest | InitRequest;
 export type WorkerResponse = DecodeResponse | InitResponse;
 
-interface CachedResource {
+export interface CachedResource {
   input: unknown;
   sink: unknown;
   videoTrack: unknown;
@@ -45,7 +45,7 @@ const MAX_CACHED_RESOURCES = 20;
 const resourceCache = new Map<string, CachedResource>();
 const resourcePromises = new Map<string, Promise<CachedResource | null>>();
 
-function disposeResource(resource: CachedResource): void {
+export function disposeResource(resource: CachedResource): void {
   if (resource.activeUses > 0) {
     resource.disposePending = true;
     return;
@@ -58,12 +58,12 @@ function disposeResource(resource: CachedResource): void {
   }
 }
 
-function acquireResource(resource: CachedResource): CachedResource {
+export function acquireResource(resource: CachedResource): CachedResource {
   resource.activeUses++;
   return resource;
 }
 
-function releaseResource(resource: CachedResource): void {
+export function releaseResource(resource: CachedResource): void {
   resource.activeUses = Math.max(0, resource.activeUses - 1);
   if (resource.activeUses === 0 && resource.disposePending) {
     resource.disposePending = false;
