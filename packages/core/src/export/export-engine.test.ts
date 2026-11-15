@@ -1394,6 +1394,26 @@ describe("ExportEngine", () => {
       expect(mockUpscalingEngine.dispose).toHaveBeenCalledTimes(1);
     });
 
+    it("does not register duplicate device-loss listeners after dispose and reinitialize", async () => {
+      await exportEngine.initialize();
+      const renderer = {
+        onDeviceLost: vi.fn(),
+      };
+      mockVideoEngine.getGPUCompositor.mockReturnValue({
+        getRenderer: () => renderer,
+        getDevice: () => ({}),
+      });
+
+      await exportEngine.initializeGPUForExport(1280, 720);
+      expect(renderer.onDeviceLost).toHaveBeenCalledTimes(1);
+
+      exportEngine.dispose();
+      await exportEngine.initialize();
+      await exportEngine.initializeGPUForExport(1280, 720);
+
+      expect(renderer.onDeviceLost).toHaveBeenCalledTimes(1);
+    });
+
     it("fails GPU setup and disposes partial upscaling resources when pipeline initialization fails", async () => {
       await exportEngine.initialize();
       mockVideoEngine.getGPUCompositor.mockReturnValueOnce({
