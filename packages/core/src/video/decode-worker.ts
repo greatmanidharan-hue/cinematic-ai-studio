@@ -41,6 +41,7 @@ interface CachedResource {
 
 const MAX_CACHED_RESOURCES = 20;
 const resourceCache = new Map<string, CachedResource>();
+const resourcePromises = new Map<string, Promise<CachedResource | null>>();
 
 function disposeResource(resource: CachedResource): void {
   const input = resource.input as { [Symbol.dispose]?: () => void };
@@ -97,8 +98,35 @@ async function getOrCreateResources(
     resourceCache.set(clipId, cached);
     return cached;
   }
+  const inFlight = resourcePromises.get(clipId);
+  if (inFlight) {
+    const resource = await inFlight;
+    if (
+      resource &&
+      resource.blob === blob &&
+      resource.width === width &&
+      resource.height === height
+    ) return resource;
+  }
   if (cached) evictResource(clipId);
 
+  const creation = createResources(clipId, blob, width, height);
+  resourcePromises.set(clipId, creation);
+  try {
+    return await creation;
+  } finally {
+    if (resourcePromises.get(clipId) === creation) {
+      resourcePromises.delete(clipId);
+    }
+  }
+}
+
+async function createResources(
+  clipId: string,
+  blob: Blob,
+  width: number,
+  height: number,
+): Promise<CachedResource | null> {
   try {
     const mediabunny = await loadMediaBunny();
     if (!mediabunny) {
@@ -250,6 +278,7 @@ workerSelf.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 export const decodeWorkerCode = `
 const MAX_CACHED_RESOURCES = 20;
 const resourceCache = new Map();
+const resourcePromises = new Map();
 let workerId = 0;
 let mediabunnyModule = null;
 let mediabunnyAvailable = false;
@@ -300,8 +329,25 @@ async function getOrCreateResources(clipId, blob, width, height) {
  resourceCache.set(clipId, cached);
  return cached;
  }
+ const inFlight = resourcePromises.get(clipId);
+ if (inFlight) {
+ const resource = await inFlight;
+ if (resource && resource.blob === blob && resource.width === width && resource.height === height) {
+ return resource;
+ }
+ }
  if (cached) evictResource(clipId);
 
+ const creation = createResources(clipId, blob, width, height);
+ resourcePromises.set(clipId, creation);
+ try {
+ return await creation;
+ } finally {
+ if (resourcePromises.get(clipId) === creation) resourcePromises.delete(clipId);
+ }
+}
+
+async function createResources(clipId, blob, width, height) {
  try {
  const { Input, ALL_FORMATS, BlobSource, CanvasSink } = mediabunnyModule;
 
