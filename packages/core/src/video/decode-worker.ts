@@ -34,10 +34,29 @@ interface CachedResource {
   input: unknown;
   sink: unknown;
   videoTrack: unknown;
-  blobUrl: string;
+  blob: Blob;
+  width: number;
+  height: number;
 }
 
+const MAX_CACHED_RESOURCES = 20;
 const resourceCache = new Map<string, CachedResource>();
+
+function disposeResource(resource: CachedResource): void {
+  const input = resource.input as { [Symbol.dispose]?: () => void };
+  try {
+    input[Symbol.dispose]?.();
+  } catch {
+    // Resource eviction must continue even if a decoder is already disposed.
+  }
+}
+
+function evictResource(clipId: string): void {
+  const resource = resourceCache.get(clipId);
+  if (!resource) return;
+  resourceCache.delete(clipId);
+  disposeResource(resource);
+}
 let workerId = 0;
 let mediabunnyModule: typeof import("mediabunny") | null = null;
 
@@ -67,9 +86,18 @@ async function getOrCreateResources(
   height: number,
 ): Promise<CachedResource | null> {
   const cached = resourceCache.get(clipId);
-  if (cached) {
+  if (
+    cached &&
+    cached.blob === blob &&
+    cached.width === width &&
+    cached.height === height
+  ) {
+    // Refresh insertion order for LRU eviction.
+    resourceCache.delete(clipId);
+    resourceCache.set(clipId, cached);
     return cached;
   }
+  if (cached) evictResource(clipId);
 
   try {
     const mediabunny = await loadMediaBunny();
@@ -100,10 +128,17 @@ async function getOrCreateResources(
       input,
       sink,
       videoTrack,
-      blobUrl: URL.createObjectURL(blob),
+      blob,
+      width,
+      height,
     };
 
     resourceCache.set(clipId, resource);
+    while (resourceCache.size > MAX_CACHED_RESOURCES) {
+      const oldestClipId = resourceCache.keys().next().value;
+      if (oldestClipId === undefined) break;
+      evictResource(oldestClipId);
+    }
     return resource;
   } catch (error) {
     console.error(
@@ -174,19 +209,11 @@ async function decodeFrame(request: DecodeRequest): Promise<DecodeResponse> {
 export function clearCache(clipId?: string): void {
   if (clipId) {
     const cached = resourceCache.get(clipId);
-    if (cached) {
-      URL.revokeObjectURL(cached.blobUrl);
-      const input = cached.input as { [Symbol.dispose]?: () => void };
-      input[Symbol.dispose]?.();
-      resourceCache.delete(clipId);
-    }
+    if (cached) evictResource(clipId);
   } else {
-    for (const [, cached] of resourceCache) {
-      URL.revokeObjectURL(cached.blobUrl);
-      const input = cached.input as { [Symbol.dispose]?: () => void };
-      input[Symbol.dispose]?.();
+    for (const clipId of resourceCache.keys()) {
+      evictResource(clipId);
     }
-    resourceCache.clear();
   }
 }
 
@@ -221,6 +248,7 @@ workerSelf.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 };
 
 export const decodeWorkerCode = `
+const MAX_CACHED_RESOURCES = 20;
 const resourceCache = new Map();
 let workerId = 0;
 let mediabunnyModule = null;
@@ -246,15 +274,33 @@ async function loadMediaBunny() {
  }
 }
 
+function disposeResource(resource) {
+ try {
+ resource.input[Symbol.dispose]?.();
+ } catch (error) {
+ // Continue cleanup even if the input is already disposed.
+ }
+}
+
+function evictResource(clipId) {
+ const resource = resourceCache.get(clipId);
+ if (!resource) return;
+ resourceCache.delete(clipId);
+ disposeResource(resource);
+}
+
 async function getOrCreateResources(clipId, blob, width, height) {
  if (!mediabunnyAvailable || !mediabunnyModule) {
  return null;
  }
 
  const cached = resourceCache.get(clipId);
- if (cached) {
+ if (cached && cached.blob === blob && cached.width === width && cached.height === height) {
+ resourceCache.delete(clipId);
+ resourceCache.set(clipId, cached);
  return cached;
  }
+ if (cached) evictResource(clipId);
 
  try {
  const { Input, ALL_FORMATS, BlobSource, CanvasSink } = mediabunnyModule;
@@ -275,14 +321,13 @@ async function getOrCreateResources(clipId, blob, width, height) {
  fit: "contain",
  });
 
- const resource = {
- input,
- sink,
- videoTrack,
- blobUrl: URL.createObjectURL(blob),
- };
-
+ const resource = { input, sink, videoTrack, blob, width, height };
  resourceCache.set(clipId, resource);
+ while (resourceCache.size > MAX_CACHED_RESOURCES) {
+ const oldestClipId = resourceCache.keys().next().value;
+ if (oldestClipId === undefined) break;
+ evictResource(oldestClipId);
+ }
  return resource;
  } catch (error) {
  return null;
