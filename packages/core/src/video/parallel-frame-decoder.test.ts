@@ -488,3 +488,54 @@ describe("ParallelFrameDecoder cache race handling", () => {
     expect(decoder.frameCache.get("new")?.bitmap).toBe(fresh);
   });
 });
+
+describe("ParallelFrameDecoder worker scheduling", () => {
+  it("rotates equally-loaded workers instead of favoring the first worker", () => {
+    const decoder = Object.create(
+      ParallelFrameDecoder.prototype,
+    ) as ParallelFrameDecoder & {
+      workers: Array<{
+        workerId: number;
+        failed: boolean;
+        pendingRequests: Map<string, unknown>;
+      }>;
+      nextWorkerIndex: number;
+      getLeastBusyWorker: () => { workerId: number } | null;
+    };
+    decoder.workers = [0, 1, 2].map((workerId) => ({
+      workerId,
+      failed: false,
+      pendingRequests: new Map(),
+    }));
+    decoder.nextWorkerIndex = 0;
+
+    expect([
+      decoder.getLeastBusyWorker()?.workerId,
+      decoder.getLeastBusyWorker()?.workerId,
+      decoder.getLeastBusyWorker()?.workerId,
+      decoder.getLeastBusyWorker()?.workerId,
+    ]).toEqual([0, 1, 2, 0]);
+  });
+
+  it("chooses the least-loaded healthy worker while skipping failed workers", () => {
+    const decoder = Object.create(
+      ParallelFrameDecoder.prototype,
+    ) as ParallelFrameDecoder & {
+      workers: Array<{
+        workerId: number;
+        failed: boolean;
+        pendingRequests: Map<string, unknown>;
+      }>;
+      nextWorkerIndex: number;
+      getLeastBusyWorker: () => { workerId: number } | null;
+    };
+    decoder.workers = [
+      { workerId: 0, failed: false, pendingRequests: new Map([["a", {}]]) },
+      { workerId: 1, failed: true, pendingRequests: new Map() },
+      { workerId: 2, failed: false, pendingRequests: new Map() },
+    ];
+    decoder.nextWorkerIndex = 0;
+
+    expect(decoder.getLeastBusyWorker()?.workerId).toBe(2);
+  });
+});
