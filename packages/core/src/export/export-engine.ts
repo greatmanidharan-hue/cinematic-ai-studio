@@ -1956,7 +1956,9 @@ export class ExportEngine {
     this.mediabunny = null;
     this.videoEngine = null;
     this.audioEngine = null;
-    this.gpuRendererWithLossListener = null;
+    // Keep the renderer identity while the shared renderer remains alive.
+    // Its device-loss callback cannot currently be unsubscribed, so clearing
+    // this reference here would register another callback after reinitialize.
     if (this.upscalingEngine) {
       this.upscalingEngine.clearTexturePool();
       this.upscalingEngine = null;
