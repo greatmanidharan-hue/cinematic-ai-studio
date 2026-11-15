@@ -35,6 +35,7 @@ interface WorkerState {
   totalDecodes: number;
   totalDecodeTime: number;
   mediabunnyAvailable: boolean;
+  failed: boolean;
 }
 
 export interface ParallelDecoderStats {
@@ -110,6 +111,7 @@ export class ParallelFrameDecoder {
         totalDecodes: 0,
         totalDecodeTime: 0,
         mediabunnyAvailable: false,
+        failed: false,
       };
 
       const initTimeout = setTimeout(() => {
@@ -135,10 +137,23 @@ export class ParallelFrameDecoder {
         }
       };
 
-      worker.onerror = (error) => {
-        console.error(`[ParallelFrameDecoder] Worker ${index} error:`, error);
+      worker.onerror = (event) => {
+        console.error(`[ParallelFrameDecoder] Worker ${index} error:`, event);
         clearTimeout(initTimeout);
+        const error = new Error(
+          event.message || `Worker ${index} failed`,
+        );
+        if (this.initialized) {
+          this.failWorker(state, error);
+        }
         reject(error);
+      };
+
+      worker.onmessageerror = () => {
+        const error = new Error(`Worker ${index} message could not be decoded`);
+        if (this.initialized) {
+          this.failWorker(state, error);
+        }
       };
 
       worker.postMessage({ type: "init" });
@@ -241,11 +256,25 @@ export class ParallelFrameDecoder {
     return null;
   }
 
+  private failWorker(state: WorkerState, error: Error): void {
+    if (state.failed) return;
+    state.failed = true;
+    state.busy = false;
+    state.worker.terminate();
+
+    for (const pending of state.pendingRequests.values()) {
+      pending.reject(error);
+    }
+    state.pendingRequests.clear();
+    this.processQueue();
+  }
+
   private getLeastBusyWorker(): WorkerState | null {
     let leastBusy: WorkerState | null = null;
     let minPending = Infinity;
 
     for (const worker of this.workers) {
+      if (worker.failed) continue;
       if (worker.pendingRequests.size < minPending) {
         minPending = worker.pendingRequests.size;
         leastBusy = worker;
@@ -258,7 +287,14 @@ export class ParallelFrameDecoder {
   private processQueue(): void {
     while (this.requestQueue.length > 0) {
       const worker = this.getLeastBusyWorker();
-      if (!worker || worker.pendingRequests.size >= 2) {
+      if (!worker) {
+        const error = new Error("All parallel decode workers have failed");
+        for (const item of this.requestQueue.splice(0)) {
+          item.reject(error);
+        }
+        break;
+      }
+      if (worker.pendingRequests.size >= 2) {
         break;
       }
 
@@ -297,7 +333,18 @@ export class ParallelFrameDecoder {
       height: request.height,
     };
 
-    worker.worker.postMessage(decodeRequest);
+    try {
+      worker.worker.postMessage(decodeRequest);
+    } catch (error) {
+      worker.pendingRequests.delete(requestId);
+      worker.busy = worker.pendingRequests.size > 0;
+      reject(
+        error instanceof Error
+          ? error
+          : new Error("Failed to send decode request to worker"),
+      );
+      this.processQueue();
+    }
   }
 
   async decodeFrame(request: FrameDecodeRequest): Promise<FrameDecodeResult> {
@@ -319,6 +366,8 @@ export class ParallelFrameDecoder {
 
       if (worker && worker.pendingRequests.size < 2) {
         this.sendDecodeRequest(worker, request, resolve, reject);
+      } else if (!worker) {
+        reject(new Error("No healthy parallel decode workers are available"));
       } else {
         this.requestQueue.push({ request, resolve, reject });
       }
