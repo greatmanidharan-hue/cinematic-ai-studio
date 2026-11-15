@@ -121,6 +121,49 @@ describe("ParallelFrameDecoder frame cache", () => {
 
 });
 
+
+  it("keeps a replacement cache entry when an older bitmap clone fails", async () => {
+    const decoder = Object.create(
+      ParallelFrameDecoder.prototype,
+    ) as ParallelFrameDecoder & {
+      frameCache: Map<string, { bitmap: ImageBitmap; timestamp: number }>;
+      cacheHits: number;
+      cacheMisses: number;
+      blobIds: WeakMap<Blob, number>;
+      nextBlobId: number;
+      getFromCache: (request: { clipId: string; blob: Blob; time: number; width: number; height: number }) => Promise<ImageBitmap | null>;
+    };
+    decoder.frameCache = new Map();
+    decoder.cacheHits = 0;
+    decoder.cacheMisses = 0;
+    decoder.blobIds = new WeakMap();
+    decoder.nextBlobId = 1;
+
+    const source = new Blob(["source"]);
+    const oldBitmap = { close: vi.fn() } as unknown as ImageBitmap;
+    const newBitmap = { close: vi.fn() } as unknown as ImageBitmap;
+    const key = "clip-a:1:1.000:10x10";
+    const oldEntry = { bitmap: oldBitmap, timestamp: 1 };
+    const newEntry = { bitmap: newBitmap, timestamp: 2 };
+    decoder.frameCache.set(key, oldEntry);
+
+    let rejectClone!: (error: Error) => void;
+    const clone = vi.spyOn(globalThis, "createImageBitmap").mockImplementation(
+      () => new Promise((_resolve, reject) => {
+        rejectClone = reject;
+      }),
+    );
+
+    const request = { clipId: "clip-a", blob: source, time: 1, width: 10, height: 10 };
+    const pendingClone = decoder.getFromCache(request);
+    decoder.frameCache.set(key, newEntry);
+    rejectClone(new Error("source bitmap was closed"));
+
+    await expect(pendingClone).resolves.toBeNull();
+    expect(decoder.frameCache.get(key)).toBe(newEntry);
+    clone.mockRestore();
+  });
+
 describe("ParallelFrameDecoder worker initialization", () => {
   it("terminates every partially-created worker when one worker fails to initialize", async () => {
     const instances: Array<{
