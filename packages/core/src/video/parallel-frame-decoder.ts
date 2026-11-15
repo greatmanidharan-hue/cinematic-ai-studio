@@ -321,7 +321,11 @@ export class ParallelFrameDecoder {
 
       if (oldestKey) {
         const old = this.frameCache.get(oldestKey);
-        old?.bitmap.close();
+        try {
+          old?.bitmap.close();
+        } catch {
+          // Eviction must continue even if a bitmap was already released.
+        }
         this.frameCache.delete(oldestKey);
       }
     }
@@ -350,7 +354,11 @@ export class ParallelFrameDecoder {
       try {
         return await createImageBitmap(cached.bitmap);
       } catch {
-        this.frameCache.delete(cacheKey);
+        // A replacement may have been inserted while cloning was pending.
+        // Only remove the entry whose bitmap actually failed to clone.
+        if (this.frameCache.get(cacheKey) === cached) {
+          this.frameCache.delete(cacheKey);
+        }
         return null;
       }
     }
@@ -595,7 +603,11 @@ export class ParallelFrameDecoder {
 
   clearCache(): void {
     for (const [, cached] of this.frameCache) {
-      cached.bitmap.close();
+      try {
+        cached.bitmap.close();
+      } catch {
+        // Continue clearing the remaining cached bitmaps.
+      }
     }
     this.frameCache.clear();
     this.cacheHits = 0;
