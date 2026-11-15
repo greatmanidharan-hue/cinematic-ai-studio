@@ -360,3 +360,39 @@ describe("ParallelFrameDecoder request identity", () => {
     expect(decoder.getCacheKey({ ...base, height: 720 })).not.toBe(originalKey);
   });
 });
+
+describe("ParallelFrameDecoder in-flight cleanup", () => {
+  it("retains fan-out entries during dispose so final consumers can release shared bitmaps", () => {
+    const decoder = Object.create(ParallelFrameDecoder.prototype) as ParallelFrameDecoder & {
+      workers: Array<never>;
+      workerUrls: string[];
+      frameCache: Map<string, { bitmap: ImageBitmap; timestamp: number }>;
+      inFlightDecodes: Map<string, { promise: Promise<{ clipId: string; bitmap: ImageBitmap | null; time: number }>; consumers: number }>;
+      requestQueue: Array<{ reject: (error: Error) => void }>;
+      initialized: boolean;
+      initPromise: Promise<void> | null;
+      lifecycleGeneration: number;
+      clearCache: () => void;
+      dispose: () => void;
+    };
+
+    const sharedBitmap = { close: vi.fn() } as unknown as ImageBitmap;
+    const entry = {
+      promise: Promise.resolve({ clipId: "clip-a", bitmap: sharedBitmap, time: 1 }),
+      consumers: 1,
+    };
+    decoder.workers = [];
+    decoder.workerUrls = [];
+    decoder.frameCache = new Map();
+    decoder.inFlightDecodes = new Map([["clip-a", entry]]);
+    decoder.requestQueue = [];
+    decoder.initialized = true;
+    decoder.initPromise = null;
+    decoder.lifecycleGeneration = 0;
+
+    decoder.dispose();
+
+    expect(decoder.inFlightDecodes.get("clip-a")).toBe(entry);
+    expect(sharedBitmap.close).not.toHaveBeenCalled();
+  });
+});
