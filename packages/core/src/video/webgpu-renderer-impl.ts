@@ -172,8 +172,17 @@ export class WebGPURenderer implements Renderer {
       );
       this.isDeviceLost = true;
 
+      // A faulty subscriber must not prevent other resources from being
+      // notified or stop the renderer from attempting device recovery.
       for (const callback of this.deviceLostCallbacks) {
-        callback();
+        try {
+          callback();
+        } catch (error) {
+          console.error(
+            "[WebGPURenderer] Device-loss callback failed:",
+            error,
+          );
+        }
       }
 
       if (!this.deviceRecreationInProgress) {
