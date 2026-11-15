@@ -131,6 +131,12 @@ export class ExportEngine {
           // Drop them before the renderer recreates its GPUDevice.
           this.upscalingEngine?.dispose();
           this.upscalingEngine = null;
+
+          // Do not silently finish an export without requested GPU upscaling
+          // after the device disappears. The caller can retry after recovery.
+          this.abortController?.abort(
+            new Error("GPU device was lost during export. Please retry after recovery."),
+          );
         });
         this.gpuRendererWithLossListener = renderer;
       }
@@ -817,9 +823,16 @@ export class ExportEngine {
     } catch (error) {
       try { await writableStream.abort(); } catch {}
       if (controller.signal.aborted) {
+        const abortReason = controller.signal.reason;
         return {
           success: false,
-          error: this.createError("CANCELLED", "Export cancelled by user", "muxing"),
+          error: this.createError(
+            "CANCELLED",
+            abortReason instanceof Error
+              ? abortReason.message
+              : "Export cancelled by user",
+            "rendering",
+          ),
         };
       }
       if (error && typeof error === "object" && "code" in error) {
