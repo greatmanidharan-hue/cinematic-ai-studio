@@ -229,6 +229,7 @@ export class ParallelFrameDecoder {
         // Continue cleaning up the remaining workers.
       }
       for (const pending of state.pendingRequests.values()) {
+        clearTimeout(pending.timeoutId);
         pending.reject(error);
       }
       state.pendingRequests.clear();
