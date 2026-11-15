@@ -256,3 +256,73 @@ describe("ParallelFrameDecoder worker initialization", () => {
   });
 
 });
+
+describe("ParallelFrameDecoder request timeout", () => {
+  it("rejects a stalled request and retires the unresponsive worker", async () => {
+    vi.useFakeTimers();
+    const decoder = Object.create(ParallelFrameDecoder.prototype) as ParallelFrameDecoder & {
+      workers: Array<{
+        worker: { terminate: ReturnType<typeof vi.fn>; postMessage: ReturnType<typeof vi.fn> };
+        failed: boolean;
+        busy: boolean;
+        pendingRequests: Map<string, {
+          resolve: (result: never) => void;
+          reject: (error: Error) => void;
+          clipId: string;
+          startTime: number;
+          timeoutId: ReturnType<typeof setTimeout>;
+        }>;
+        totalDecodes: number;
+        totalDecodeTime: number;
+        workerId: number;
+        mediabunnyAvailable: boolean;
+      }>;
+      requestQueue: Array<{ reject: (error: Error) => void }>;
+      requestIdCounter: number;
+      requestTimeoutMs: number;
+      sendDecodeRequest: (
+        worker: (typeof decoder.workers)[number],
+        request: { clipId: string; blob: Blob; time: number; width: number; height: number },
+        resolve: (result: never) => void,
+        reject: (error: Error) => void,
+      ) => void;
+    };
+
+    const worker = {
+      terminate: vi.fn(),
+      postMessage: vi.fn(),
+    };
+    const state = {
+      worker,
+      workerId: 0,
+      busy: false,
+      pendingRequests: new Map(),
+      totalDecodes: 0,
+      totalDecodeTime: 0,
+      mediabunnyAvailable: true,
+      failed: false,
+    };
+    decoder.workers = [state];
+    decoder.requestQueue = [];
+    decoder.requestIdCounter = 0;
+    decoder.requestTimeoutMs = 30000;
+
+    const rejected = new Promise<Error>((resolve) => {
+      decoder.sendDecodeRequest(
+        state,
+        { clipId: "clip-timeout", blob: new Blob(), time: 1, width: 10, height: 10 },
+        () => undefined as never,
+        resolve,
+      );
+    });
+
+    expect(state.pendingRequests.size).toBe(1);
+    await vi.advanceTimersByTimeAsync(30000);
+    await expect(rejected).resolves.toMatchObject({
+      message: expect.stringContaining("Decode request timed out"),
+    });
+    expect(worker.terminate).toHaveBeenCalledOnce();
+    expect(state.pendingRequests.size).toBe(0);
+    vi.useRealTimers();
+  });
+});
