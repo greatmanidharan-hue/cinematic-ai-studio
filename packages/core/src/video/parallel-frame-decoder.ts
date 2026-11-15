@@ -620,7 +620,9 @@ export class ParallelFrameDecoder {
     this.workerUrls = [];
 
     this.clearCache();
-    this.inFlightDecodes.clear();
+    // Keep fan-out entries until their consumers settle. Each entry owns a
+    // shared bitmap that is released by the final consumer in decodeFrame().
+    // Clearing this map here would prevent that final-consumer cleanup.
 
     for (const item of this.requestQueue) {
       item.reject(new Error("Decoder disposed"));
