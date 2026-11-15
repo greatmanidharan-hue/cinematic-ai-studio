@@ -135,8 +135,9 @@ async function getOrCreateResources(
   const creation = createResources(clipId, blob, width, height);
   resourcePromises.set(clipId, creation);
   try {
-    const resource = await creation;
-    return resource ? acquireResource(resource) : null;
+    // createResources reserves the first lease before publishing the cache entry,
+    // so another decode cannot evict it before this caller resumes.
+    return await creation;
   } finally {
     if (resourcePromises.get(clipId) === creation) {
       resourcePromises.delete(clipId);
@@ -150,6 +151,7 @@ async function createResources(
   width: number,
   height: number,
 ): Promise<CachedResource | null> {
+  let input: unknown = null;
   try {
     const mediabunny = await loadMediaBunny();
     if (!mediabunny) {
@@ -157,7 +159,7 @@ async function createResources(
     }
     const { Input, ALL_FORMATS, BlobSource, CanvasSink } = mediabunny;
 
-    const input = new Input({
+    input = new Input({
       source: new BlobSource(blob),
       formats: ALL_FORMATS,
     }) as unknown;
@@ -166,6 +168,7 @@ async function createResources(
       input as { getPrimaryVideoTrack: () => Promise<unknown> }
     ).getPrimaryVideoTrack();
     if (!videoTrack) {
+      disposeResource({ input, sink: null, videoTrack: null, blob, width, height, activeUses: 0, disposePending: false });
       return null;
     }
 
@@ -182,7 +185,9 @@ async function createResources(
       blob,
       width,
       height,
-      activeUses: 0,
+      // Reserve the creating caller's lease before the resource is visible to
+      // concurrent cache eviction or replacement.
+      activeUses: 1,
       disposePending: false,
     };
 
@@ -194,6 +199,9 @@ async function createResources(
     }
     return resource;
   } catch (error) {
+    if (input) {
+      disposeResource({ input, sink: null, videoTrack: null, blob, width, height, activeUses: 0, disposePending: false });
+    }
     console.error(
       `[DecodeWorker ${workerId}] Failed to create resources for ${clipId}:`,
       error,
@@ -391,24 +399,26 @@ async function getOrCreateResources(clipId, blob, width, height) {
  const creation = createResources(clipId, blob, width, height);
  resourcePromises.set(clipId, creation);
  try {
- const resource = await creation;
- return resource ? acquireResource(resource) : null;
+ // createResources reserves the creating caller's lease before publishing it.
+ return await creation;
  } finally {
  if (resourcePromises.get(clipId) === creation) resourcePromises.delete(clipId);
  }
 }
 
 async function createResources(clipId, blob, width, height) {
+ let input = null;
  try {
  const { Input, ALL_FORMATS, BlobSource, CanvasSink } = mediabunnyModule;
 
- const input = new Input({
+ input = new Input({
  source: new BlobSource(blob),
  formats: ALL_FORMATS,
  });
 
  const videoTrack = await input.getPrimaryVideoTrack();
  if (!videoTrack) {
+ disposeResource({ input, activeUses: 0, disposePending: false });
  return null;
  }
 
@@ -418,7 +428,7 @@ async function createResources(clipId, blob, width, height) {
  fit: "contain",
  });
 
- const resource = { input, sink, videoTrack, blob, width, height, activeUses: 0, disposePending: false };
+ const resource = { input, sink, videoTrack, blob, width, height, activeUses: 1, disposePending: false };
  resourceCache.set(clipId, resource);
  while (resourceCache.size > MAX_CACHED_RESOURCES) {
  const oldestClipId = resourceCache.keys().next().value;
@@ -427,6 +437,7 @@ async function createResources(clipId, blob, width, height) {
  }
  return resource;
  } catch (error) {
+ if (input) disposeResource({ input, activeUses: 0, disposePending: false });
  return null;
  }
 }
