@@ -76,6 +76,7 @@ export class ParallelFrameDecoder {
   private initPromise: Promise<void> | null = null;
   private lifecycleGeneration = 0;
   private requestIdCounter = 0;
+  private nextWorkerIndex = 0;
   private mediabunnyAvailable = false;
 
   constructor(private workerCount: number = 4) {
@@ -384,15 +385,26 @@ export class ParallelFrameDecoder {
   private getLeastBusyWorker(): WorkerState | null {
     let leastBusy: WorkerState | null = null;
     let minPending = Infinity;
+    let selectedIndex = -1;
 
-    for (const worker of this.workers) {
+    // Rotate the starting point so equally-loaded workers share new work
+    // instead of repeatedly favoring the first worker in the array.
+    for (let offset = 0; offset < this.workers.length; offset++) {
+      const index = (this.nextWorkerIndex + offset) % this.workers.length;
+      const worker = this.workers[index];
       if (worker.failed) continue;
-      if (worker.pendingRequests.size < minPending) {
-        minPending = worker.pendingRequests.size;
+
+      const pendingCount = worker.pendingRequests.size;
+      if (pendingCount < minPending) {
+        minPending = pendingCount;
         leastBusy = worker;
+        selectedIndex = index;
       }
     }
 
+    if (selectedIndex >= 0 && this.workers.length > 0) {
+      this.nextWorkerIndex = (selectedIndex + 1) % this.workers.length;
+    }
     return leastBusy;
   }
 
