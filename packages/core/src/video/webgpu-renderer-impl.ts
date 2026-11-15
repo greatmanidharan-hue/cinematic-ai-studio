@@ -202,10 +202,18 @@ export class WebGPURenderer implements Renderer {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
 
-      const success = await this.recreateDevice();
-      if (success) {
-        this.deviceRecreationInProgress = false;
-        return;
+      try {
+        const success = await this.recreateDevice();
+        if (success) {
+          this.deviceRecreationInProgress = false;
+          return;
+        }
+      } catch (error) {
+        // A failed attempt must not leave recovery permanently marked active.
+        console.error(
+          `[WebGPURenderer] Device recreation attempt ${attempt} failed:`,
+          error,
+        );
       }
     }
 
