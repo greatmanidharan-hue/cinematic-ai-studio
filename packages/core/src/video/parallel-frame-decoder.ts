@@ -25,6 +25,7 @@ interface PendingRequest {
   reject: (error: Error) => void;
   clipId: string;
   startTime: number;
+  timeoutId: ReturnType<typeof setTimeout>;
 }
 
 interface WorkerState {
@@ -58,6 +59,8 @@ export class ParallelFrameDecoder {
   private frameCache: Map<string, { bitmap: ImageBitmap; timestamp: number }> =
     new Map();
   private maxCacheSize = 100;
+  private readonly requestTimeoutMs = 30000;
+  private readonly maxQueueSize = 500;
   private cacheHits = 0;
   private cacheMisses = 0;
   private initialized = false;
@@ -254,6 +257,7 @@ export class ParallelFrameDecoder {
       return;
     }
 
+    clearTimeout(pending.timeoutId);
     state.pendingRequests.delete(response.requestId);
     state.busy = state.pendingRequests.size > 0;
 
@@ -345,6 +349,7 @@ export class ParallelFrameDecoder {
     state.worker.terminate();
 
     for (const pending of state.pendingRequests.values()) {
+      clearTimeout(pending.timeoutId);
       pending.reject(error);
     }
     state.pendingRequests.clear();
@@ -400,6 +405,17 @@ export class ParallelFrameDecoder {
       reject,
       clipId: request.clipId,
       startTime: performance.now(),
+      timeoutId: setTimeout(() => {
+        if (!worker.pendingRequests.has(requestId)) return;
+        worker.pendingRequests.delete(requestId);
+        worker.busy = worker.pendingRequests.size > 0;
+        const timeoutError = new Error(
+          `Decode request timed out after ${this.requestTimeoutMs}ms (clip: ${request.clipId})`,
+        );
+        reject(timeoutError);
+        // A worker that stops responding is no longer safe to schedule.
+        this.failWorker(worker, timeoutError);
+      }, this.requestTimeoutMs),
     };
 
     worker.pendingRequests.set(requestId, pending);
@@ -422,6 +438,7 @@ export class ParallelFrameDecoder {
         error instanceof Error
           ? error
           : new Error("Failed to send decode request to worker");
+      clearTimeout(pending.timeoutId);
       worker.pendingRequests.delete(requestId);
       reject(workerError);
       this.failWorker(worker, workerError);
@@ -449,6 +466,8 @@ export class ParallelFrameDecoder {
         this.sendDecodeRequest(worker, request, resolve, reject);
       } else if (!worker) {
         reject(new Error("No healthy parallel decode workers are available"));
+      } else if (this.requestQueue.length >= this.maxQueueSize) {
+        reject(new Error("Parallel decode queue is full"));
       } else {
         this.requestQueue.push({ request, resolve, reject });
       }
@@ -537,6 +556,7 @@ export class ParallelFrameDecoder {
     this.lifecycleGeneration++;
     for (const worker of this.workers) {
       for (const [, pending] of worker.pendingRequests) {
+        clearTimeout(pending.timeoutId);
         pending.reject(new Error("Decoder disposed"));
       }
       worker.worker.terminate();
