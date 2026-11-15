@@ -166,6 +166,8 @@ export class ParallelFrameDecoder {
   ): Promise<void> {
     const pending = state.pendingRequests.get(response.requestId);
     if (!pending) {
+      // A late response can arrive after its request was rejected or disposed.
+      response.bitmap?.close();
       console.warn(
         `[ParallelFrameDecoder] No pending request for ${response.requestId}`,
       );
@@ -336,14 +338,13 @@ export class ParallelFrameDecoder {
     try {
       worker.worker.postMessage(decodeRequest);
     } catch (error) {
-      worker.pendingRequests.delete(requestId);
-      worker.busy = worker.pendingRequests.size > 0;
-      reject(
+      const workerError =
         error instanceof Error
           ? error
-          : new Error("Failed to send decode request to worker"),
-      );
-      this.processQueue();
+          : new Error("Failed to send decode request to worker");
+      worker.pendingRequests.delete(requestId);
+      reject(workerError);
+      this.failWorker(worker, workerError);
     }
   }
 
