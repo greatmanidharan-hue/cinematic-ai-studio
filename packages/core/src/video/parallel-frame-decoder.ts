@@ -29,6 +29,11 @@ interface PendingRequest {
   cacheKey: string;
 }
 
+interface InFlightDecode {
+  promise: Promise<FrameDecodeResult>;
+  consumers: number;
+}
+
 interface WorkerState {
   worker: Worker;
   workerId: number;
@@ -60,7 +65,7 @@ export class ParallelFrameDecoder {
   private frameCache: Map<string, { bitmap: ImageBitmap; timestamp: number }> =
     new Map();
   private readonly blobIds = new WeakMap<Blob, number>();
-  private readonly inFlightDecodes = new Map<string, Promise<FrameDecodeResult>>();
+  private readonly inFlightDecodes = new Map<string, InFlightDecode>();
   private nextBlobId = 1;
   private maxCacheSize = 100;
   private readonly requestTimeoutMs = 30000;
@@ -473,9 +478,28 @@ export class ParallelFrameDecoder {
       };
     }
 
-    const existing = this.inFlightDecodes.get(cacheKey);
-    if (existing) {
-      const shared = await existing;
+    let entry = this.inFlightDecodes.get(cacheKey);
+    if (!entry) {
+      const promise = new Promise<FrameDecodeResult>((resolve, reject) => {
+        const worker = this.getLeastBusyWorker();
+
+        if (worker && worker.pendingRequests.size < 2) {
+          this.sendDecodeRequest(worker, request, resolve, reject);
+        } else if (!worker) {
+          reject(new Error("No healthy parallel decode workers are available"));
+        } else if (this.requestQueue.length >= this.maxQueueSize) {
+          reject(new Error("Parallel decode queue is full"));
+        } else {
+          this.requestQueue.push({ request, resolve, reject });
+        }
+      });
+      entry = { promise, consumers: 0 };
+      this.inFlightDecodes.set(cacheKey, entry);
+    }
+
+    entry.consumers++;
+    try {
+      const shared = await entry.promise;
       let bitmap: ImageBitmap | null = null;
       if (shared.bitmap) {
         try {
@@ -485,37 +509,18 @@ export class ParallelFrameDecoder {
         }
       }
       return { ...shared, bitmap };
-    }
-
-    const decodePromise = new Promise<FrameDecodeResult>((resolve, reject) => {
-      const worker = this.getLeastBusyWorker();
-
-      if (worker && worker.pendingRequests.size < 2) {
-        this.sendDecodeRequest(worker, request, resolve, reject);
-      } else if (!worker) {
-        reject(new Error("No healthy parallel decode workers are available"));
-      } else if (this.requestQueue.length >= this.maxQueueSize) {
-        reject(new Error("Parallel decode queue is full"));
-      } else {
-        this.requestQueue.push({ request, resolve, reject });
-      }
-    });
-
-    this.inFlightDecodes.set(cacheKey, decodePromise);
-    try {
-      const result = await decodePromise;
-      let bitmap: ImageBitmap | null = null;
-      if (result.bitmap) {
-        try {
-          bitmap = await createImageBitmap(result.bitmap);
-        } catch {
-          bitmap = null;
-        }
-      }
-      return { ...result, bitmap };
     } finally {
-      if (this.inFlightDecodes.get(cacheKey) === decodePromise) {
+      entry.consumers--;
+      if (entry.consumers === 0 && this.inFlightDecodes.get(cacheKey) === entry) {
         this.inFlightDecodes.delete(cacheKey);
+        // The shared bitmap is an internal fan-out source; each caller receives
+        // its own clone and the shared source is released after the final clone.
+        try {
+          const settled = await entry.promise;
+          settled.bitmap?.close();
+        } catch {
+          // Cleanup must not turn a completed decode into a rejected request.
+        }
       }
     }
   }
