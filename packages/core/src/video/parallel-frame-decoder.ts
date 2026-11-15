@@ -80,19 +80,37 @@ export class ParallelFrameDecoder {
     if (this.initialized) return;
     if (this.initPromise) return this.initPromise;
 
-    this.initPromise = this.doInitialize();
+    this.initPromise = this.doInitialize().catch((error: unknown) => {
+      // A rejected initialization must not permanently poison future retries.
+      this.initPromise = null;
+      throw error;
+    });
     return this.initPromise;
   }
 
   private async doInitialize(): Promise<void> {
+    this.workers = [];
     const workerPromises: Promise<WorkerState>[] = [];
 
     for (let i = 0; i < this.workerCount; i++) {
       workerPromises.push(this.createWorker(i));
     }
 
-    this.workers = await Promise.all(workerPromises);
-    this.mediabunnyAvailable = this.workers.some((w) => w.mediabunnyAvailable);
+    // Wait for every startup attempt so workers that succeeded after another
+    // worker failed are also included in cleanup.
+    const results = await Promise.allSettled(workerPromises);
+    const failed = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+
+    if (failed) {
+      this.cleanupWorkers(new Error("Parallel decoder initialization failed"));
+      throw failed.reason;
+    }
+
+    this.mediabunnyAvailable = this.workers.some(
+      (worker) => worker.mediabunnyAvailable,
+    );
     this.initialized = true;
   }
 
@@ -101,7 +119,13 @@ export class ParallelFrameDecoder {
       const workerUrl = createDecodeWorkerUrl();
       this.workerUrls.push(workerUrl);
 
-      const worker = new Worker(workerUrl, { type: "module" });
+      let worker: Worker;
+      try {
+        worker = new Worker(workerUrl, { type: "module" });
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error("Worker creation failed"));
+        return;
+      }
 
       const state: WorkerState = {
         worker,
@@ -113,13 +137,22 @@ export class ParallelFrameDecoder {
         mediabunnyAvailable: false,
         failed: false,
       };
+      // Track workers immediately, not only after all workers become ready.
+      this.workers.push(state);
 
       const initTimeout = setTimeout(() => {
-        reject(new Error(`Worker ${index} initialization timed out`));
+        const error = new Error(`Worker ${index} initialization timed out`);
+        this.failWorker(state, error);
+        reject(error);
       }, 10000);
 
       worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
         const response = event.data;
+
+        if (state.failed) {
+          if (response.type === "decoded") response.bitmap?.close();
+          return;
+        }
 
         if (response.type === "ready") {
           clearTimeout(initTimeout);
@@ -143,21 +176,52 @@ export class ParallelFrameDecoder {
         const error = new Error(
           event.message || `Worker ${index} failed`,
         );
-        if (this.initialized) {
-          this.failWorker(state, error);
-        }
+        this.failWorker(state, error);
         reject(error);
       };
 
       worker.onmessageerror = () => {
         const error = new Error(`Worker ${index} message could not be decoded`);
-        if (this.initialized) {
-          this.failWorker(state, error);
-        }
+        clearTimeout(initTimeout);
+        this.failWorker(state, error);
+        reject(error);
       };
 
-      worker.postMessage({ type: "init" });
+      try {
+        worker.postMessage({ type: "init" });
+      } catch (error) {
+        clearTimeout(initTimeout);
+        const workerError = error instanceof Error
+          ? error
+          : new Error(`Worker ${index} initialization message failed`);
+        this.failWorker(state, workerError);
+        reject(workerError);
+      }
     });
+  }
+
+  private cleanupWorkers(error: Error): void {
+    for (const state of this.workers) {
+      state.failed = true;
+      state.busy = false;
+      try {
+        state.worker.terminate();
+      } catch {
+        // Continue cleaning up the remaining workers.
+      }
+      for (const pending of state.pendingRequests.values()) {
+        pending.reject(error);
+      }
+      state.pendingRequests.clear();
+    }
+    this.workers = [];
+
+    for (const url of this.workerUrls) {
+      URL.revokeObjectURL(url);
+    }
+    this.workerUrls = [];
+    this.mediabunnyAvailable = false;
+    this.initialized = false;
   }
 
   private async handleDecodeResponse(
