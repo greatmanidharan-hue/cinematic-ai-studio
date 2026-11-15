@@ -122,4 +122,56 @@ describe("WebGPURenderer device-loss handling", () => {
       warnSpy.mockRestore();
     }
   });
+  it("ignores intentionally destroyed devices without notifying or recovering", async () => {
+    const renderer = Object.create(
+      WebGPURenderer.prototype,
+    ) as WebGPURenderer;
+    const callback = vi.fn();
+    const recover = vi.fn();
+    const warnSpy = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+
+    Reflect.set(renderer, "device", {
+      lost: Promise.resolve({
+        reason: "destroyed",
+        message: "device intentionally destroyed",
+      }),
+    });
+    Reflect.set(renderer, "deviceLostCallbacks", [callback]);
+    Reflect.set(renderer, "attemptDeviceRecreation", recover);
+
+    try {
+      Reflect.get(renderer, "setupDeviceLossHandling").call(renderer);
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(callback).not.toHaveBeenCalled();
+      expect(recover).not.toHaveBeenCalled();
+      expect(renderer.isLost()).toBe(false);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("cleans up partial initialization while preserving device-loss subscribers", () => {
+    const renderer = Object.create(
+      WebGPURenderer.prototype,
+    ) as WebGPURenderer;
+    const callback = vi.fn();
+    const destroy = vi.fn(() => {
+      Reflect.set(renderer, "deviceLostCallbacks", []);
+    });
+
+    Reflect.set(renderer, "deviceLostCallbacks", [callback]);
+    Reflect.set(renderer, "destroy", destroy);
+    Reflect.set(renderer, "isDeviceLost", false);
+
+    Reflect.get(renderer, "cleanupFailedInitialization").call(renderer);
+
+    expect(destroy).toHaveBeenCalledOnce();
+    expect(Reflect.get(renderer, "deviceLostCallbacks")).toEqual([callback]);
+    expect(renderer.isLost()).toBe(true);
+  });
+
 });
