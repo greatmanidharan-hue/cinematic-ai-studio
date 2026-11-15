@@ -187,6 +187,17 @@ export class ParallelFrameDecoder {
   }
 
   private addToCache(key: string, bitmap: ImageBitmap): void {
+    // Re-decoding an already cached frame must release the previous bitmap.
+    const existing = this.frameCache.get(key);
+    if (existing) {
+      try {
+        existing.bitmap.close();
+      } catch {
+        // Continue replacing the entry even if the old bitmap is already closed.
+      }
+      this.frameCache.delete(key);
+    }
+
     if (this.frameCache.size >= this.maxCacheSize) {
       let oldestKey: string | null = null;
       let oldestTime = Infinity;
