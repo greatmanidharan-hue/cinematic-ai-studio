@@ -273,15 +273,16 @@ export function clearCache(clipId?: string): void {
   }
 }
 
-const workerSelf = self as unknown as {
-  onmessage: ((event: MessageEvent<WorkerRequest>) => void) | null;
-  postMessage: (
-    message: unknown,
-    options?: { transfer?: Transferable[] },
-  ) => void;
-};
+if (typeof self !== "undefined") {
+  const workerSelf = self as unknown as {
+    onmessage: ((event: MessageEvent<WorkerRequest>) => void) | null;
+    postMessage: (
+      message: unknown,
+      options?: { transfer?: Transferable[] },
+    ) => void;
+  };
 
-workerSelf.onmessage = async (event: MessageEvent<WorkerRequest>) => {
+  workerSelf.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
 
   switch (request.type) {
@@ -300,8 +301,9 @@ workerSelf.onmessage = async (event: MessageEvent<WorkerRequest>) => {
         workerSelf.postMessage(response);
       }
       break;
-  }
-};
+    }
+  };
+}
 
 export const decodeWorkerCode = `
 const MAX_CACHED_RESOURCES = 20;
