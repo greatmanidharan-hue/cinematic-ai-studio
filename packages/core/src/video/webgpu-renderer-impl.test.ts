@@ -2,6 +2,43 @@ import { describe, expect, it, vi } from "vitest";
 import { WebGPURenderer } from "./webgpu-renderer-impl";
 
 describe("WebGPURenderer device-loss handling", () => {
+  it("keeps the renderer marked lost when device recreation fails", async () => {
+    const renderer = Object.create(
+      WebGPURenderer.prototype,
+    ) as WebGPURenderer;
+    const callback = vi.fn();
+    const destroy = vi.fn(() => {
+      Reflect.set(renderer, "deviceLostCallbacks", []);
+    });
+    const initialize = vi.fn().mockResolvedValue(false);
+
+    Reflect.set(renderer, "deviceLostCallbacks", [callback]);
+    Reflect.set(renderer, "destroy", destroy);
+    Reflect.set(renderer, "initialize", initialize);
+    Reflect.set(renderer, "isDeviceLost", true);
+
+    await expect(renderer.recreateDevice()).resolves.toBe(false);
+
+    expect(destroy).toHaveBeenCalledOnce();
+    expect(initialize).toHaveBeenCalledOnce();
+    expect(Reflect.get(renderer, "deviceLostCallbacks")).toEqual([callback]);
+    expect(renderer.isLost()).toBe(true);
+  });
+
+  it("clears the lost state only after successful device recreation", async () => {
+    const renderer = Object.create(
+      WebGPURenderer.prototype,
+    ) as WebGPURenderer;
+    Reflect.set(renderer, "deviceLostCallbacks", []);
+    Reflect.set(renderer, "destroy", vi.fn());
+    Reflect.set(renderer, "initialize", vi.fn().mockResolvedValue(true));
+    Reflect.set(renderer, "isDeviceLost", true);
+
+    await expect(renderer.recreateDevice()).resolves.toBe(true);
+
+    expect(renderer.isLost()).toBe(false);
+  });
+
   it("retries device recovery after an attempt throws", async () => {
     vi.useFakeTimers();
     const renderer = Object.create(
