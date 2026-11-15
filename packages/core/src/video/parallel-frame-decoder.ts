@@ -519,10 +519,12 @@ export class ParallelFrameDecoder {
       return { ...shared, bitmap };
     } finally {
       entry.consumers--;
-      if (entry.consumers === 0 && this.inFlightDecodes.get(cacheKey) === entry) {
-        this.inFlightDecodes.delete(cacheKey);
-        // The shared bitmap is an internal fan-out source; each caller receives
-        // its own clone and the shared source is released after the final clone.
+      if (entry.consumers === 0) {
+        if (this.inFlightDecodes.get(cacheKey) === entry) {
+          this.inFlightDecodes.delete(cacheKey);
+        }
+        // Dispose may clear the map while callers are still cloning the shared
+        // result. Release the fan-out bitmap even when the entry is no longer mapped.
         try {
           const settled = await entry.promise;
           settled.bitmap?.close();
