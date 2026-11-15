@@ -123,6 +123,7 @@ export class WebGPURenderer implements Renderer {
       this.context = this.canvas.getContext("webgpu") as GPUCanvasContext;
       if (!this.context) {
         console.warn("[WebGPURenderer] Failed to get WebGPU context");
+        this.cleanupFailedInitialization();
         return false;
       }
 
@@ -142,7 +143,10 @@ export class WebGPURenderer implements Renderer {
         width: this.width,
         height: this.height,
       });
-      await this.effectsProcessor.initialize();
+      const effectsInitialized = await this.effectsProcessor.initialize();
+      if (!effectsInitialized) {
+        throw new Error("WebGPU effects processor initialization failed");
+      }
       this.effectsProcessor.onEffectsChange((clipId, effects) => {
         this.triggerReRender(clipId, effects);
       });
@@ -158,14 +162,30 @@ export class WebGPURenderer implements Renderer {
       return true;
     } catch (error) {
       console.error("[WebGPURenderer] Initialization failed:", error);
+      this.cleanupFailedInitialization();
       return false;
     }
+  }
+
+  /**
+   * Release resources created by a failed initialization without losing
+   * renderer-level device-loss subscribers needed by a later retry.
+   */
+  private cleanupFailedInitialization(): void {
+    const deviceLostCallbacks = this.deviceLostCallbacks;
+    this.destroy();
+    this.deviceLostCallbacks = deviceLostCallbacks;
+    this.isDeviceLost = true;
   }
 
   private setupDeviceLossHandling(): void {
     if (!this.device) return;
 
     this.device.lost.then((info: GPUDeviceLostInfo) => {
+      // Explicit destroy/recreation is intentional and must not start a
+      // second recovery cycle or notify subscribers as if the GPU failed.
+      if (info.reason === "destroyed") return;
+
       console.warn(
         `[WebGPURenderer] Device lost: ${info.reason}`,
         info.message,
