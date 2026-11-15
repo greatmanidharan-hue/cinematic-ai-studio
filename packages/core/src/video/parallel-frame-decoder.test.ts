@@ -326,3 +326,37 @@ describe("ParallelFrameDecoder request timeout", () => {
     vi.useRealTimers();
   });
 });
+
+describe("ParallelFrameDecoder request identity", () => {
+  it("uses blob identity and output dimensions in the frame cache key", () => {
+    const decoder = Object.create(ParallelFrameDecoder.prototype) as ParallelFrameDecoder & {
+      blobIds: WeakMap<Blob, number>;
+      nextBlobId: number;
+      getCacheKey: (request: {
+        clipId: string;
+        blob: Blob;
+        time: number;
+        width: number;
+        height: number;
+      }) => string;
+    };
+    decoder.blobIds = new WeakMap();
+    decoder.nextBlobId = 1;
+
+    const blobA = new Blob(["a"]);
+    const blobB = new Blob(["b"]);
+    const base = {
+      clipId: "clip-a",
+      blob: blobA,
+      time: 1.25,
+      width: 640,
+      height: 360,
+    };
+
+    const originalKey = decoder.getCacheKey(base);
+    expect(decoder.getCacheKey({ ...base })).toBe(originalKey);
+    expect(decoder.getCacheKey({ ...base, blob: blobB })).not.toBe(originalKey);
+    expect(decoder.getCacheKey({ ...base, width: 1280 })).not.toBe(originalKey);
+    expect(decoder.getCacheKey({ ...base, height: 720 })).not.toBe(originalKey);
+  });
+});
