@@ -210,4 +210,49 @@ describe("ParallelFrameDecoder worker initialization", () => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
   });
+  it("does not let an initialization complete after the decoder is disposed", async () => {
+    const instances: Array<{
+      onmessage: ((event: MessageEvent) => void) | null;
+      onerror: ((event: ErrorEvent) => void) | null;
+      onmessageerror: (() => void) | null;
+      terminate: ReturnType<typeof vi.fn>;
+      postMessage: ReturnType<typeof vi.fn>;
+    }> = [];
+
+    class MockWorker {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: ErrorEvent) => void) | null = null;
+      onmessageerror: (() => void) | null = null;
+      terminate = vi.fn();
+      postMessage = vi.fn();
+      constructor() {
+        instances.push(this);
+      }
+    }
+
+    vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:worker-init-race");
+    const revokeUrl = vi.spyOn(URL, "revokeObjectURL");
+    vi.stubGlobal("Worker", MockWorker);
+
+    const decoder = new ParallelFrameDecoder(1);
+    const initialization = decoder.initialize();
+    decoder.dispose();
+
+    expect(instances[0].terminate).toHaveBeenCalledOnce();
+    expect(revokeUrl).toHaveBeenCalledWith("blob:worker-init-race");
+
+    instances[0].onmessage?.({
+      data: { type: "ready", workerId: 0, mediabunnyAvailable: true },
+    } as MessageEvent);
+
+    await expect(initialization).rejects.toThrow(
+      "Decoder disposed during initialization",
+    );
+    expect(decoder.isAvailable()).toBe(false);
+    expect(decoder.getStats().workerCount).toBe(0);
+
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+
 });
