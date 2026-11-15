@@ -107,8 +107,11 @@ async function getOrCreateResources(
       resource.width === width &&
       resource.height === height
     ) return resource;
+    const current = resourceCache.get(clipId);
+    if (current) evictResource(clipId);
+  } else if (cached) {
+    evictResource(clipId);
   }
-  if (cached) evictResource(clipId);
 
   const creation = createResources(clipId, blob, width, height);
   resourcePromises.set(clipId, creation);
@@ -335,8 +338,11 @@ async function getOrCreateResources(clipId, blob, width, height) {
  if (resource && resource.blob === blob && resource.width === width && resource.height === height) {
  return resource;
  }
+ const current = resourceCache.get(clipId);
+ if (current) evictResource(clipId);
+ } else if (cached) {
+ evictResource(clipId);
  }
- if (cached) evictResource(clipId);
 
  const creation = createResources(clipId, blob, width, height);
  resourcePromises.set(clipId, creation);
