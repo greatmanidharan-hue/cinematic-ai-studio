@@ -62,6 +62,7 @@ export class ParallelFrameDecoder {
   private cacheMisses = 0;
   private initialized = false;
   private initPromise: Promise<void> | null = null;
+  private lifecycleGeneration = 0;
   private requestIdCounter = 0;
   private mediabunnyAvailable = false;
 
@@ -80,25 +81,31 @@ export class ParallelFrameDecoder {
     if (this.initialized) return;
     if (this.initPromise) return this.initPromise;
 
-    this.initPromise = this.doInitialize().catch((error: unknown) => {
-      // A rejected initialization must not permanently poison future retries.
-      this.initPromise = null;
+    const generation = this.lifecycleGeneration;
+    let attempt: Promise<void>;
+    attempt = this.doInitialize(generation).catch((error: unknown) => {
+      // An older attempt must not clear a newer attempt started after dispose.
+      if (this.initPromise === attempt) this.initPromise = null;
       throw error;
     });
-    return this.initPromise;
+    this.initPromise = attempt;
+    return attempt;
   }
 
-  private async doInitialize(): Promise<void> {
+  private async doInitialize(generation: number): Promise<void> {
     this.workers = [];
     const workerPromises: Promise<WorkerState>[] = [];
 
     for (let i = 0; i < this.workerCount; i++) {
-      workerPromises.push(this.createWorker(i));
+      workerPromises.push(this.createWorker(i, generation));
     }
 
     // Wait for every startup attempt so workers that succeeded after another
     // worker failed are also included in cleanup.
     const results = await Promise.allSettled(workerPromises);
+    if (generation !== this.lifecycleGeneration) {
+      throw new Error("Decoder disposed during initialization");
+    }
     const failed = results.find(
       (result): result is PromiseRejectedResult => result.status === "rejected",
     );
@@ -114,7 +121,10 @@ export class ParallelFrameDecoder {
     this.initialized = true;
   }
 
-  private async createWorker(index: number): Promise<WorkerState> {
+  private async createWorker(
+    index: number,
+    generation: number,
+  ): Promise<WorkerState> {
     return new Promise((resolve, reject) => {
       const workerUrl = createDecodeWorkerUrl();
       this.workerUrls.push(workerUrl);
@@ -138,6 +148,12 @@ export class ParallelFrameDecoder {
         failed: false,
       };
       // Track workers immediately, not only after all workers become ready.
+      if (generation !== this.lifecycleGeneration) {
+        state.failed = true;
+        worker.terminate();
+        reject(new Error("Decoder disposed during initialization"));
+        return;
+      }
       this.workers.push(state);
 
       const initTimeout = setTimeout(() => {
@@ -517,6 +533,8 @@ export class ParallelFrameDecoder {
   }
 
   dispose(): void {
+    // Invalidate any in-flight initialization before terminating its workers.
+    this.lifecycleGeneration++;
     for (const worker of this.workers) {
       for (const [, pending] of worker.pendingRequests) {
         pending.reject(new Error("Decoder disposed"));
