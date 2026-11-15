@@ -428,11 +428,29 @@ export class VideoEngine {
       video.playsInline = true;
       video.preload = "auto";
 
-      await new Promise<void>((resolve, reject) => {
-        video.onloadedmetadata = () => resolve();
-        video.onerror = () => reject(new Error("Video load failed"));
-        setTimeout(() => reject(new Error("Video load timeout")), 10000);
-      });
+      let metadataTimeout: ReturnType<typeof setTimeout> | undefined;
+      try {
+        await new Promise<void>((resolve, reject) => {
+          video.onloadedmetadata = () => resolve();
+          video.onerror = () => reject(new Error("Video load failed"));
+          metadataTimeout = setTimeout(
+            () => reject(new Error("Video load timeout")),
+            10000,
+          );
+        });
+      } catch (error) {
+        video.onloadedmetadata = null;
+        video.onerror = null;
+        video.pause();
+        video.removeAttribute("src");
+        video.load();
+        URL.revokeObjectURL(url);
+        throw error;
+      } finally {
+        if (metadataTimeout !== undefined) {
+          clearTimeout(metadataTimeout);
+        }
+      }
 
       cached = { video, url };
       this.videoElementCache.set(mediaId, cached);
