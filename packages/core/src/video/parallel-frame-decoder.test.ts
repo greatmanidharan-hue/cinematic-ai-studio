@@ -396,3 +396,52 @@ describe("ParallelFrameDecoder in-flight cleanup", () => {
     expect(sharedBitmap.close).not.toHaveBeenCalled();
   });
 });
+
+describe("ParallelFrameDecoder cache race handling", () => {
+  it("does not delete a replacement cache entry when an older bitmap clone fails", async () => {
+    const decoder = Object.create(ParallelFrameDecoder.prototype) as ParallelFrameDecoder & {
+      frameCache: Map<string, { bitmap: ImageBitmap; timestamp: number }>;
+      cacheHits: number;
+      cacheMisses: number;
+      getCacheKey: (request: { clipId: string; blob: Blob; time: number; width: number; height: number }) => string;
+      getFromCache: (request: { clipId: string; blob: Blob; time: number; width: number; height: number }) => Promise<ImageBitmap | null>;
+    };
+    const blob = new Blob(["source"]);
+    const request = { clipId: "clip-a", blob, time: 1, width: 10, height: 10 };
+    const original = { close: vi.fn() } as unknown as ImageBitmap;
+    const replacement = { close: vi.fn() } as unknown as ImageBitmap;
+    decoder.frameCache = new Map([["frame-key", { bitmap: original, timestamp: 1 }]]);
+    decoder.cacheHits = 0;
+    decoder.cacheMisses = 0;
+    decoder.getCacheKey = vi.fn(() => "frame-key");
+
+    let rejectClone!: (error: Error) => void;
+    vi.stubGlobal("createImageBitmap", () => new Promise<ImageBitmap>((_, reject) => {
+      rejectClone = reject;
+    }));
+
+    const lookup = decoder.getFromCache(request);
+    decoder.frameCache.set("frame-key", { bitmap: replacement, timestamp: 2 });
+    rejectClone(new Error("source bitmap closed"));
+
+    await expect(lookup).resolves.toBeNull();
+    expect(decoder.frameCache.get("frame-key")?.bitmap).toBe(replacement);
+    vi.unstubAllGlobals();
+  });
+
+  it("continues cache eviction when the evicted bitmap close throws", () => {
+    const decoder = Object.create(ParallelFrameDecoder.prototype) as ParallelFrameDecoder & {
+      frameCache: Map<string, { bitmap: ImageBitmap; timestamp: number }>;
+      maxCacheSize: number;
+      addToCache: (key: string, bitmap: ImageBitmap) => void;
+    };
+    const stale = { close: vi.fn(() => { throw new Error("already closed"); }) } as unknown as ImageBitmap;
+    const fresh = { close: vi.fn() } as unknown as ImageBitmap;
+    decoder.frameCache = new Map([["old", { bitmap: stale, timestamp: 1 }]]);
+    decoder.maxCacheSize = 1;
+
+    expect(() => decoder.addToCache("new", fresh)).not.toThrow();
+    expect(decoder.frameCache.has("old")).toBe(false);
+    expect(decoder.frameCache.get("new")?.bitmap).toBe(fresh);
+  });
+});
