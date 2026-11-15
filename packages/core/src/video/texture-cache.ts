@@ -106,15 +106,22 @@ export class TextureCache {
       return;
     }
 
-    // Notify callback before destroying
-    if (this.onEvict) {
-      this.onEvict(entry);
+    // Eviction bookkeeping and GPU cleanup must complete even when an
+    // observer callback fails. Observers must never be able to pin textures
+    // in the cache or corrupt the tracked memory total.
+    try {
+      this.onEvict?.(entry);
+    } catch (error) {
+      console.warn("[TextureCache] Eviction callback failed:", error);
+    } finally {
+      try {
+        entry.texture.destroy();
+      } catch (error) {
+        console.warn("[TextureCache] Failed to destroy evicted texture:", error);
+      }
+      this.currentSize = Math.max(0, this.currentSize - entry.size);
+      this.cache.delete(key);
     }
-
-    // Destroy the GPU texture
-    entry.texture.destroy();
-    this.currentSize -= entry.size;
-    this.cache.delete(key);
   }
 
   clear(): void {
