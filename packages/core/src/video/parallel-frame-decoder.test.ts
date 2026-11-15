@@ -72,7 +72,15 @@ describe("ParallelFrameDecoder frame cache", () => {
         reject: (error: Error) => void;
       }>;
       initialized: boolean;
-      failWorker: (state: (typeof decoder.workers)[number], error: Error) => void;
+      failWorker: (
+        state: {
+          worker: { terminate: ReturnType<typeof vi.fn> };
+          failed: boolean;
+          busy: boolean;
+          pendingRequests: Map<string, { reject: (error: Error) => void }>;
+        },
+        error: Error,
+      ) => void;
     };
 
     const pendingReject = vi.fn();
