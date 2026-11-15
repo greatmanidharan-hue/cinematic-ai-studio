@@ -26,6 +26,7 @@ interface PendingRequest {
   clipId: string;
   startTime: number;
   timeoutId: ReturnType<typeof setTimeout>;
+  cacheKey: string;
 }
 
 interface WorkerState {
@@ -58,6 +59,9 @@ export class ParallelFrameDecoder {
   }> = [];
   private frameCache: Map<string, { bitmap: ImageBitmap; timestamp: number }> =
     new Map();
+  private readonly blobIds = new WeakMap<Blob, number>();
+  private readonly inFlightDecodes = new Map<string, Promise<FrameDecodeResult>>();
+  private nextBlobId = 1;
   private maxCacheSize = 100;
   private readonly requestTimeoutMs = 30000;
   private readonly maxQueueSize = 500;
@@ -269,8 +273,7 @@ export class ParallelFrameDecoder {
     let bitmapForCaller: ImageBitmap | null = null;
 
     if (response.bitmap) {
-      const cacheKey = `${response.clipId}:${response.time.toFixed(3)}`;
-      this.addToCache(cacheKey, response.bitmap);
+      this.addToCache(pending.cacheKey, response.bitmap);
       try {
         bitmapForCaller = await createImageBitmap(response.bitmap);
       } catch {
@@ -321,11 +324,19 @@ export class ParallelFrameDecoder {
     this.frameCache.set(key, { bitmap, timestamp: performance.now() });
   }
 
+  private getCacheKey(request: FrameDecodeRequest): string {
+    let blobId = this.blobIds.get(request.blob);
+    if (blobId === undefined) {
+      blobId = this.nextBlobId++;
+      this.blobIds.set(request.blob, blobId);
+    }
+    return `${request.clipId}:${blobId}:${request.time.toFixed(3)}:${request.width}x${request.height}`;
+  }
+
   private async getFromCache(
-    clipId: string,
-    time: number,
+    request: FrameDecodeRequest,
   ): Promise<ImageBitmap | null> {
-    const cacheKey = `${clipId}:${time.toFixed(3)}`;
+    const cacheKey = this.getCacheKey(request);
     const cached = this.frameCache.get(cacheKey);
 
     if (cached) {
@@ -406,6 +417,7 @@ export class ParallelFrameDecoder {
       reject,
       clipId: request.clipId,
       startTime: performance.now(),
+      cacheKey: this.getCacheKey(request),
       timeoutId: setTimeout(() => {
         if (!worker.pendingRequests.has(requestId)) return;
         worker.pendingRequests.delete(requestId);
@@ -451,7 +463,8 @@ export class ParallelFrameDecoder {
       await this.initialize();
     }
 
-    const cached = await this.getFromCache(request.clipId, request.time);
+    const cacheKey = this.getCacheKey(request);
+    const cached = await this.getFromCache(request);
     if (cached) {
       return {
         clipId: request.clipId,
@@ -460,7 +473,21 @@ export class ParallelFrameDecoder {
       };
     }
 
-    return new Promise((resolve, reject) => {
+    const existing = this.inFlightDecodes.get(cacheKey);
+    if (existing) {
+      const shared = await existing;
+      let bitmap: ImageBitmap | null = null;
+      if (shared.bitmap) {
+        try {
+          bitmap = await createImageBitmap(shared.bitmap);
+        } catch {
+          bitmap = null;
+        }
+      }
+      return { ...shared, bitmap };
+    }
+
+    const decodePromise = new Promise<FrameDecodeResult>((resolve, reject) => {
       const worker = this.getLeastBusyWorker();
 
       if (worker && worker.pendingRequests.size < 2) {
@@ -473,6 +500,24 @@ export class ParallelFrameDecoder {
         this.requestQueue.push({ request, resolve, reject });
       }
     });
+
+    this.inFlightDecodes.set(cacheKey, decodePromise);
+    try {
+      const result = await decodePromise;
+      let bitmap: ImageBitmap | null = null;
+      if (result.bitmap) {
+        try {
+          bitmap = await createImageBitmap(result.bitmap);
+        } catch {
+          bitmap = null;
+        }
+      }
+      return { ...result, bitmap };
+    } finally {
+      if (this.inFlightDecodes.get(cacheKey) === decodePromise) {
+        this.inFlightDecodes.delete(cacheKey);
+      }
+    }
   }
 
   async decodeFrames(
@@ -570,6 +615,7 @@ export class ParallelFrameDecoder {
     this.workerUrls = [];
 
     this.clearCache();
+    this.inFlightDecodes.clear();
 
     for (const item of this.requestQueue) {
       item.reject(new Error("Decoder disposed"));
