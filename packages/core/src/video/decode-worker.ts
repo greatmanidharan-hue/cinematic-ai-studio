@@ -37,6 +37,8 @@ interface CachedResource {
   blob: Blob;
   width: number;
   height: number;
+  activeUses: number;
+  disposePending: boolean;
 }
 
 const MAX_CACHED_RESOURCES = 20;
@@ -44,11 +46,28 @@ const resourceCache = new Map<string, CachedResource>();
 const resourcePromises = new Map<string, Promise<CachedResource | null>>();
 
 function disposeResource(resource: CachedResource): void {
+  if (resource.activeUses > 0) {
+    resource.disposePending = true;
+    return;
+  }
   const input = resource.input as { [Symbol.dispose]?: () => void };
   try {
     input[Symbol.dispose]?.();
   } catch {
     // Resource eviction must continue even if a decoder is already disposed.
+  }
+}
+
+function acquireResource(resource: CachedResource): CachedResource {
+  resource.activeUses++;
+  return resource;
+}
+
+function releaseResource(resource: CachedResource): void {
+  resource.activeUses = Math.max(0, resource.activeUses - 1);
+  if (resource.activeUses === 0 && resource.disposePending) {
+    resource.disposePending = false;
+    disposeResource(resource);
   }
 }
 
@@ -96,7 +115,7 @@ async function getOrCreateResources(
     // Refresh insertion order for LRU eviction.
     resourceCache.delete(clipId);
     resourceCache.set(clipId, cached);
-    return cached;
+    return acquireResource(cached);
   }
   const inFlight = resourcePromises.get(clipId);
   if (inFlight) {
@@ -106,7 +125,7 @@ async function getOrCreateResources(
       resource.blob === blob &&
       resource.width === width &&
       resource.height === height
-    ) return resource;
+    ) return acquireResource(resource);
     const current = resourceCache.get(clipId);
     if (current) evictResource(clipId);
   } else if (cached) {
@@ -116,7 +135,8 @@ async function getOrCreateResources(
   const creation = createResources(clipId, blob, width, height);
   resourcePromises.set(clipId, creation);
   try {
-    return await creation;
+    const resource = await creation;
+    return resource ? acquireResource(resource) : null;
   } finally {
     if (resourcePromises.get(clipId) === creation) {
       resourcePromises.delete(clipId);
@@ -162,6 +182,8 @@ async function createResources(
       blob,
       width,
       height,
+      activeUses: 0,
+      disposePending: false,
     };
 
     resourceCache.set(clipId, resource);
@@ -183,8 +205,9 @@ async function createResources(
 async function decodeFrame(request: DecodeRequest): Promise<DecodeResponse> {
   const { requestId, clipId, blob, time, width, height } = request;
 
+  let resources: CachedResource | null = null;
   try {
-    const resources = await getOrCreateResources(clipId, blob, width, height);
+    resources = await getOrCreateResources(clipId, blob, width, height);
     if (!resources) {
       return {
         type: "decoded",
@@ -234,6 +257,8 @@ async function decodeFrame(request: DecodeRequest): Promise<DecodeResponse> {
       time,
       error: error instanceof Error ? error.message : "Unknown decode error",
     };
+  } finally {
+    if (resources) releaseResource(resources);
   }
 }
 
@@ -307,10 +332,27 @@ async function loadMediaBunny() {
 }
 
 function disposeResource(resource) {
+ if (resource.activeUses > 0) {
+ resource.disposePending = true;
+ return;
+ }
  try {
  resource.input[Symbol.dispose]?.();
  } catch (error) {
  // Continue cleanup even if the input is already disposed.
+ }
+}
+
+function acquireResource(resource) {
+ resource.activeUses++;
+ return resource;
+}
+
+function releaseResource(resource) {
+ resource.activeUses = Math.max(0, resource.activeUses - 1);
+ if (resource.activeUses === 0 && resource.disposePending) {
+ resource.disposePending = false;
+ disposeResource(resource);
  }
 }
 
@@ -330,13 +372,13 @@ async function getOrCreateResources(clipId, blob, width, height) {
  if (cached && cached.blob === blob && cached.width === width && cached.height === height) {
  resourceCache.delete(clipId);
  resourceCache.set(clipId, cached);
- return cached;
+ return acquireResource(cached);
  }
  const inFlight = resourcePromises.get(clipId);
  if (inFlight) {
  const resource = await inFlight;
  if (resource && resource.blob === blob && resource.width === width && resource.height === height) {
- return resource;
+ return acquireResource(resource);
  }
  const current = resourceCache.get(clipId);
  if (current) evictResource(clipId);
@@ -347,7 +389,8 @@ async function getOrCreateResources(clipId, blob, width, height) {
  const creation = createResources(clipId, blob, width, height);
  resourcePromises.set(clipId, creation);
  try {
- return await creation;
+ const resource = await creation;
+ return resource ? acquireResource(resource) : null;
  } finally {
  if (resourcePromises.get(clipId) === creation) resourcePromises.delete(clipId);
  }
@@ -373,7 +416,7 @@ async function createResources(clipId, blob, width, height) {
  fit: "contain",
  });
 
- const resource = { input, sink, videoTrack, blob, width, height };
+ const resource = { input, sink, videoTrack, blob, width, height, activeUses: 0, disposePending: false };
  resourceCache.set(clipId, resource);
  while (resourceCache.size > MAX_CACHED_RESOURCES) {
  const oldestClipId = resourceCache.keys().next().value;
@@ -400,8 +443,9 @@ async function decodeFrame(request) {
  };
  }
 
+ let resources = null;
  try {
- const resources = await getOrCreateResources(clipId, blob, width, height);
+ resources = await getOrCreateResources(clipId, blob, width, height);
  if (!resources) {
  return {
  type: "decoded",
@@ -443,6 +487,8 @@ async function decodeFrame(request) {
  time,
  error: error instanceof Error ? error.message : "Unknown decode error",
  };
+ } finally {
+ if (resources) releaseResource(resources);
  }
 }
 
