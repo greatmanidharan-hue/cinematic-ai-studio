@@ -120,3 +120,94 @@ describe("ParallelFrameDecoder frame cache", () => {
   });
 
 });
+
+describe("ParallelFrameDecoder worker initialization", () => {
+  it("terminates every partially-created worker when one worker fails to initialize", async () => {
+    const instances: Array<{
+      onmessage: ((event: MessageEvent) => void) | null;
+      onerror: ((event: ErrorEvent) => void) | null;
+      onmessageerror: (() => void) | null;
+      terminate: ReturnType<typeof vi.fn>;
+      postMessage: ReturnType<typeof vi.fn>;
+    }> = [];
+
+    class MockWorker {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: ErrorEvent) => void) | null = null;
+      onmessageerror: (() => void) | null = null;
+      terminate = vi.fn();
+      postMessage = vi.fn();
+      constructor() {
+        instances.push(this);
+      }
+    }
+
+    const createUrl = vi.spyOn(URL, "createObjectURL")
+      .mockReturnValueOnce("blob:worker-0")
+      .mockReturnValueOnce("blob:worker-1");
+    const revokeUrl = vi.spyOn(URL, "revokeObjectURL");
+    vi.stubGlobal("Worker", MockWorker);
+
+    const decoder = new ParallelFrameDecoder(2);
+    const initialization = decoder.initialize();
+
+    instances[0].onerror?.({ message: "startup failed" } as ErrorEvent);
+    instances[1].onmessage?.({
+      data: { type: "ready", workerId: 1, mediabunnyAvailable: true },
+    } as MessageEvent);
+
+    await expect(initialization).rejects.toThrow("startup failed");
+    expect(instances).toHaveLength(2);
+    expect(instances[0].terminate).toHaveBeenCalledOnce();
+    expect(instances[1].terminate).toHaveBeenCalledOnce();
+    expect(revokeUrl).toHaveBeenCalledWith("blob:worker-0");
+    expect(revokeUrl).toHaveBeenCalledWith("blob:worker-1");
+
+    decoder.dispose();
+    createUrl.mockRestore();
+    revokeUrl.mockRestore();
+    vi.unstubAllGlobals();
+  });
+
+  it("allows initialization to be retried after a failed attempt", async () => {
+    const instances: Array<{
+      onmessage: ((event: MessageEvent) => void) | null;
+      onerror: ((event: ErrorEvent) => void) | null;
+      onmessageerror: (() => void) | null;
+      terminate: ReturnType<typeof vi.fn>;
+      postMessage: ReturnType<typeof vi.fn>;
+    }> = [];
+
+    class MockWorker {
+      onmessage: ((event: MessageEvent) => void) | null = null;
+      onerror: ((event: ErrorEvent) => void) | null = null;
+      onmessageerror: (() => void) | null = null;
+      terminate = vi.fn();
+      postMessage = vi.fn();
+      constructor() {
+        instances.push(this);
+      }
+    }
+
+    vi.spyOn(URL, "createObjectURL").mockImplementation(
+      () => `blob:worker-${instances.length}`,
+    );
+    vi.stubGlobal("Worker", MockWorker);
+
+    const decoder = new ParallelFrameDecoder(1);
+    const firstAttempt = decoder.initialize();
+    instances[0].onerror?.({ message: "first attempt failed" } as ErrorEvent);
+    await expect(firstAttempt).rejects.toThrow("first attempt failed");
+
+    const secondAttempt = decoder.initialize();
+    instances[1].onmessage?.({
+      data: { type: "ready", workerId: 0, mediabunnyAvailable: true },
+    } as MessageEvent);
+    await expect(secondAttempt).resolves.toBeUndefined();
+    expect(decoder.isAvailable()).toBe(true);
+
+    decoder.dispose();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+  });
+});
