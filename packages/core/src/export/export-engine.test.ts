@@ -1378,6 +1378,8 @@ describe("ExportEngine", () => {
           handleDeviceLost = callback;
         }),
       };
+      const activeExportController = new AbortController();
+      Reflect.set(exportEngine, "abortController", activeExportController);
       mockVideoEngine.getGPUCompositor.mockReturnValueOnce({
         getRenderer: () => renderer,
         getDevice: () => ({}),
@@ -1392,6 +1394,12 @@ describe("ExportEngine", () => {
       handleDeviceLost?.();
 
       expect(mockUpscalingEngine.dispose).toHaveBeenCalledTimes(1);
+      expect(activeExportController.signal.aborted).toBe(true);
+      expect(activeExportController.signal.reason).toEqual(
+        expect.objectContaining({
+          message: "GPU device was lost during export. Please retry after recovery.",
+        }),
+      );
     });
 
     it("does not register duplicate device-loss listeners after dispose and reinitialize", async () => {
