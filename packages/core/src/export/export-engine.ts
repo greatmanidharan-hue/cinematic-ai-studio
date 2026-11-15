@@ -132,8 +132,9 @@ export class ExportEngine {
           this.upscalingEngine?.dispose();
           this.upscalingEngine = null;
 
-          // Do not silently finish an export without requested GPU upscaling
-          // after the device disappears. The caller can retry after recovery.
+          // A device loss makes the active render pipeline unreliable. Abort
+          // rather than produce a partial or inconsistent export; the caller
+          // can retry after the renderer has recovered.
           this.abortController?.abort(
             new Error("GPU device was lost during export. Please retry after recovery."),
           );
