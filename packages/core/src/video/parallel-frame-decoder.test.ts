@@ -613,6 +613,7 @@ describe("ParallelFrameDecoder response disposal race", () => {
       }) => Promise<void>;
       dispose: () => void;
       processQueue: () => void;
+      addToCache: (key: string, bitmap: ImageBitmap) => void;
     };
 
     let finishClone!: (bitmap: ImageBitmap) => void;
@@ -653,9 +654,9 @@ describe("ParallelFrameDecoder response disposal race", () => {
     decoder.cacheHits = 0;
     decoder.cacheMisses = 0;
     decoder.processQueue = vi.fn();
-    vi.spyOn(decoder, "addToCache").mockImplementation(() => {
+    decoder.addToCache = () => {
       decoder.frameCache.set("frame-key", { bitmap: cachedBitmap, timestamp: 1 });
-    });
+    };
 
     const responseHandling = decoder.handleDecodeResponse(state, {
       requestId: "request-1",
