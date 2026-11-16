@@ -44,6 +44,10 @@ export interface CachedResource {
 const MAX_CACHED_RESOURCES = 20;
 const resourceCache = new Map<string, CachedResource>();
 const resourcePromises = new Map<string, Promise<CachedResource | null>>();
+const resourceGenerations = new Map<string, number>();
+function getResourceGeneration(clipId: string): number {
+  return resourceGenerations.get(clipId) ?? 0;
+}
 
 export function disposeResource(resource: CachedResource): void {
   if (resource.activeUses > 0) {
@@ -105,7 +109,9 @@ export async function getOrCreateResources(
   width: number,
   height: number,
 ): Promise<CachedResource | null> {
+  const generation = getResourceGeneration(clipId);
   while (true) {
+    if (generation !== getResourceGeneration(clipId)) return null;
     const cached = resourceCache.get(clipId);
     if (
       cached &&
@@ -126,15 +132,13 @@ export async function getOrCreateResources(
       // Several waiters may resume together; the loop prevents them from
       // starting duplicate replacements for the same clip.
       const completed = await inFlight;
-      // A failed creation is a terminal result for every waiter on that
-      // attempt. Retrying here would create an unbounded failure loop.
-      if (!completed) return null;
+      if (generation !== getResourceGeneration(clipId) || !completed) return null;
       continue;
     }
 
     if (cached) evictResource(clipId);
 
-    const creation = createResources(clipId, blob, width, height);
+    const creation = createResources(clipId, blob, width, height, generation);
     resourcePromises.set(clipId, creation);
     try {
       // createResources reserves the creator's lease before publishing.
@@ -151,6 +155,7 @@ async function createResources(
   blob: Blob,
   width: number,
   height: number,
+  generation: number,
 ): Promise<CachedResource | null> {
   let input: unknown = null;
   try {
@@ -168,7 +173,7 @@ async function createResources(
     const videoTrack = await (
       input as { getPrimaryVideoTrack: () => Promise<unknown> }
     ).getPrimaryVideoTrack();
-    if (!videoTrack) {
+    if (!videoTrack || generation !== getResourceGeneration(clipId)) {
       disposeResource({ input, sink: null, videoTrack: null, blob, width, height, activeUses: 0, disposePending: false });
       return null;
     }
@@ -192,6 +197,10 @@ async function createResources(
       disposePending: false,
     };
 
+    if (generation !== getResourceGeneration(clipId)) {
+      disposeResource(resource);
+      return null;
+    }
     resourceCache.set(clipId, resource);
     while (resourceCache.size > MAX_CACHED_RESOURCES) {
       const oldestClipId = resourceCache.keys().next().value;
@@ -272,13 +281,16 @@ async function decodeFrame(request: DecodeRequest): Promise<DecodeResponse> {
 }
 
 export function clearCache(clipId?: string): void {
-  if (clipId) {
-    const cached = resourceCache.get(clipId);
-    if (cached) evictResource(clipId);
-  } else {
-    for (const clipId of resourceCache.keys()) {
-      evictResource(clipId);
-    }
+  const clipIds = clipId
+    ? new Set([clipId])
+    : new Set([...resourceCache.keys(), ...resourcePromises.keys()]);
+  for (const id of clipIds) {
+    resourceGenerations.set(id, getResourceGeneration(id) + 1);
+    const cached = resourceCache.get(id);
+    if (cached) evictResource(id);
+    // Detach the old attempt so new requests can start against the new
+    // generation. Its completion is prevented from publishing stale data.
+    resourcePromises.delete(id);
   }
 }
 
@@ -318,6 +330,10 @@ export const decodeWorkerCode = `
 const MAX_CACHED_RESOURCES = 20;
 const resourceCache = new Map();
 const resourcePromises = new Map();
+const resourceGenerations = new Map();
+function getResourceGeneration(clipId) {
+ return resourceGenerations.get(clipId) || 0;
+}
 let workerId = 0;
 let mediabunnyModule = null;
 let mediabunnyAvailable = false;
@@ -376,8 +392,10 @@ function evictResource(clipId) {
 
 async function getOrCreateResources(clipId, blob, width, height) {
  if (!mediabunnyAvailable || !mediabunnyModule) return null;
+ const generation = getResourceGeneration(clipId);
 
  while (true) {
+ if (generation !== getResourceGeneration(clipId)) return null;
  const cached = resourceCache.get(clipId);
  if (cached && cached.blob === blob && cached.width === width && cached.height === height) {
  resourceCache.delete(clipId);
@@ -389,14 +407,13 @@ async function getOrCreateResources(clipId, blob, width, height) {
  if (inFlight) {
  // Re-check after every waiter resumes to serialize replacements per clip.
  const completed = await inFlight;
- // Share failed creation with every waiter instead of retrying forever.
- if (!completed) return null;
+ if (generation !== getResourceGeneration(clipId) || !completed) return null;
  continue;
  }
 
  if (cached) evictResource(clipId);
 
- const creation = createResources(clipId, blob, width, height);
+ const creation = createResources(clipId, blob, width, height, generation);
  resourcePromises.set(clipId, creation);
  try {
  // The creator lease is reserved before the resource enters the cache.
@@ -406,7 +423,7 @@ async function getOrCreateResources(clipId, blob, width, height) {
  }
  }
 }
-async function createResources(clipId, blob, width, height) {
+async function createResources(clipId, blob, width, height, generation) {
  let input = null;
  try {
  const { Input, ALL_FORMATS, BlobSource, CanvasSink } = mediabunnyModule;
@@ -417,7 +434,7 @@ async function createResources(clipId, blob, width, height) {
  });
 
  const videoTrack = await input.getPrimaryVideoTrack();
- if (!videoTrack) {
+ if (!videoTrack || generation !== getResourceGeneration(clipId)) {
  disposeResource({ input, activeUses: 0, disposePending: false });
  return null;
  }
@@ -429,6 +446,10 @@ async function createResources(clipId, blob, width, height) {
  });
 
  const resource = { input, sink, videoTrack, blob, width, height, activeUses: 1, disposePending: false };
+ if (generation !== getResourceGeneration(clipId)) {
+ disposeResource(resource);
+ return null;
+ }
  resourceCache.set(clipId, resource);
  while (resourceCache.size > MAX_CACHED_RESOURCES) {
  const oldestClipId = resourceCache.keys().next().value;
@@ -502,6 +523,16 @@ async function decodeFrame(request) {
  };
  } finally {
  if (resources) releaseResource(resources);
+ }
+}
+
+function clearCache(clipId) {
+ const ids = clipId ? [clipId] : [...new Set([...resourceCache.keys(), ...resourcePromises.keys()])];
+ for (const id of ids) {
+ resourceGenerations.set(id, getResourceGeneration(id) + 1);
+ const cached = resourceCache.get(id);
+ if (cached) evictResource(id);
+ resourcePromises.delete(id);
  }
 }
 
