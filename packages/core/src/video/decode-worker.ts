@@ -52,11 +52,20 @@ function getResourceGeneration(clipId: string): number {
 function beginResourceCreation(clipId: string): void {
   activeResourceCreations.set(clipId, (activeResourceCreations.get(clipId) ?? 0) + 1);
 }
+function pruneResourceGeneration(clipId: string): void {
+  if (
+    (activeResourceCreations.get(clipId) ?? 0) === 0 &&
+    !resourceCache.has(clipId) &&
+    !resourcePromises.has(clipId)
+  ) {
+    resourceGenerations.delete(clipId);
+  }
+}
 function endResourceCreation(clipId: string): void {
   const active = Math.max(0, (activeResourceCreations.get(clipId) ?? 1) - 1);
   if (active === 0) {
     activeResourceCreations.delete(clipId);
-    if (!resourceCache.has(clipId) && !resourcePromises.has(clipId)) resourceGenerations.delete(clipId);
+    pruneResourceGeneration(clipId);
   } else {
     activeResourceCreations.set(clipId, active);
   }
@@ -93,6 +102,7 @@ function evictResource(clipId: string): void {
   if (!resource) return;
   resourceCache.delete(clipId);
   disposeResource(resource);
+  pruneResourceGeneration(clipId);
 }
 let workerId = 0;
 let mediabunnyModule: typeof import("mediabunny") | null = null;
@@ -357,11 +367,16 @@ function getResourceGeneration(clipId) {
 function beginResourceCreation(clipId) {
  activeResourceCreations.set(clipId, (activeResourceCreations.get(clipId) || 0) + 1);
 }
+function pruneResourceGeneration(clipId) {
+ if ((activeResourceCreations.get(clipId) || 0) === 0 && !resourceCache.has(clipId) && !resourcePromises.has(clipId)) {
+ resourceGenerations.delete(clipId);
+ }
+}
 function endResourceCreation(clipId) {
  const active = Math.max(0, (activeResourceCreations.get(clipId) || 1) - 1);
  if (active === 0) {
  activeResourceCreations.delete(clipId);
- if (!resourceCache.has(clipId) && !resourcePromises.has(clipId)) resourceGenerations.delete(clipId);
+ pruneResourceGeneration(clipId);
  } else {
  activeResourceCreations.set(clipId, active);
  }
@@ -420,6 +435,7 @@ function evictResource(clipId) {
  if (!resource) return;
  resourceCache.delete(clipId);
  disposeResource(resource);
+ pruneResourceGeneration(clipId);
 }
 
 async function getOrCreateResources(clipId, blob, width, height) {
