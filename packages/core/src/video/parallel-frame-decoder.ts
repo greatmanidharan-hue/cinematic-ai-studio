@@ -605,6 +605,14 @@ export class ParallelFrameDecoder {
           bitmap = null;
         }
       }
+      if (generation !== this.lifecycleGeneration) {
+        try {
+          bitmap?.close();
+        } catch {
+          // A late caller clone may already have been released.
+        }
+        throw new Error("Decoder disposed");
+      }
       return { ...shared, bitmap };
     } finally {
       entry.consumers--;
