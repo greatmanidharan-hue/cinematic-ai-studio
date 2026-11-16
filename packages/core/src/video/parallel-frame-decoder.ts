@@ -372,7 +372,11 @@ export class ParallelFrameDecoder {
     if (state.failed) return;
     state.failed = true;
     state.busy = false;
-    state.worker.terminate();
+    try {
+      state.worker.terminate();
+    } catch {
+      // A failed worker is already unusable; continue rejecting its requests.
+    }
 
     for (const pending of state.pendingRequests.values()) {
       clearTimeout(pending.timeoutId);
@@ -636,12 +640,20 @@ export class ParallelFrameDecoder {
         clearTimeout(pending.timeoutId);
         pending.reject(new Error("Decoder disposed"));
       }
-      worker.worker.terminate();
+      try {
+        worker.worker.terminate();
+      } catch {
+        // Continue disposing the remaining workers and owned resources.
+      }
     }
     this.workers = [];
 
     for (const url of this.workerUrls) {
-      URL.revokeObjectURL(url);
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        // Continue cleanup even if a worker URL was already revoked.
+      }
     }
     this.workerUrls = [];
 
