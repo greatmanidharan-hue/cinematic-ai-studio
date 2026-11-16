@@ -733,6 +733,16 @@ export class ParallelFrameDecoder {
     }
     this.workers = [];
 
+    // Reject responses that have left the worker pending map but are still
+    // cloning a caller-owned bitmap.
+    for (const pending of this.activeResponseHandlers.keys()) {
+      if (!pending.settled) {
+        pending.settled = true;
+        pending.reject(new Error("Decoder disposed"));
+      }
+    }
+    this.activeResponseHandlers.clear();
+
     for (const url of this.workerUrls) {
       try {
         URL.revokeObjectURL(url);
