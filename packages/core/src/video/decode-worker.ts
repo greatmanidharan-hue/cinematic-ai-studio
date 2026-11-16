@@ -45,8 +45,21 @@ const MAX_CACHED_RESOURCES = 20;
 const resourceCache = new Map<string, CachedResource>();
 const resourcePromises = new Map<string, Promise<CachedResource | null>>();
 const resourceGenerations = new Map<string, number>();
+const activeResourceCreations = new Map<string, number>();
 function getResourceGeneration(clipId: string): number {
   return resourceGenerations.get(clipId) ?? 0;
+}
+function beginResourceCreation(clipId: string): void {
+  activeResourceCreations.set(clipId, (activeResourceCreations.get(clipId) ?? 0) + 1);
+}
+function endResourceCreation(clipId: string): void {
+  const active = Math.max(0, (activeResourceCreations.get(clipId) ?? 1) - 1);
+  if (active === 0) {
+    activeResourceCreations.delete(clipId);
+    if (!resourceCache.has(clipId) && !resourcePromises.has(clipId)) resourceGenerations.delete(clipId);
+  } else {
+    activeResourceCreations.set(clipId, active);
+  }
 }
 
 export function disposeResource(resource: CachedResource): void {
@@ -138,6 +151,7 @@ export async function getOrCreateResources(
 
     if (cached) evictResource(clipId);
 
+    beginResourceCreation(clipId);
     const creation = createResources(clipId, blob, width, height, generation);
     resourcePromises.set(clipId, creation);
     try {
@@ -147,6 +161,7 @@ export async function getOrCreateResources(
       if (resourcePromises.get(clipId) === creation) {
         resourcePromises.delete(clipId);
       }
+      endResourceCreation(clipId);
     }
   }
 }
@@ -285,7 +300,11 @@ export function clearCache(clipId?: string): void {
     ? new Set([clipId])
     : new Set([...resourceCache.keys(), ...resourcePromises.keys()]);
   for (const id of clipIds) {
-    resourceGenerations.set(id, getResourceGeneration(id) + 1);
+    if ((activeResourceCreations.get(id) ?? 0) > 0) {
+      resourceGenerations.set(id, getResourceGeneration(id) + 1);
+    } else {
+      resourceGenerations.delete(id);
+    }
     const cached = resourceCache.get(id);
     if (cached) evictResource(id);
     // Detach the old attempt so new requests can start against the new
@@ -331,8 +350,21 @@ const MAX_CACHED_RESOURCES = 20;
 const resourceCache = new Map();
 const resourcePromises = new Map();
 const resourceGenerations = new Map();
+const activeResourceCreations = new Map();
 function getResourceGeneration(clipId) {
  return resourceGenerations.get(clipId) || 0;
+}
+function beginResourceCreation(clipId) {
+ activeResourceCreations.set(clipId, (activeResourceCreations.get(clipId) || 0) + 1);
+}
+function endResourceCreation(clipId) {
+ const active = Math.max(0, (activeResourceCreations.get(clipId) || 1) - 1);
+ if (active === 0) {
+ activeResourceCreations.delete(clipId);
+ if (!resourceCache.has(clipId) && !resourcePromises.has(clipId)) resourceGenerations.delete(clipId);
+ } else {
+ activeResourceCreations.set(clipId, active);
+ }
 }
 let workerId = 0;
 let mediabunnyModule = null;
@@ -413,6 +445,7 @@ async function getOrCreateResources(clipId, blob, width, height) {
 
  if (cached) evictResource(clipId);
 
+ beginResourceCreation(clipId);
  const creation = createResources(clipId, blob, width, height, generation);
  resourcePromises.set(clipId, creation);
  try {
@@ -420,7 +453,7 @@ async function getOrCreateResources(clipId, blob, width, height) {
  return await creation;
  } finally {
  if (resourcePromises.get(clipId) === creation) resourcePromises.delete(clipId);
- }
+ endResourceCreation(clipId);
  }
 }
 async function createResources(clipId, blob, width, height, generation) {
@@ -529,7 +562,11 @@ async function decodeFrame(request) {
 function clearCache(clipId) {
  const ids = clipId ? [clipId] : [...new Set([...resourceCache.keys(), ...resourcePromises.keys()])];
  for (const id of ids) {
- resourceGenerations.set(id, getResourceGeneration(id) + 1);
+ if ((activeResourceCreations.get(id) || 0) > 0) {
+  resourceGenerations.set(id, getResourceGeneration(id) + 1);
+ } else {
+  resourceGenerations.delete(id);
+ }
  const cached = resourceCache.get(id);
  if (cached) evictResource(id);
  resourcePromises.delete(id);
