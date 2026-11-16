@@ -799,3 +799,48 @@ describe("ParallelFrameDecoder worker failure during response cloning", () => {
     vi.unstubAllGlobals();
   });
 });
+
+
+describe("ParallelFrameDecoder fan-out disposal race", () => {
+  it("closes a caller clone that finishes after dispose", async () => {
+    const decoder = Object.create(ParallelFrameDecoder.prototype) as ParallelFrameDecoder & {
+      initialized: boolean;
+      lifecycleGeneration: number;
+      inFlightDecodes: Map<string, {
+        promise: Promise<{ clipId: string; bitmap: ImageBitmap; time: number }>;
+        consumers: number;
+      }>;
+      getCacheKey: (request: { clipId: string; blob: Blob; time: number; width: number; height: number }) => string;
+      getFromCache: () => Promise<null>;
+    };
+    const sharedBitmap = { close: vi.fn() } as unknown as ImageBitmap;
+    const callerBitmap = { close: vi.fn() } as unknown as ImageBitmap;
+    let finishClone!: (bitmap: ImageBitmap) => void;
+    vi.stubGlobal("createImageBitmap", () => new Promise<ImageBitmap>((resolve) => {
+      finishClone = resolve;
+    }));
+
+    decoder.initialized = true;
+    decoder.lifecycleGeneration = 0;
+    decoder.getCacheKey = vi.fn(() => "frame-key");
+    decoder.getFromCache = vi.fn(async () => null);
+    decoder.inFlightDecodes = new Map([["frame-key", {
+      promise: Promise.resolve({ clipId: "clip-a", bitmap: sharedBitmap, time: 1 }),
+      consumers: 0,
+    }]]);
+
+    const decoding = decoder.decodeFrame({
+      clipId: "clip-a", blob: new Blob(["source"]), time: 1, width: 10, height: 10,
+    });
+    await Promise.resolve();
+    await Promise.resolve();
+
+    decoder.lifecycleGeneration++;
+    finishClone(callerBitmap);
+
+    await expect(decoding).rejects.toThrow("Decoder disposed");
+    expect(callerBitmap.close).toHaveBeenCalledOnce();
+    expect(sharedBitmap.close).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
+});
