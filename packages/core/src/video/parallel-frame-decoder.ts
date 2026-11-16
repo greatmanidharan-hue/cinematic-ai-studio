@@ -27,6 +27,8 @@ interface PendingRequest {
   startTime: number;
   timeoutId: ReturnType<typeof setTimeout>;
   cacheKey: string;
+  lifecycleGeneration?: number;
+  settled?: boolean;
 }
 
 interface InFlightDecode {
@@ -66,6 +68,7 @@ export class ParallelFrameDecoder {
     new Map();
   private readonly blobIds = new WeakMap<Blob, number>();
   private readonly inFlightDecodes = new Map<string, InFlightDecode>();
+  private readonly activeResponseHandlers = new Set<PendingRequest>();
   private nextBlobId = 1;
   private maxCacheSize = 100;
   private readonly requestTimeoutMs = 30000;
@@ -246,6 +249,17 @@ export class ParallelFrameDecoder {
     }
     this.workers = [];
 
+    // A response may already have left pendingRequests while its caller bitmap
+    // is still being cloned. Reject it now; the response handler will close any
+    // clone that completes after disposal.
+    for (const pending of this.activeResponseHandlers) {
+      if (!pending.settled) {
+        pending.settled = true;
+        pending.reject(new Error("Decoder disposed"));
+      }
+    }
+    this.activeResponseHandlers.clear();
+
     for (const url of this.workerUrls) {
       try {
         URL.revokeObjectURL(url);
@@ -274,6 +288,7 @@ export class ParallelFrameDecoder {
 
     clearTimeout(pending.timeoutId);
     state.pendingRequests.delete(response.requestId);
+    this.activeResponseHandlers.add(pending);
     state.busy = state.pendingRequests.size > 0;
 
     const decodeTime = performance.now() - pending.startTime;
@@ -291,6 +306,22 @@ export class ParallelFrameDecoder {
       }
     }
 
+    this.activeResponseHandlers.delete(pending);
+    if (
+      pending.settled ||
+      (pending.lifecycleGeneration !== undefined &&
+        pending.lifecycleGeneration !== this.lifecycleGeneration)
+    ) {
+      bitmapForCaller?.close();
+      if (!pending.settled) {
+        pending.settled = true;
+        pending.reject(new Error("Decoder disposed"));
+      }
+      this.processQueue();
+      return;
+    }
+
+    pending.settled = true;
     pending.resolve({
       clipId: response.clipId,
       bitmap: bitmapForCaller,
@@ -451,6 +482,8 @@ export class ParallelFrameDecoder {
       clipId: request.clipId,
       startTime: performance.now(),
       cacheKey: this.getCacheKey(request),
+      lifecycleGeneration: this.lifecycleGeneration,
+      settled: false,
       timeoutId: setTimeout(() => {
         if (!worker.pendingRequests.has(requestId)) return;
         worker.pendingRequests.delete(requestId);
@@ -642,8 +675,12 @@ export class ParallelFrameDecoder {
     for (const worker of this.workers) {
       for (const [, pending] of worker.pendingRequests) {
         clearTimeout(pending.timeoutId);
-        pending.reject(new Error("Decoder disposed"));
+        if (!pending.settled) {
+          pending.settled = true;
+          pending.reject(new Error("Decoder disposed"));
+        }
       }
+      worker.pendingRequests.clear();
       try {
         worker.worker.terminate();
       } catch {
