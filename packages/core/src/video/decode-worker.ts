@@ -105,46 +105,44 @@ async function getOrCreateResources(
   width: number,
   height: number,
 ): Promise<CachedResource | null> {
-  const cached = resourceCache.get(clipId);
-  if (
-    cached &&
-    cached.blob === blob &&
-    cached.width === width &&
-    cached.height === height
-  ) {
-    // Refresh insertion order for LRU eviction.
-    resourceCache.delete(clipId);
-    resourceCache.set(clipId, cached);
-    return acquireResource(cached);
-  }
-  const inFlight = resourcePromises.get(clipId);
-  if (inFlight) {
-    const resource = await inFlight;
+  while (true) {
+    const cached = resourceCache.get(clipId);
     if (
-      resource &&
-      resource.blob === blob &&
-      resource.width === width &&
-      resource.height === height
-    ) return acquireResource(resource);
-    const current = resourceCache.get(clipId);
-    if (current) evictResource(clipId);
-  } else if (cached) {
-    evictResource(clipId);
-  }
+      cached &&
+      cached.blob === blob &&
+      cached.width === width &&
+      cached.height === height
+    ) {
+      // Refresh insertion order for LRU eviction.
+      resourceCache.delete(clipId);
+      resourceCache.set(clipId, cached);
+      return acquireResource(cached);
+    }
 
-  const creation = createResources(clipId, blob, width, height);
-  resourcePromises.set(clipId, creation);
-  try {
-    // createResources reserves the first lease before publishing the cache entry,
-    // so another decode cannot evict it before this caller resumes.
-    return await creation;
-  } finally {
-    if (resourcePromises.get(clipId) === creation) {
-      resourcePromises.delete(clipId);
+    const inFlight = resourcePromises.get(clipId);
+    if (inFlight) {
+      // Another request is creating/replacing this clip's resource. Wait for
+      // that exact attempt, then re-check both cache and in-flight state.
+      // Several waiters may resume together; the loop prevents them from
+      // starting duplicate replacements for the same clip.
+      await inFlight;
+      continue;
+    }
+
+    if (cached) evictResource(clipId);
+
+    const creation = createResources(clipId, blob, width, height);
+    resourcePromises.set(clipId, creation);
+    try {
+      // createResources reserves the creator's lease before publishing.
+      return await creation;
+    } finally {
+      if (resourcePromises.get(clipId) === creation) {
+        resourcePromises.delete(clipId);
+      }
     }
   }
 }
-
 async function createResources(
   clipId: string,
   blob: Blob,
@@ -374,38 +372,35 @@ function evictResource(clipId) {
 }
 
 async function getOrCreateResources(clipId, blob, width, height) {
- if (!mediabunnyAvailable || !mediabunnyModule) {
- return null;
- }
+ if (!mediabunnyAvailable || !mediabunnyModule) return null;
 
+ while (true) {
  const cached = resourceCache.get(clipId);
  if (cached && cached.blob === blob && cached.width === width && cached.height === height) {
  resourceCache.delete(clipId);
  resourceCache.set(clipId, cached);
  return acquireResource(cached);
  }
+
  const inFlight = resourcePromises.get(clipId);
  if (inFlight) {
- const resource = await inFlight;
- if (resource && resource.blob === blob && resource.width === width && resource.height === height) {
- return acquireResource(resource);
+ // Re-check after every waiter resumes to serialize replacements per clip.
+ await inFlight;
+ continue;
  }
- const current = resourceCache.get(clipId);
- if (current) evictResource(clipId);
- } else if (cached) {
- evictResource(clipId);
- }
+
+ if (cached) evictResource(clipId);
 
  const creation = createResources(clipId, blob, width, height);
  resourcePromises.set(clipId, creation);
  try {
- // createResources reserves the creating caller's lease before publishing it.
+ // The creator lease is reserved before the resource enters the cache.
  return await creation;
  } finally {
  if (resourcePromises.get(clipId) === creation) resourcePromises.delete(clipId);
  }
+ }
 }
-
 async function createResources(clipId, blob, width, height) {
  let input = null;
  try {
