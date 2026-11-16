@@ -68,7 +68,7 @@ export class ParallelFrameDecoder {
     new Map();
   private readonly blobIds = new WeakMap<Blob, number>();
   private readonly inFlightDecodes = new Map<string, InFlightDecode>();
-  private readonly activeResponseHandlers = new Set<PendingRequest>();
+  private readonly activeResponseHandlers = new Map<PendingRequest, WorkerState>();
   private nextBlobId = 1;
   private maxCacheSize = 100;
   private readonly requestTimeoutMs = 30000;
@@ -246,6 +246,15 @@ export class ParallelFrameDecoder {
         pending.reject(error);
       }
       state.pendingRequests.clear();
+      for (const [pending, responseWorker] of this.activeResponseHandlers) {
+        if (responseWorker === state) {
+          if (!pending.settled) {
+            pending.settled = true;
+            pending.reject(error);
+          }
+          this.activeResponseHandlers.delete(pending);
+        }
+      }
     }
     this.workers = [];
 
@@ -288,7 +297,7 @@ export class ParallelFrameDecoder {
 
     clearTimeout(pending.timeoutId);
     state.pendingRequests.delete(response.requestId);
-    this.activeResponseHandlers.add(pending);
+    this.activeResponseHandlers.set(pending, state);
     state.busy = state.pendingRequests.size > 0;
 
     const decodeTime = performance.now() - pending.startTime;
@@ -432,6 +441,15 @@ export class ParallelFrameDecoder {
       pending.reject(error);
     }
     state.pendingRequests.clear();
+    for (const [pending, responseWorker] of this.activeResponseHandlers) {
+      if (responseWorker === state) {
+        if (!pending.settled) {
+          pending.settled = true;
+          pending.reject(error);
+        }
+        this.activeResponseHandlers.delete(pending);
+      }
+    }
     this.processQueue();
   }
 
