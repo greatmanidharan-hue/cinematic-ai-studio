@@ -1,10 +1,35 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const mockInput = vi.hoisted(() => vi.fn());
+
+vi.mock("mediabunny", () => ({
+  Input: mockInput,
+  ALL_FORMATS: [],
+  BlobSource: class {
+    constructor(public blob: Blob) {}
+  },
+  CanvasSink: class {
+    constructor(public track: unknown, public options: unknown) {}
+  },
+}));
+
 import {
   acquireResource,
+  clearCache,
   disposeResource,
+  getOrCreateResources,
   releaseResource,
   type CachedResource,
 } from "./decode-worker";
+
+beforeEach(() => {
+  clearCache();
+  mockInput.mockReset();
+  mockInput.mockImplementation(() => ({
+    getPrimaryVideoTrack: vi.fn(async () => ({ id: "video-track" })),
+    [Symbol.dispose]: vi.fn(),
+  }));
+});
 
 function createResource(): CachedResource & {
   input: { [Symbol.dispose]: ReturnType<typeof vi.fn> };
@@ -74,5 +99,58 @@ describe("decode worker resource leases", () => {
 
     expect(resource.activeUses).toBe(0);
     expect(resource.input[Symbol.dispose]).toHaveBeenCalledOnce();
+  });
+});
+
+
+describe("decode worker resource creation concurrency", () => {
+  it("serializes concurrent replacements and shares the final matching resource", async () => {
+    const originalBlob = new Blob(["original"]);
+    const replacementBlob = new Blob(["replacement"]);
+
+    const original = await getOrCreateResources(
+      "clip-race", originalBlob, 640, 360,
+    );
+    expect(original).not.toBeNull();
+
+    const firstReplacement = getOrCreateResources(
+      "clip-race", replacementBlob, 640, 360,
+    );
+    const secondReplacement = getOrCreateResources(
+      "clip-race", replacementBlob, 640, 360,
+    );
+
+    const [first, second] = await Promise.all([
+      firstReplacement,
+      secondReplacement,
+    ]);
+
+    expect(mockInput).toHaveBeenCalledTimes(2);
+    expect(first).not.toBeNull();
+    expect(second).toBe(first);
+    expect(first?.activeUses).toBe(2);
+
+    if (original) releaseResource(original);
+    if (first) {
+      releaseResource(first);
+      releaseResource(second!);
+    }
+    clearCache("clip-race");
+  });
+
+  it("does not dispose an older resource until its active lease is released", async () => {
+    const firstBlob = new Blob(["first"]);
+    const secondBlob = new Blob(["second"]);
+    const first = await getOrCreateResources("clip-lease", firstBlob, 320, 180);
+    const second = await getOrCreateResources("clip-lease", secondBlob, 320, 180);
+
+    expect(first).not.toBeNull();
+    expect(second).not.toBeNull();
+    expect(first?.disposePending).toBe(true);
+
+    if (first) releaseResource(first);
+    expect(first?.disposePending).toBe(false);
+    if (second) releaseResource(second);
+    clearCache("clip-lease");
   });
 });
