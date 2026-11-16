@@ -69,7 +69,8 @@ export type ProjectAction =
       params: { name: string; settings: ProjectSettings };
     }
   | { type: "project/updateSettings"; params: Partial<ProjectSettings> }
-  | { type: "project/rename"; params: { name: string } };
+  | { type: "project/rename"; params: { name: string } }
+  | { type: "project/updateTimelineVfx"; params: { lightningEffects?: unknown[]; particleEffects?: unknown[] } };
 
 // Media actions
 export type MediaAction =

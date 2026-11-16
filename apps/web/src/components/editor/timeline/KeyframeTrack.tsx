@@ -1,4 +1,4 @@
-import React, { useMemo, useCallback } from "react";
+import React, { memo, useMemo, useCallback } from "react";
 import type { Keyframe, Clip } from "@fairarena/core";
 import { KeyframeMarker } from "./KeyframeMarker";
 import { EasingCurve } from "./EasingCurve";
@@ -40,7 +40,7 @@ interface PropertyGroup {
   label: string;
 }
 
-export const KeyframeTrack: React.FC<KeyframeTrackProps> = ({
+const KeyframeTrackInner: React.FC<KeyframeTrackProps> = ({
   clip,
   pixelsPerSecond,
   onKeyframeSelect,
@@ -48,6 +48,11 @@ export const KeyframeTrack: React.FC<KeyframeTrackProps> = ({
   onKeyframeDelete,
   selectedKeyframeIds,
 }) => {
+
+  const selectedKeyframeIdSet = useMemo(
+    () => new Set(selectedKeyframeIds),
+    [selectedKeyframeIds],
+  );
 
   const propertyGroups = useMemo((): PropertyGroup[] => {
     const groups = new Map<string, Keyframe[]>();
@@ -128,7 +133,7 @@ export const KeyframeTrack: React.FC<KeyframeTrackProps> = ({
                     keyframe={keyframe}
                     xPosition={xPos}
                     color={group.color}
-                    isSelected={selectedKeyframeIds.includes(keyframe.id)}
+                    isSelected={selectedKeyframeIdSet.has(keyframe.id)}
                     onSelect={(addToSelection) =>
                       onKeyframeSelect(keyframe.id, addToSelection)
                     }
@@ -146,5 +151,8 @@ export const KeyframeTrack: React.FC<KeyframeTrackProps> = ({
     </div>
   );
 };
+
+export const KeyframeTrack = memo(KeyframeTrackInner);
+KeyframeTrack.displayName = "KeyframeTrack";
 
 export default KeyframeTrack;

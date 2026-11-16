@@ -1,10 +1,10 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { memo, useRef, useState, useEffect, useMemo } from "react";
 import { Image } from "lucide-react";
 import type { Clip, Track } from "@fairarena/core";
 import { useProjectStore } from "../../../stores/project-store";
 import { useUIStore } from "../../../stores/ui-store";
 import { useTimelineStore } from "../../../stores/timeline-store";
-import { calculateSnap, generateWaveformPath, getClipStyle } from "./utils";
+import { calculateSnap, generateWaveformPath, getClipFilmstripThumbnailCount, getClipStyle } from "./utils";
 import { ClipContextMenu } from "./ClipContextMenu";
 import { ContextMenu, ContextMenuTrigger } from "@fairarena/ui";
 
@@ -34,7 +34,7 @@ const AUTO_SCROLL_THRESHOLD = 80;
 const AUTO_SCROLL_SPEED = 10;
 const DRAG_THRESHOLD = 5;
 
-export const ClipComponent: React.FC<ClipComponentProps> = ({
+const ClipComponentInner: React.FC<ClipComponentProps> = ({
   clip,
   track,
   allTracks,
@@ -47,16 +47,21 @@ export const ClipComponent: React.FC<ClipComponentProps> = ({
   onSnapIndicator,
   onTrimClip,
 }) => {
-  const { getMediaItem } = useProjectStore();
-  const { snapSettings } = useUIStore();
+  const mediaItem = useProjectStore((state) =>
+    state.project.mediaLibrary.items.find((item) => item.id === clip.mediaId),
+  );
+  const waveformPath = useMemo(
+    () => mediaItem?.waveformData ? generateWaveformPath(mediaItem.waveformData, 100) : null,
+    [mediaItem?.waveformData],
+  );
+  const snapSettings = useUIStore((state) => state.snapSettings);
   const effectApplicationClipId = useUIStore(
     (state) => state.effectApplicationClipId,
   );
   const effectApplicationLabel = useUIStore(
     (state) => state.effectApplicationLabel,
   );
-  const { playheadPosition } = useTimelineStore();
-  const mediaItem = getMediaItem(clip.mediaId);
+  const playheadPosition = useTimelineStore((state) => state.playheadPosition);
   const [isDragging, setIsDragging] = useState(false);
   const [isPendingDrag, setIsPendingDrag] = useState(false);
   const [dragOffset, setDragOffset] = useState(0);
@@ -136,11 +141,12 @@ export const ClipComponent: React.FC<ClipComponentProps> = ({
     // selected clips' start positions so we can drag them as a group.
     const selectedIds = useUIStore.getState().getSelectedClipIds();
     if (selectedIds.length > 1 && selectedIds.includes(clip.id)) {
+      const selectedIdSet = new Set(selectedIds);
       const snapshot: Array<{ clipId: string; startTime: number; trackId: string }> = [];
       for (const t of allTracks) {
         for (const c of t.clips) {
           if (c.id === clip.id) continue;
-          if (!selectedIds.includes(c.id)) continue;
+          if (!selectedIdSet.has(c.id)) continue;
           if (t.locked) continue;
           snapshot.push({ clipId: c.id, startTime: c.startTime, trackId: t.id });
         }
@@ -236,69 +242,63 @@ export const ClipComponent: React.FC<ClipComponentProps> = ({
 
     animationFrameId = requestAnimationFrame(scrollLoop);
 
-    const handleMouseMove = (e: MouseEvent) => {
-      mousePositionRef.current.x = e.clientX;
-      mousePositionRef.current.y = e.clientY;
+    let dragFrameId: number | null = null;
+    let pendingDragPoint: { clientX: number; clientY: number } | null = null;
 
+    const applyDrag = (clientX: number, clientY: number) => {
       const rect = clipRef.current?.parentElement?.getBoundingClientRect();
       const timelineRect = timelineRef.current?.getBoundingClientRect();
       if (!rect || !timelineRect) return;
 
-      const x = e.clientX - rect.left - dragOffset;
+      const x = clientX - rect.left - dragOffset;
       const rawTime = Math.max(0, x / pixelsPerSecond);
-
       const dragSnapSettings = { ...snapSettings, snapToPlayhead: false };
-      const snapResult = calculateSnap(
-        rawTime,
-        clip.id,
-        allTracks,
-        playheadPosition,
-        dragSnapSettings,
-        pixelsPerSecond,
-        clip.duration,
-      );
+      const snapResult = calculateSnap(rawTime, clip.id, allTracks, playheadPosition, dragSnapSettings, pixelsPerSecond, clip.duration);
       const currentScrollTop = timelineRef.current?.scrollTop || 0;
       const scrollDelta = currentScrollTop - dragStartRef.current.scrollTop;
-      const yDelta = (e.clientY - dragStartRef.current.mouseY) + scrollDelta;
-      setDragYOffset(yDelta);
+      setDragYOffset((clientY - dragStartRef.current.mouseY) + scrollDelta);
 
       const scrollTop = timelineRef.current?.scrollTop || 0;
-      const mouseY = e.clientY - timelineRect.top + scrollTop;
+      const mouseY = clientY - timelineRect.top + scrollTop;
       let targetTrackId: string | undefined;
       let hoveredTrackType: string | undefined;
       let cumulativeY = 0;
-
       for (const t of allTracks) {
         const height = trackHeights.get(t.id) || 60;
         if (mouseY >= cumulativeY && mouseY < cumulativeY + height) {
           hoveredTrackType = t.type;
-          if (t.type === track.type && t.id !== track.id) {
-            targetTrackId = t.id;
-          }
+          if (t.type === track.type && t.id !== track.id) targetTrackId = t.id;
           break;
         }
         cumulativeY += height;
       }
 
-      const isOverDifferentTrackType = hoveredTrackType !== undefined && hoveredTrackType !== track.type;
-      setIsInvalidDrop(isOverDifferentTrackType);
-
+      setIsInvalidDrop(hoveredTrackType !== undefined && hoveredTrackType !== track.type);
       pendingDropRef.current = { time: snapResult.time, targetTrackId };
       onMoveClip(clip.id, snapResult.time, undefined);
 
-      // Move every companion clip in the multi-selection by the same
-      // delta. Cross-track moves of the primary don't take any
-      // companions along — that gets too lossy when they live on tracks
-      // of a different type — but same-track drags stay locked.
       if (multiDragSnapshotRef.current.length > 0) {
         const deltaTime = snapResult.time - clip.startTime;
         for (const snap of multiDragSnapshotRef.current) {
-          const newStart = Math.max(0, snap.startTime + deltaTime);
-          onMoveClip(snap.clipId, newStart, undefined);
+          onMoveClip(snap.clipId, Math.max(0, snap.startTime + deltaTime), undefined);
         }
       }
-
       onSnapIndicator(snapResult.snapped && snapResult.snapPoint ? snapResult.snapPoint.time : null);
+    };
+
+    const flushPendingDrag = () => {
+      dragFrameId = null;
+      if (!pendingDragPoint) return;
+      const point = pendingDragPoint;
+      pendingDragPoint = null;
+      applyDrag(point.clientX, point.clientY);
+    };
+
+    const handleMouseMove = (e: MouseEvent) => {
+      mousePositionRef.current.x = e.clientX;
+      mousePositionRef.current.y = e.clientY;
+      pendingDragPoint = { clientX: e.clientX, clientY: e.clientY };
+      if (dragFrameId === null) dragFrameId = requestAnimationFrame(flushPendingDrag);
     };
 
     let groupClosed = false;
@@ -309,6 +309,17 @@ export const ClipComponent: React.FC<ClipComponentProps> = ({
     };
 
     const handleMouseUp = () => {
+      if (animationFrameId !== null) {
+        cancelAnimationFrame(animationFrameId);
+      }
+
+      if (dragFrameId !== null) cancelAnimationFrame(dragFrameId);
+      dragFrameId = null;
+      if (pendingDragPoint) {
+        const point = pendingDragPoint;
+        pendingDragPoint = null;
+        applyDrag(point.clientX, point.clientY);
+      }
       if (animationFrameId !== null) {
         cancelAnimationFrame(animationFrameId);
       }
@@ -330,9 +341,9 @@ export const ClipComponent: React.FC<ClipComponentProps> = ({
     window.addEventListener("mouseup", handleMouseUp);
 
     return () => {
-      if (animationFrameId !== null) {
-        cancelAnimationFrame(animationFrameId);
-      }
+      if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
+      if (dragFrameId !== null) cancelAnimationFrame(dragFrameId);
+      pendingDragPoint = null;
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
       closeGroup();
@@ -356,34 +367,51 @@ export const ClipComponent: React.FC<ClipComponentProps> = ({
   useEffect(() => {
     if (!isTrimming || !trimEdge || !onTrimClip) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
-      const deltaX = e.clientX - trimStartRef.current.mouseX;
+    let frameId: number | null = null;
+    let pendingClientX: number | null = null;
+
+    const applyTrim = (clientX: number) => {
+      const deltaX = clientX - trimStartRef.current.mouseX;
       const deltaTime = deltaX / pixelsPerSecond;
 
       if (trimEdge === "left") {
-        const newStartTime = Math.max(
-          0,
-          trimStartRef.current.startTime + deltaTime,
-        );
-        const maxStartTime =
-          trimStartRef.current.startTime + trimStartRef.current.duration - 0.1;
+        const newStartTime = Math.max(0, trimStartRef.current.startTime + deltaTime);
+        const maxStartTime = trimStartRef.current.startTime + trimStartRef.current.duration - 0.1;
         const clampedStartTime = Math.min(newStartTime, maxStartTime);
         onTrimClip(clip.id, "left", clampedStartTime);
       } else {
-        const newEndTime =
-          trimStartRef.current.startTime +
-          trimStartRef.current.duration +
-          deltaTime;
+        const newEndTime = trimStartRef.current.startTime + trimStartRef.current.duration + deltaTime;
         const minEndTime = trimStartRef.current.startTime + 0.1;
         const clampedEndTime = Math.max(newEndTime, minEndTime);
         onTrimClip(clip.id, "right", clampedEndTime);
       }
     };
 
+    const flushPendingTrim = () => {
+      frameId = null;
+      if (pendingClientX === null) return;
+      const clientX = pendingClientX;
+      pendingClientX = null;
+      applyTrim(clientX);
+    };
+
+    const handleMouseMove = (event: MouseEvent) => {
+      pendingClientX = event.clientX;
+      if (frameId === null) frameId = requestAnimationFrame(flushPendingTrim);
+    };
+
     const handleMouseUp = () => {
+      if (frameId !== null) cancelAnimationFrame(frameId);
+      frameId = null;
+      if (pendingClientX !== null) {
+        const clientX = pendingClientX;
+        pendingClientX = null;
+        applyTrim(clientX);
+      }
       setIsTrimming(false);
       setTrimEdge(null);
       document.body.style.cursor = "";
+      document.body.style.userSelect = "";
     };
 
     window.addEventListener("mousemove", handleMouseMove);
@@ -392,10 +420,11 @@ export const ClipComponent: React.FC<ClipComponentProps> = ({
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
+      if (frameId !== null) cancelAnimationFrame(frameId);
     };
   }, [isTrimming, trimEdge, clip.id, pixelsPerSecond, onTrimClip]);
 
-  const thumbnailCount = Math.max(1, Math.floor(width / 60));
+  const thumbnailCount = getClipFilmstripThumbnailCount(width);
   const clipName = mediaItem?.name || clip.mediaId.slice(0, 8);
 
   const isInteracting = isDragging || isTrimming;
@@ -523,7 +552,7 @@ export const ClipComponent: React.FC<ClipComponentProps> = ({
                 viewBox="0 0 100 40"
               >
                 <path
-                  d={generateWaveformPath(mediaItem.waveformData, 100)}
+                  d={waveformPath ?? ""}
                   stroke="currentColor"
                   className={isAudio ? "text-blue-400" : "text-green-300"}
                   fill="none"
@@ -612,3 +641,9 @@ export const ClipComponent: React.FC<ClipComponentProps> = ({
     </ContextMenu>
   );
 };
+
+// Keep expensive clip thumbnails, waveforms and keyframes stable when
+// unrelated timeline state changes. Project updates replace clip snapshots.
+export const ClipComponent = memo(ClipComponentInner);
+ClipComponent.displayName = "ClipComponent";
+

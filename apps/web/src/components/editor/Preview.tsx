@@ -74,6 +74,7 @@ import {
   ParticleRenderer,
 } from "./preview/index";
 import { ProcessingOverlay } from "./ProcessingOverlay";
+import { LightningRenderer } from "./preview/LightningRenderer";
 import {
   getPersonSegmentationEngine,
   getBackgroundRemovalEngine,
@@ -743,8 +744,46 @@ export const Preview: React.FC = () => {
 
   // Keep a ref to timelineTracks for use in playback effect without causing re-runs
   const timelineTracksRef = useRef(timelineTracks);
+  const visibleAudioTracksRef = useRef(
+    timelineTracks.filter((track) => track.type === "audio" && !track.hidden),
+  );
+  const visibleVideoTracksRef = useRef(
+    timelineTracks
+      .map((track, trackIndex) => ({ track, trackIndex }))
+      .filter(
+        ({ track }) =>
+          (track.type === "video" || track.type === "image") && !track.hidden,
+      ),
+  );
+  const visibleVideoClipLookupRef = useRef(
+    new Map(
+      timelineTracks
+        .map((track, trackIndex) => ({ track, trackIndex }))
+        .filter(
+          ({ track }) =>
+            (track.type === "video" || track.type === "image") && !track.hidden,
+        )
+        .flatMap(({ track, trackIndex }) =>
+          track.clips.map((clip) => [clip.id, { clip, trackIndex }] as const),
+        ),
+    ),
+  );
   useEffect(() => {
     timelineTracksRef.current = timelineTracks;
+    visibleAudioTracksRef.current = timelineTracks.filter(
+      (track) => track.type === "audio" && !track.hidden,
+    );
+    visibleVideoTracksRef.current = timelineTracks
+      .map((track, trackIndex) => ({ track, trackIndex }))
+      .filter(
+        ({ track }) =>
+          (track.type === "video" || track.type === "image") && !track.hidden,
+      );
+    visibleVideoClipLookupRef.current = new Map(
+      visibleVideoTracksRef.current.flatMap(({ track, trackIndex }) =>
+        track.clips.map((clip) => [clip.id, { clip, trackIndex }] as const),
+      ),
+    );
   }, [timelineTracks]);
 
   // Keep a ref to allTextClips for use in playback effect
@@ -869,21 +908,8 @@ export const Preview: React.FC = () => {
     []
   );
 
-  const particleEngine = React.useMemo(() => getParticleEngine(), []);
-  const [particleUpdateTrigger, setParticleUpdateTrigger] = React.useState(
-    () => particleEngine.getChangeVersion()
-  );
-
-  React.useEffect(() => {
-    const unsubscribe = particleEngine.onEffectsChange(() => {
-      setParticleUpdateTrigger(particleEngine.getChangeVersion());
-    });
-    return unsubscribe;
-  }, [particleEngine]);
-
-  const particleEffects = React.useMemo(() => {
-    return particleEngine.getAllEffects();
-  }, [particleEngine, particleUpdateTrigger]);
+  // Project-owned particle overlays remain serializable and reload-safe.
+  const particleEffects = project.timeline.particleEffects ?? [];
 
   // Calculate the actual end time for playback (where clips actually end)
   // This needs to recalculate whenever the timeline changes
@@ -3017,7 +3043,26 @@ export const Preview: React.FC = () => {
 
     let isActive = true;
     let nativeCleanup: (() => void) | null = null;
+    let playbackTimeoutId: ReturnType<typeof setTimeout> | null = null;
     const playbackStartPosition = startPositionRef.current;
+
+    const schedulePlaybackFrame = (callback: () => void, delay: number) => {
+      if (!isActive) return;
+      if (playbackTimeoutId !== null) {
+        clearTimeout(playbackTimeoutId);
+        playbackTimeoutId = null;
+      }
+      if (delay <= 0) {
+        animationRef.current = requestAnimationFrame(callback);
+        return;
+      }
+      playbackTimeoutId = setTimeout(() => {
+        playbackTimeoutId = null;
+        if (isActive) {
+          animationRef.current = requestAnimationFrame(callback);
+        }
+      }, delay);
+    };
 
     const findAllClipsAtTime = (time: number) => {
       const tracks = timelineTracksRef.current;
@@ -3027,23 +3072,19 @@ export const Preview: React.FC = () => {
         trackIndex: number;
       }> = [];
 
-      tracks.forEach((track, originalIndex) => {
-        if (
-          (track.type === "video" || track.type === "image") &&
-          !track.hidden
-        ) {
-          for (const clip of track.clips) {
-            if (
-              time >= clip.startTime &&
-              time < clip.startTime + clip.duration
-            ) {
-              results.push({ clip, track, trackIndex: originalIndex });
-            }
+      for (const { track, trackIndex } of visibleVideoTracksRef.current) {
+        for (const clip of track.clips) {
+          if (
+            time >= clip.startTime &&
+            time < clip.startTime + clip.duration
+          ) {
+            results.push({ clip, track, trackIndex });
           }
         }
-      });
+      }
 
-      return results.sort((a, b) => a.trackIndex - b.trackIndex);
+      // The cached track list is already in timeline order.
+      return results;
     };
 
     const findClipAtTime = (time: number) => {
@@ -3353,24 +3394,21 @@ export const Preview: React.FC = () => {
 
               const normalTimeAdvance = actualFrameDuration / 1000;
               const mediaTimeAdvance = normalTimeAdvance * currentSpeed;
-              currentPlayheadTime += normalTimeAdvance;
-              currentMediaTime += mediaTimeAdvance;
+              // If decoding/rendering falls behind, skip a small number of stale
+              // frames instead of letting this single-track loop drift behind real time.
+              const missedFrames =
+                targetTime > 0 && Number.isFinite(elapsed)
+                  ? Math.min(5, Math.max(0, Math.floor(elapsed / targetTime) - 1))
+                  : 0;
+              const frameAdvance = 1 + missedFrames;
+              currentPlayheadTime += normalTimeAdvance * frameAdvance;
+              currentMediaTime += mediaTimeAdvance * frameAdvance;
 
               const delay = Math.max(0, targetTime - elapsed);
               lastFrameTimestamp = now;
 
               if (isActive) {
-                if (delay > 0) {
-                  setTimeout(() => {
-                    if (isActive) {
-                      animationRef.current =
-                        requestAnimationFrame(processNextFrame);
-                    }
-                  }, delay);
-                } else {
-                  animationRef.current =
-                    requestAnimationFrame(processNextFrame);
-                }
+                schedulePlaybackFrame(processNextFrame, delay);
               }
             } catch (error) {
               console.error("[Preview] Frame error:", error);
@@ -3462,7 +3500,12 @@ export const Preview: React.FC = () => {
           if (mediaItem?.type === "image" && mediaItem.blob) {
             try {
               const bitmap = await createImageBitmap(mediaItem.blob);
-              imageBitmapCacheRef.current.set(clip.id, bitmap);
+              if (isActive) {
+                imageBitmapCacheRef.current.set(clip.id, bitmap);
+              } else {
+                bitmap.close();
+                return;
+              }
             } catch (error) {
               console.warn(
                 `[Preview] Failed to pre-cache image clip ${clip.id}:`,
@@ -3485,9 +3528,7 @@ export const Preview: React.FC = () => {
         playbackStartPosition,
       );
 
-      const audioTracks = timelineTracksRef.current.filter(
-        (t) => t.type === "audio" && !t.hidden,
-      );
+      const audioTracks = visibleAudioTracksRef.current;
       const hasActiveAudioClip = audioTracks.some((track) =>
         track.clips.some(
           (clip) =>
@@ -3515,7 +3556,11 @@ export const Preview: React.FC = () => {
         if (!playbackResourcesRef.current.has(clip.id)) {
           const resources = await initClipResources(clip, trackIndex);
           if (resources) {
-            playbackResourcesRef.current.set(clip.id, resources);
+            if (isActive) {
+              playbackResourcesRef.current.set(clip.id, resources);
+            } else {
+              resources.input[Symbol.dispose]?.();
+            }
           }
         }
       }
@@ -3647,10 +3692,7 @@ export const Preview: React.FC = () => {
             currentPlayhead,
           );
 
-          const audioTracksForFrame = timelineTracksRef.current.filter(
-            (t) => t.type === "audio" && !t.hidden,
-          );
-          const hasCurrentAudioClip = audioTracksForFrame.some((track) =>
+          const hasCurrentAudioClip = visibleAudioTracksRef.current.some((track) =>
             track.clips.some(
               (clip) =>
                 currentPlayhead >= clip.startTime &&
@@ -3706,7 +3748,11 @@ export const Preview: React.FC = () => {
             if (!playbackResourcesRef.current.has(clip.id)) {
               const resources = await initClipResources(clip, trackIndex);
               if (resources) {
-                playbackResourcesRef.current.set(clip.id, resources);
+                if (isActive) {
+                  playbackResourcesRef.current.set(clip.id, resources);
+                } else {
+                  resources.input[Symbol.dispose]?.();
+                }
               }
             }
           }
@@ -3720,29 +3766,18 @@ export const Preview: React.FC = () => {
             timelineTracksRef.current,
           );
 
-          // Compute these here so they're visible in both the transition path
-          // and the normal compositing path below.
-          const activeShapeClips = getActiveShapeClips(
-            allShapeClipsRef.current,
-            currentPlayhead,
-          );
-          const activeTextClips = getActiveTextClips(
-            allTextClipsRef.current,
-            currentPlayhead,
-          );
+          // Reuse the active overlays already resolved for this frame.
+          // Both transition and normal compositing paths consume the same lists.
+          const activeShapeClips = currentShapeClips;
+          const activeTextClips = currentTextClips;
 
           if (transitionInfoMulti) {
-            const tracks = timelineTracksRef.current;
-            const findClipById = (id: string) => {
-              for (let idx = 0; idx < tracks.length; idx++) {
-                const found = tracks[idx].clips.find((c) => c.id === id);
-                if (found) return { clip: found, trackIndex: idx };
-              }
-              return null;
-            };
-
-            const aLookup = findClipById(transitionInfoMulti.clipA.id);
-            const bLookup = findClipById(transitionInfoMulti.clipB.id);
+            const aLookup =
+              visibleVideoClipLookupRef.current.get(transitionInfoMulti.clipA.id) ??
+              null;
+            const bLookup =
+              visibleVideoClipLookupRef.current.get(transitionInfoMulti.clipB.id) ??
+              null;
 
             if (aLookup && bLookup) {
               for (const lookup of [aLookup, bLookup]) {
@@ -3752,10 +3787,14 @@ export const Preview: React.FC = () => {
                     lookup.trackIndex,
                   );
                   if (resources) {
-                    playbackResourcesRef.current.set(
-                      lookup.clip.id,
-                      resources,
-                    );
+                    if (isActive) {
+                      playbackResourcesRef.current.set(
+                        lookup.clip.id,
+                        resources,
+                      );
+                    } else {
+                      resources.input[Symbol.dispose]?.();
+                    }
                   }
                 }
               }
@@ -3865,19 +3904,7 @@ export const Preview: React.FC = () => {
                   lastFrameTimestamp = nowTr;
                   isProcessingFrame = false;
                   if (isActive) {
-                    if (delayTr > 0) {
-                      setTimeout(() => {
-                        if (isActive) {
-                          animationRef.current = requestAnimationFrame(
-                            processMultiTrackFrame,
-                          );
-                        }
-                      }, delayTr);
-                    } else {
-                      animationRef.current = requestAnimationFrame(
-                        processMultiTrackFrame,
-                      );
-                    }
+                    schedulePlaybackFrame(processMultiTrackFrame, delayTr);
                   }
                   return;
                 } catch (error) {
@@ -3896,6 +3923,13 @@ export const Preview: React.FC = () => {
           }
 
           const activeClipIds = new Set(activeClips.map((c) => c.clip.id));
+          // Keep both transition endpoints alive when transition rendering falls
+          // back to normal compositing; the outgoing clip may be outside its
+          // regular active window but is still needed for the blend.
+          if (transitionInfoMulti) {
+            activeClipIds.add(transitionInfoMulti.clipA.id);
+            activeClipIds.add(transitionInfoMulti.clipB.id);
+          }
           for (const [clipId, resources] of playbackResourcesRef.current) {
             if (!activeClipIds.has(clipId)) {
               resources.input[Symbol.dispose]?.();
@@ -4319,19 +4353,7 @@ export const Preview: React.FC = () => {
           isProcessingFrame = false;
 
           if (isActive) {
-            if (delay > 0) {
-              setTimeout(() => {
-                if (isActive) {
-                  animationRef.current = requestAnimationFrame(
-                    processMultiTrackFrame,
-                  );
-                }
-              }, delay);
-            } else {
-              animationRef.current = requestAnimationFrame(
-                processMultiTrackFrame,
-              );
-            }
+            schedulePlaybackFrame(processMultiTrackFrame, delay);
           }
         } catch (error) {
           isProcessingFrame = false;
@@ -4345,13 +4367,9 @@ export const Preview: React.FC = () => {
     };
 
     const findNextClipStartTime = (afterTime: number): number | null => {
-      const tracks = timelineTracksRef.current;
-      const videoTracks = tracks.filter(
-        (t) => (t.type === "video" || t.type === "image") && !t.hidden,
-      );
       let nextStart: number | null = null;
 
-      for (const track of videoTracks) {
+      for (const { track } of visibleVideoTracksRef.current) {
         for (const clip of track.clips) {
           if (clip.startTime > afterTime) {
             if (nextStart === null || clip.startTime < nextStart) {
@@ -4395,11 +4413,9 @@ export const Preview: React.FC = () => {
     };
 
     const findNextAudioClipStartTime = (afterTime: number): number | null => {
-      const tracks = timelineTracksRef.current;
-      const audioTracks = tracks.filter((t) => t.type === "audio" && !t.hidden);
       let nextStart: number | null = null;
 
-      for (const track of audioTracks) {
+      for (const track of visibleAudioTracksRef.current) {
         for (const clip of track.clips) {
           if (clip.startTime > afterTime) {
             if (nextStart === null || clip.startTime < nextStart) {
@@ -4441,6 +4457,10 @@ export const Preview: React.FC = () => {
     return () => {
       isActive = false;
       nativePlaybackActiveRef.current = false;
+      if (playbackTimeoutId !== null) {
+        clearTimeout(playbackTimeoutId);
+        playbackTimeoutId = null;
+      }
       const masterClock = getMasterClock();
       if (masterClock.isPlaying || masterClock.isPaused) {
         startPositionRef.current = masterClock.currentTime;
@@ -5900,6 +5920,18 @@ export const Preview: React.FC = () => {
                 onPointRemove={handleMotionPathPointRemove}
                 onControlPointMove={handleMotionPathControlPointMove}
                 disabled={isPlaying}
+              />
+            </div>
+          )}
+
+          {/* Lightning VFX Renderer */}
+          {(project.timeline.lightningEffects?.length ?? 0) > 0 && (
+            <div className="absolute inset-0 pointer-events-none z-20">
+              <LightningRenderer
+                effects={project.timeline.lightningEffects ?? []}
+                width={settings.width}
+                height={settings.height}
+                currentTime={playheadPosition}
               />
             </div>
           )}

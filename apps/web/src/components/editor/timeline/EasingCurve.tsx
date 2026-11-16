@@ -1,4 +1,4 @@
-import React, { useMemo } from "react";
+import React, { memo, useMemo } from "react";
 import type { EasingType } from "@fairarena/core";
 import { EASING_FUNCTIONS, type EasingName } from "@fairarena/core";
 
@@ -10,7 +10,7 @@ interface EasingCurveProps {
   height: number;
 }
 
-export const EasingCurve: React.FC<EasingCurveProps> = ({
+const EasingCurveInner: React.FC<EasingCurveProps> = ({
   startX,
   endX,
   easing,
@@ -90,5 +90,8 @@ export const EasingCurve: React.FC<EasingCurveProps> = ({
     </svg>
   );
 };
+
+export const EasingCurve = memo(EasingCurveInner);
+EasingCurve.displayName = "EasingCurve";
 
 export default EasingCurve;

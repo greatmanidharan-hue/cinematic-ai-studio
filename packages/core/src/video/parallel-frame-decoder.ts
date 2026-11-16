@@ -25,6 +25,15 @@ interface PendingRequest {
   reject: (error: Error) => void;
   clipId: string;
   startTime: number;
+  timeoutId: ReturnType<typeof setTimeout>;
+  cacheKey: string;
+  lifecycleGeneration?: number;
+  settled?: boolean;
+}
+
+interface InFlightDecode {
+  promise: Promise<FrameDecodeResult>;
+  consumers: number;
 }
 
 interface WorkerState {
@@ -35,6 +44,7 @@ interface WorkerState {
   totalDecodes: number;
   totalDecodeTime: number;
   mediabunnyAvailable: boolean;
+  failed: boolean;
 }
 
 export interface ParallelDecoderStats {
@@ -56,12 +66,20 @@ export class ParallelFrameDecoder {
   }> = [];
   private frameCache: Map<string, { bitmap: ImageBitmap; timestamp: number }> =
     new Map();
+  private readonly blobIds = new WeakMap<Blob, number>();
+  private readonly inFlightDecodes = new Map<string, InFlightDecode>();
+  private readonly activeResponseHandlers = new Map<PendingRequest, WorkerState>();
+  private nextBlobId = 1;
   private maxCacheSize = 100;
+  private readonly requestTimeoutMs = 30000;
+  private readonly maxQueueSize = 500;
   private cacheHits = 0;
   private cacheMisses = 0;
   private initialized = false;
   private initPromise: Promise<void> | null = null;
+  private lifecycleGeneration = 0;
   private requestIdCounter = 0;
+  private nextWorkerIndex = 0;
   private mediabunnyAvailable = false;
 
   constructor(private workerCount: number = 4) {
@@ -79,28 +97,61 @@ export class ParallelFrameDecoder {
     if (this.initialized) return;
     if (this.initPromise) return this.initPromise;
 
-    this.initPromise = this.doInitialize();
-    return this.initPromise;
+    const generation = this.lifecycleGeneration;
+    let attempt: Promise<void>;
+    attempt = this.doInitialize(generation).catch((error: unknown) => {
+      // An older attempt must not clear a newer attempt started after dispose.
+      if (this.initPromise === attempt) this.initPromise = null;
+      throw error;
+    });
+    this.initPromise = attempt;
+    return attempt;
   }
 
-  private async doInitialize(): Promise<void> {
+  private async doInitialize(generation: number): Promise<void> {
+    this.workers = [];
     const workerPromises: Promise<WorkerState>[] = [];
 
     for (let i = 0; i < this.workerCount; i++) {
-      workerPromises.push(this.createWorker(i));
+      workerPromises.push(this.createWorker(i, generation));
     }
 
-    this.workers = await Promise.all(workerPromises);
-    this.mediabunnyAvailable = this.workers.some((w) => w.mediabunnyAvailable);
+    // Wait for every startup attempt so workers that succeeded after another
+    // worker failed are also included in cleanup.
+    const results = await Promise.allSettled(workerPromises);
+    if (generation !== this.lifecycleGeneration) {
+      throw new Error("Decoder disposed during initialization");
+    }
+    const failed = results.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+
+    if (failed) {
+      this.cleanupWorkers(new Error("Parallel decoder initialization failed"));
+      throw failed.reason;
+    }
+
+    this.mediabunnyAvailable = this.workers.some(
+      (worker) => worker.mediabunnyAvailable,
+    );
     this.initialized = true;
   }
 
-  private async createWorker(index: number): Promise<WorkerState> {
+  private async createWorker(
+    index: number,
+    generation: number,
+  ): Promise<WorkerState> {
     return new Promise((resolve, reject) => {
       const workerUrl = createDecodeWorkerUrl();
       this.workerUrls.push(workerUrl);
 
-      const worker = new Worker(workerUrl, { type: "module" });
+      let worker: Worker;
+      try {
+        worker = new Worker(workerUrl, { type: "module" });
+      } catch (error) {
+        reject(error instanceof Error ? error : new Error("Worker creation failed"));
+        return;
+      }
 
       const state: WorkerState = {
         worker,
@@ -110,14 +161,30 @@ export class ParallelFrameDecoder {
         totalDecodes: 0,
         totalDecodeTime: 0,
         mediabunnyAvailable: false,
+        failed: false,
       };
+      // Track workers immediately, not only after all workers become ready.
+      if (generation !== this.lifecycleGeneration) {
+        state.failed = true;
+        worker.terminate();
+        reject(new Error("Decoder disposed during initialization"));
+        return;
+      }
+      this.workers.push(state);
 
       const initTimeout = setTimeout(() => {
-        reject(new Error(`Worker ${index} initialization timed out`));
+        const error = new Error(`Worker ${index} initialization timed out`);
+        this.failWorker(state, error);
+        reject(error);
       }, 10000);
 
       worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
         const response = event.data;
+
+        if (state.failed) {
+          if (response.type === "decoded") response.bitmap?.close();
+          return;
+        }
 
         if (response.type === "ready") {
           clearTimeout(initTimeout);
@@ -135,14 +202,83 @@ export class ParallelFrameDecoder {
         }
       };
 
-      worker.onerror = (error) => {
-        console.error(`[ParallelFrameDecoder] Worker ${index} error:`, error);
+      worker.onerror = (event) => {
+        console.error(`[ParallelFrameDecoder] Worker ${index} error:`, event);
         clearTimeout(initTimeout);
+        const error = new Error(
+          event.message || `Worker ${index} failed`,
+        );
+        this.failWorker(state, error);
         reject(error);
       };
 
-      worker.postMessage({ type: "init" });
+      worker.onmessageerror = () => {
+        const error = new Error(`Worker ${index} message could not be decoded`);
+        clearTimeout(initTimeout);
+        this.failWorker(state, error);
+        reject(error);
+      };
+
+      try {
+        worker.postMessage({ type: "init" });
+      } catch (error) {
+        clearTimeout(initTimeout);
+        const workerError = error instanceof Error
+          ? error
+          : new Error(`Worker ${index} initialization message failed`);
+        this.failWorker(state, workerError);
+        reject(workerError);
+      }
     });
+  }
+
+  private cleanupWorkers(error: Error): void {
+    for (const state of this.workers) {
+      state.failed = true;
+      state.busy = false;
+      try {
+        state.worker.terminate();
+      } catch {
+        // Continue cleaning up the remaining workers.
+      }
+      for (const pending of state.pendingRequests.values()) {
+        clearTimeout(pending.timeoutId);
+        pending.reject(error);
+      }
+      state.pendingRequests.clear();
+      for (const [pending, responseWorker] of this.activeResponseHandlers) {
+        if (responseWorker === state) {
+          if (!pending.settled) {
+            pending.settled = true;
+            pending.reject(error);
+          }
+          this.activeResponseHandlers.delete(pending);
+        }
+      }
+    }
+    this.workers = [];
+
+    // A response may already have left pendingRequests while its caller bitmap
+    // is still being cloned. Reject it now; the response handler will close any
+    // clone that completes after disposal.
+    for (const pending of this.activeResponseHandlers) {
+      if (!pending.settled) {
+        pending.settled = true;
+        pending.reject(new Error("Decoder disposed"));
+      }
+    }
+    this.activeResponseHandlers.clear();
+
+    for (const url of this.workerUrls) {
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        // Continue cleanup for remaining worker URLs.
+      }
+    }
+    this.workerUrls = [];
+    this.mediabunnyAvailable = false;
+    this.initialized = false;
   }
 
   private async handleDecodeResponse(
@@ -151,13 +287,17 @@ export class ParallelFrameDecoder {
   ): Promise<void> {
     const pending = state.pendingRequests.get(response.requestId);
     if (!pending) {
+      // A late response can arrive after its request was rejected or disposed.
+      response.bitmap?.close();
       console.warn(
         `[ParallelFrameDecoder] No pending request for ${response.requestId}`,
       );
       return;
     }
 
+    clearTimeout(pending.timeoutId);
     state.pendingRequests.delete(response.requestId);
+    this.activeResponseHandlers.set(pending, state);
     state.busy = state.pendingRequests.size > 0;
 
     const decodeTime = performance.now() - pending.startTime;
@@ -167,8 +307,7 @@ export class ParallelFrameDecoder {
     let bitmapForCaller: ImageBitmap | null = null;
 
     if (response.bitmap) {
-      const cacheKey = `${response.clipId}:${response.time.toFixed(3)}`;
-      this.addToCache(cacheKey, response.bitmap);
+      this.addToCache(pending.cacheKey, response.bitmap);
       try {
         bitmapForCaller = await createImageBitmap(response.bitmap);
       } catch {
@@ -176,6 +315,26 @@ export class ParallelFrameDecoder {
       }
     }
 
+    this.activeResponseHandlers.delete(pending);
+    if (
+      pending.settled ||
+      (pending.lifecycleGeneration !== undefined &&
+        pending.lifecycleGeneration !== this.lifecycleGeneration)
+    ) {
+      try {
+        bitmapForCaller?.close();
+      } catch {
+        // A late clone may already have been released; continue settling cleanup.
+      }
+      if (!pending.settled) {
+        pending.settled = true;
+        pending.reject(new Error("Decoder disposed"));
+      }
+      this.processQueue();
+      return;
+    }
+
+    pending.settled = true;
     pending.resolve({
       clipId: response.clipId,
       bitmap: bitmapForCaller,
@@ -187,6 +346,17 @@ export class ParallelFrameDecoder {
   }
 
   private addToCache(key: string, bitmap: ImageBitmap): void {
+    // Re-decoding an already cached frame must release the previous bitmap.
+    const existing = this.frameCache.get(key);
+    if (existing) {
+      try {
+        existing.bitmap.close();
+      } catch {
+        // Continue replacing the entry even if the old bitmap is already closed.
+      }
+      this.frameCache.delete(key);
+    }
+
     if (this.frameCache.size >= this.maxCacheSize) {
       let oldestKey: string | null = null;
       let oldestTime = Infinity;
@@ -200,7 +370,11 @@ export class ParallelFrameDecoder {
 
       if (oldestKey) {
         const old = this.frameCache.get(oldestKey);
-        old?.bitmap.close();
+        try {
+          old?.bitmap.close();
+        } catch {
+          // Eviction must continue even if a bitmap was already released.
+        }
         this.frameCache.delete(oldestKey);
       }
     }
@@ -208,20 +382,42 @@ export class ParallelFrameDecoder {
     this.frameCache.set(key, { bitmap, timestamp: performance.now() });
   }
 
+  private getCacheKey(request: FrameDecodeRequest): string {
+    let blobId = this.blobIds.get(request.blob);
+    if (blobId === undefined) {
+      blobId = this.nextBlobId++;
+      this.blobIds.set(request.blob, blobId);
+    }
+    return `${request.clipId}:${blobId}:${request.time.toFixed(3)}:${request.width}x${request.height}`;
+  }
+
   private async getFromCache(
-    clipId: string,
-    time: number,
+    request: FrameDecodeRequest,
   ): Promise<ImageBitmap | null> {
-    const cacheKey = `${clipId}:${time.toFixed(3)}`;
+    const generation = this.lifecycleGeneration;
+    const cacheKey = this.getCacheKey(request);
     const cached = this.frameCache.get(cacheKey);
 
     if (cached) {
       cached.timestamp = performance.now();
       this.cacheHits++;
       try {
-        return await createImageBitmap(cached.bitmap);
+        const clone = await createImageBitmap(cached.bitmap);
+        if (generation !== this.lifecycleGeneration) {
+          try {
+            clone.close();
+          } catch {
+            // A clone released during disposal must not escape to the caller.
+          }
+          return null;
+        }
+        return clone;
       } catch {
-        this.frameCache.delete(cacheKey);
+        // A replacement may have been inserted while cloning was pending.
+        // Only remove the entry whose bitmap actually failed to clone.
+        if (this.frameCache.get(cacheKey) === cached) {
+          this.frameCache.delete(cacheKey);
+        }
         return null;
       }
     }
@@ -230,24 +426,70 @@ export class ParallelFrameDecoder {
     return null;
   }
 
+  private failWorker(state: WorkerState, error: Error): void {
+    if (state.failed) return;
+    state.failed = true;
+    state.busy = false;
+    try {
+      state.worker.terminate();
+    } catch {
+      // A failed worker is already unusable; continue rejecting its requests.
+    }
+
+    for (const pending of state.pendingRequests.values()) {
+      clearTimeout(pending.timeoutId);
+      pending.reject(error);
+    }
+    state.pendingRequests.clear();
+    for (const [pending, responseWorker] of this.activeResponseHandlers) {
+      if (responseWorker === state) {
+        if (!pending.settled) {
+          pending.settled = true;
+          pending.reject(error);
+        }
+        this.activeResponseHandlers.delete(pending);
+      }
+    }
+    this.processQueue();
+  }
+
   private getLeastBusyWorker(): WorkerState | null {
     let leastBusy: WorkerState | null = null;
     let minPending = Infinity;
+    let selectedIndex = -1;
 
-    for (const worker of this.workers) {
-      if (worker.pendingRequests.size < minPending) {
-        minPending = worker.pendingRequests.size;
+    // Rotate the starting point so equally-loaded workers share new work
+    // instead of repeatedly favoring the first worker in the array.
+    for (let offset = 0; offset < this.workers.length; offset++) {
+      const index = (this.nextWorkerIndex + offset) % this.workers.length;
+      const worker = this.workers[index];
+      if (worker.failed) continue;
+
+      const pendingCount = worker.pendingRequests.size;
+      if (pendingCount < minPending) {
+        minPending = pendingCount;
         leastBusy = worker;
+        selectedIndex = index;
       }
     }
 
+    if (selectedIndex >= 0 && this.workers.length > 0) {
+      this.nextWorkerIndex = (selectedIndex + 1) % this.workers.length;
+    }
     return leastBusy;
   }
 
   private processQueue(): void {
     while (this.requestQueue.length > 0) {
       const worker = this.getLeastBusyWorker();
-      if (!worker || worker.pendingRequests.size >= 2) {
+      if (!worker) {
+        const error = new Error("All parallel decode workers have failed");
+        for (const item of this.requestQueue.splice(0)) {
+          item.reject(error);
+        }
+        break;
+      }
+      if (worker.pendingRequests.size >= 2) {
         break;
       }
 
@@ -271,6 +513,20 @@ export class ParallelFrameDecoder {
       reject,
       clipId: request.clipId,
       startTime: performance.now(),
+      cacheKey: this.getCacheKey(request),
+      lifecycleGeneration: this.lifecycleGeneration,
+      settled: false,
+      timeoutId: setTimeout(() => {
+        if (!worker.pendingRequests.has(requestId)) return;
+        worker.pendingRequests.delete(requestId);
+        worker.busy = worker.pendingRequests.size > 0;
+        const timeoutError = new Error(
+          `Decode request timed out after ${this.requestTimeoutMs}ms (clip: ${request.clipId})`,
+        );
+        reject(timeoutError);
+        // A worker that stops responding is no longer safe to schedule.
+        this.failWorker(worker, timeoutError);
+      }, this.requestTimeoutMs),
     };
 
     worker.pendingRequests.set(requestId, pending);
@@ -286,7 +542,18 @@ export class ParallelFrameDecoder {
       height: request.height,
     };
 
-    worker.worker.postMessage(decodeRequest);
+    try {
+      worker.worker.postMessage(decodeRequest);
+    } catch (error) {
+      const workerError =
+        error instanceof Error
+          ? error
+          : new Error("Failed to send decode request to worker");
+      clearTimeout(pending.timeoutId);
+      worker.pendingRequests.delete(requestId);
+      reject(workerError);
+      this.failWorker(worker, workerError);
+    }
   }
 
   async decodeFrame(request: FrameDecodeRequest): Promise<FrameDecodeResult> {
@@ -294,7 +561,12 @@ export class ParallelFrameDecoder {
       await this.initialize();
     }
 
-    const cached = await this.getFromCache(request.clipId, request.time);
+    const generation = this.lifecycleGeneration;
+    const cacheKey = this.getCacheKey(request);
+    const cached = await this.getFromCache(request);
+    if (generation !== this.lifecycleGeneration) {
+      throw new Error("Decoder disposed");
+    }
     if (cached) {
       return {
         clipId: request.clipId,
@@ -303,15 +575,61 @@ export class ParallelFrameDecoder {
       };
     }
 
-    return new Promise((resolve, reject) => {
-      const worker = this.getLeastBusyWorker();
+    let entry = this.inFlightDecodes.get(cacheKey);
+    if (!entry) {
+      const promise = new Promise<FrameDecodeResult>((resolve, reject) => {
+        const worker = this.getLeastBusyWorker();
 
-      if (worker && worker.pendingRequests.size < 2) {
-        this.sendDecodeRequest(worker, request, resolve, reject);
-      } else {
-        this.requestQueue.push({ request, resolve, reject });
+        if (worker && worker.pendingRequests.size < 2) {
+          this.sendDecodeRequest(worker, request, resolve, reject);
+        } else if (!worker) {
+          reject(new Error("No healthy parallel decode workers are available"));
+        } else if (this.requestQueue.length >= this.maxQueueSize) {
+          reject(new Error("Parallel decode queue is full"));
+        } else {
+          this.requestQueue.push({ request, resolve, reject });
+        }
+      });
+      entry = { promise, consumers: 0 };
+      this.inFlightDecodes.set(cacheKey, entry);
+    }
+
+    entry.consumers++;
+    try {
+      const shared = await entry.promise;
+      let bitmap: ImageBitmap | null = null;
+      if (shared.bitmap) {
+        try {
+          bitmap = await createImageBitmap(shared.bitmap);
+        } catch {
+          bitmap = null;
+        }
       }
-    });
+      if (generation !== this.lifecycleGeneration) {
+        try {
+          bitmap?.close();
+        } catch {
+          // A late caller clone may already have been released.
+        }
+        throw new Error("Decoder disposed");
+      }
+      return { ...shared, bitmap };
+    } finally {
+      entry.consumers--;
+      if (entry.consumers === 0) {
+        if (this.inFlightDecodes.get(cacheKey) === entry) {
+          this.inFlightDecodes.delete(cacheKey);
+        }
+        // Dispose may clear the map while callers are still cloning the shared
+        // result. Release the fan-out bitmap even when the entry is no longer mapped.
+        try {
+          const settled = await entry.promise;
+          settled.bitmap?.close();
+        } catch {
+          // Cleanup must not turn a completed decode into a rejected request.
+        }
+      }
+    }
   }
 
   async decodeFrames(
@@ -384,7 +702,11 @@ export class ParallelFrameDecoder {
 
   clearCache(): void {
     for (const [, cached] of this.frameCache) {
-      cached.bitmap.close();
+      try {
+        cached.bitmap.close();
+      } catch {
+        // Continue clearing the remaining cached bitmaps.
+      }
     }
     this.frameCache.clear();
     this.cacheHits = 0;
@@ -392,20 +714,48 @@ export class ParallelFrameDecoder {
   }
 
   dispose(): void {
+    // Invalidate any in-flight initialization before terminating its workers.
+    this.lifecycleGeneration++;
     for (const worker of this.workers) {
       for (const [, pending] of worker.pendingRequests) {
-        pending.reject(new Error("Decoder disposed"));
+        clearTimeout(pending.timeoutId);
+        if (!pending.settled) {
+          pending.settled = true;
+          pending.reject(new Error("Decoder disposed"));
+        }
       }
-      worker.worker.terminate();
+      worker.pendingRequests.clear();
+      try {
+        worker.worker.terminate();
+      } catch {
+        // Continue disposing the remaining workers and owned resources.
+      }
     }
     this.workers = [];
 
+    // Reject responses that have left the worker pending map but are still
+    // cloning a caller-owned bitmap.
+    for (const pending of this.activeResponseHandlers.keys()) {
+      if (!pending.settled) {
+        pending.settled = true;
+        pending.reject(new Error("Decoder disposed"));
+      }
+    }
+    this.activeResponseHandlers.clear();
+
     for (const url of this.workerUrls) {
-      URL.revokeObjectURL(url);
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        // Continue cleanup even if a worker URL was already revoked.
+      }
     }
     this.workerUrls = [];
 
     this.clearCache();
+    // Keep fan-out entries until their consumers settle. Each entry owns a
+    // shared bitmap that is released by the final consumer in decodeFrame().
+    // Clearing this map here would prevent that final-consumer cleanup.
 
     for (const item of this.requestQueue) {
       item.reject(new Error("Decoder disposed"));

@@ -261,6 +261,10 @@ export const useTimelineStore = create<TimelineState>()(
     },
 
     setViewportDimensions: (width: number, height: number) => {
+      const current = get();
+      if (current.viewportWidth === width && current.viewportHeight === height) {
+        return;
+      }
       set({
         viewportWidth: width,
         viewportHeight: height,

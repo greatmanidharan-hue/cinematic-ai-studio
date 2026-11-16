@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from "react";
+import React, { memo, useRef, useState, useEffect } from "react";
 import { Shapes, FileCode, Smile } from "lucide-react";
 import type { ShapeClip, SVGClip, StickerClip } from "@fairarena/core";
 import { ContextMenu, ContextMenuTrigger } from "@fairarena/ui";
@@ -19,7 +19,7 @@ interface ShapeClipComponentProps {
   onMoveClip: (clipId: string, newStartTime: number) => void;
 }
 
-export const ShapeClipComponent: React.FC<ShapeClipComponentProps> = ({
+const ShapeClipComponentInner: React.FC<ShapeClipComponentProps> = ({
   shapeClip,
   pixelsPerSecond,
   isSelected,
@@ -81,14 +81,16 @@ export const ShapeClipComponent: React.FC<ShapeClipComponentProps> = ({
   };
 
   useEffect(() => {
-    if (!isDragging) return;
+    if (!isDragging || !onMoveClip) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
-      const timelineElement = clipRef.current?.parentElement;
-      if (!timelineElement) return;
+    let frameId: number | null = null;
+    let pendingClientX: number | null = null;
 
-      const rect = timelineElement.getBoundingClientRect();
-      const x = e.clientX - rect.left - dragOffset;
+    const applyDrag = (clientX: number) => {
+      const rect = clipRef.current?.parentElement?.getBoundingClientRect();
+      if (!rect) return;
+
+      const x = clientX - rect.left - dragOffset;
       const rawTime = Math.max(0, x / pixelsPerSecond);
       const allTracks = useProjectStore.getState().project.timeline.tracks;
       const dragSnapSettings = { ...snapSettings, snapToPlayhead: false };
@@ -104,8 +106,30 @@ export const ShapeClipComponent: React.FC<ShapeClipComponentProps> = ({
       onMoveClip(shapeClip.id, snapResult.time);
     };
 
+    const flushPendingDrag = () => {
+      frameId = null;
+      if (pendingClientX === null) return;
+      const clientX = pendingClientX;
+      pendingClientX = null;
+      applyDrag(clientX);
+    };
+
+    const handleMouseMove = (event: MouseEvent) => {
+      pendingClientX = event.clientX;
+      if (frameId === null) frameId = requestAnimationFrame(flushPendingDrag);
+    };
+
     const handleMouseUp = () => {
+      if (frameId !== null) cancelAnimationFrame(frameId);
+      frameId = null;
+      if (pendingClientX !== null) {
+        const clientX = pendingClientX;
+        pendingClientX = null;
+        applyDrag(clientX);
+      }
       setIsDragging(false);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
     };
 
     window.addEventListener("mousemove", handleMouseMove);
@@ -114,37 +138,54 @@ export const ShapeClipComponent: React.FC<ShapeClipComponentProps> = ({
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
+      if (frameId !== null) cancelAnimationFrame(frameId);
     };
   }, [isDragging, dragOffset, pixelsPerSecond, shapeClip.id, shapeClip.duration, onMoveClip, snapSettings, playheadPosition]);
 
   useEffect(() => {
     if (!isTrimming) return;
 
-    const handleMouseMove = (e: MouseEvent) => {
-      const deltaX = e.clientX - trimStartRef.current.mouseX;
+    let frameId: number | null = null;
+    let pendingClientX: number | null = null;
+
+    const applyTrim = (clientX: number) => {
+      const deltaX = clientX - trimStartRef.current.mouseX;
       const deltaTime = deltaX / pixelsPerSecond;
 
       if (isTrimming === "left") {
-        const newStartTime = Math.max(
-          0,
-          trimStartRef.current.startTime + deltaTime,
-        );
-        const maxStartTime =
-          trimStartRef.current.startTime + trimStartRef.current.duration - 0.1;
+        const newStartTime = Math.max(0, trimStartRef.current.startTime + deltaTime);
+        const maxStartTime = trimStartRef.current.startTime + trimStartRef.current.duration - 0.1;
         const clampedStartTime = Math.min(newStartTime, maxStartTime);
         onTrim(shapeClip.id, "left", clampedStartTime);
       } else {
-        const newEndTime =
-          trimStartRef.current.startTime +
-          trimStartRef.current.duration +
-          deltaTime;
+        const newEndTime = trimStartRef.current.startTime + trimStartRef.current.duration + deltaTime;
         const minEndTime = trimStartRef.current.startTime + 0.1;
         const clampedEndTime = Math.max(newEndTime, minEndTime);
         onTrim(shapeClip.id, "right", clampedEndTime);
       }
     };
 
+    const flushPendingTrim = () => {
+      frameId = null;
+      if (pendingClientX === null) return;
+      const clientX = pendingClientX;
+      pendingClientX = null;
+      applyTrim(clientX);
+    };
+
+    const handleMouseMove = (event: MouseEvent) => {
+      pendingClientX = event.clientX;
+      if (frameId === null) frameId = requestAnimationFrame(flushPendingTrim);
+    };
+
     const handleMouseUp = () => {
+      if (frameId !== null) cancelAnimationFrame(frameId);
+      frameId = null;
+      if (pendingClientX !== null) {
+        const clientX = pendingClientX;
+        pendingClientX = null;
+        applyTrim(clientX);
+      }
       setIsTrimming(null);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
@@ -156,6 +197,7 @@ export const ShapeClipComponent: React.FC<ShapeClipComponentProps> = ({
     return () => {
       window.removeEventListener("mousemove", handleMouseMove);
       window.removeEventListener("mouseup", handleMouseUp);
+      if (frameId !== null) cancelAnimationFrame(frameId);
     };
   }, [isTrimming, shapeClip.id, pixelsPerSecond, onTrim]);
 
@@ -235,3 +277,7 @@ export const ShapeClipComponent: React.FC<ShapeClipComponentProps> = ({
     </ContextMenu>
   );
 };
+
+export const ShapeClipComponent = memo(ShapeClipComponentInner);
+ShapeClipComponent.displayName = "ShapeClipComponent";
+

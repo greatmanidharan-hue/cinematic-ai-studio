@@ -256,6 +256,12 @@ export class ActionExecutor {
         (project as any).modifiedAt = Date.now();
         break;
 
+      case "project/updateTimelineVfx":
+        if (action.params.lightningEffects !== undefined) (project.timeline as any).lightningEffects = action.params.lightningEffects;
+        if (action.params.particleEffects !== undefined) (project.timeline as any).particleEffects = action.params.particleEffects;
+        (project as any).modifiedAt = Date.now();
+        break;
+
       case "project/create":
         (project as any).name = action.params.name;
         (project as any).settings = action.params.settings;

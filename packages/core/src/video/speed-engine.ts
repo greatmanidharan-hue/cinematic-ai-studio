@@ -38,6 +38,7 @@ export class SpeedEngine {
   }
   // Speed Control (Requirement 19.1)
   setClipSpeed(clipId: string, speed: number, originalDuration: number): void {
+    this.assertFiniteNonNegative(originalDuration, "originalDuration");
     const clampedSpeed = this.clampSpeed(speed);
     const data = this.getOrCreateSpeedData(clipId, originalDuration);
     data.baseSpeed = clampedSpeed;
@@ -82,7 +83,16 @@ export class SpeedEngine {
   }
 
   private clampSpeed(speed: number): number {
+    if (!Number.isFinite(speed)) {
+      throw new RangeError("speed must be a finite number");
+    }
     return Math.max(SPEED_MIN, Math.min(SPEED_MAX, speed));
+  }
+
+  private assertFiniteNonNegative(value: number, name: string): void {
+    if (!Number.isFinite(value) || value < 0) {
+      throw new RangeError(`${name} must be a finite non-negative number`);
+    }
   }
   // Reverse Playback (Requirement 19.2)
   setReverse(
@@ -142,6 +152,10 @@ export class SpeedEngine {
     const data = this.clipSpeedData.get(clipId);
     if (!data) {
       throw new Error(`No speed data for clip ${clipId}`);
+    }
+    this.assertFiniteNonNegative(time, "keyframe time");
+    if (time > data.originalDuration) {
+      throw new RangeError("keyframe time must not exceed the clip duration");
     }
 
     const id = `speed-kf-${Date.now()}-${Math.random()
@@ -232,6 +246,14 @@ export class SpeedEngine {
     const data = this.clipSpeedData.get(clipId);
     if (!data) {
       throw new Error(`No speed data for clip ${clipId}`);
+    }
+    this.assertFiniteNonNegative(sourceTime, "freeze-frame sourceTime");
+    this.assertFiniteNonNegative(startTime, "freeze-frame startTime");
+    if (sourceTime > data.originalDuration) {
+      throw new RangeError("freeze-frame sourceTime must not exceed the clip duration");
+    }
+    if (!Number.isFinite(duration) || duration <= 0) {
+      throw new RangeError("freeze-frame duration must be a finite positive number");
     }
 
     const id = `freeze-${Date.now()}-${Math.random()

@@ -123,6 +123,7 @@ export class WebGPURenderer implements Renderer {
       this.context = this.canvas.getContext("webgpu") as GPUCanvasContext;
       if (!this.context) {
         console.warn("[WebGPURenderer] Failed to get WebGPU context");
+        this.cleanupFailedInitialization();
         return false;
       }
 
@@ -142,7 +143,10 @@ export class WebGPURenderer implements Renderer {
         width: this.width,
         height: this.height,
       });
-      await this.effectsProcessor.initialize();
+      const effectsInitialized = await this.effectsProcessor.initialize();
+      if (!effectsInitialized) {
+        throw new Error("WebGPU effects processor initialization failed");
+      }
       this.effectsProcessor.onEffectsChange((clipId, effects) => {
         this.triggerReRender(clipId, effects);
       });
@@ -158,22 +162,47 @@ export class WebGPURenderer implements Renderer {
       return true;
     } catch (error) {
       console.error("[WebGPURenderer] Initialization failed:", error);
+      this.cleanupFailedInitialization();
       return false;
     }
+  }
+
+  /**
+   * Release resources created by a failed initialization without losing
+   * renderer-level device-loss subscribers needed by a later retry.
+   */
+  private cleanupFailedInitialization(): void {
+    const deviceLostCallbacks = this.deviceLostCallbacks;
+    this.destroy();
+    this.deviceLostCallbacks = deviceLostCallbacks;
+    this.isDeviceLost = true;
   }
 
   private setupDeviceLossHandling(): void {
     if (!this.device) return;
 
     this.device.lost.then((info: GPUDeviceLostInfo) => {
+      // Explicit destroy/recreation is intentional and must not start a
+      // second recovery cycle or notify subscribers as if the GPU failed.
+      if (info.reason === "destroyed") return;
+
       console.warn(
         `[WebGPURenderer] Device lost: ${info.reason}`,
         info.message,
       );
       this.isDeviceLost = true;
 
+      // A faulty subscriber must not prevent other resources from being
+      // notified or stop the renderer from attempting device recovery.
       for (const callback of this.deviceLostCallbacks) {
-        callback();
+        try {
+          callback();
+        } catch (error) {
+          console.error(
+            "[WebGPURenderer] Device-loss callback failed:",
+            error,
+          );
+        }
       }
 
       if (!this.deviceRecreationInProgress) {
@@ -193,10 +222,18 @@ export class WebGPURenderer implements Renderer {
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       await new Promise((resolve) => setTimeout(resolve, delayMs));
 
-      const success = await this.recreateDevice();
-      if (success) {
-        this.deviceRecreationInProgress = false;
-        return;
+      try {
+        const success = await this.recreateDevice();
+        if (success) {
+          this.deviceRecreationInProgress = false;
+          return;
+        }
+      } catch (error) {
+        // A failed attempt must not leave recovery permanently marked active.
+        console.error(
+          `[WebGPURenderer] Device recreation attempt ${attempt} failed:`,
+          error,
+        );
       }
     }
 
@@ -939,9 +976,18 @@ export class WebGPURenderer implements Renderer {
   }
 
   async recreateDevice(): Promise<boolean> {
-    this.isDeviceLost = false;
+    // Device-loss subscribers belong to the renderer instance, not to the
+    // underlying GPUDevice. Keep them registered across device recreation.
+    const deviceLostCallbacks = this.deviceLostCallbacks;
+    this.isDeviceLost = true;
     this.destroy();
-    return this.initialize();
+    this.deviceLostCallbacks = deviceLostCallbacks;
+
+    const initialized = await this.initialize();
+    // Keep the renderer marked lost when recreation fails; callers must not
+    // mistake an unavailable device for a recovered one.
+    this.isDeviceLost = !initialized;
+    return initialized;
   }
 
   resize(width: number, height: number): void {

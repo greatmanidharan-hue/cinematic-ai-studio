@@ -4,7 +4,7 @@ import { useProjectStore } from "../../stores/project-store";
 import { useTimelineStore } from "../../stores/timeline-store";
 import { useUIStore } from "../../stores/ui-store";
 import { useEngineStore } from "../../stores/engine-store";
-import type { Transform, FitMode, Clip, EditingTemplatePrimitive } from "@fairarena/core";
+import type { Transform, FitMode, Clip, EditingTemplatePrimitive, LightningEffectClip } from "@fairarena/core";
 import {
   ChromaKeyEngine,
   initializeTranscriptionService,
@@ -132,53 +132,70 @@ const ParticleEffectsSectionWrapper: React.FC<{
   clipDuration: number;
   clipStartTime: number;
 }> = ({ clipId, clipDuration, clipStartTime }) => {
-  const [updateTrigger, setUpdateTrigger] = React.useState(0);
+  const projectEffects = useProjectStore(
+    (state) => state.project.timeline.particleEffects ?? [],
+  );
+  const effects = React.useMemo(
+    () => projectEffects.filter((effect) => effect.clipId === clipId),
+    [projectEffects, clipId],
+  );
   const particleEngine = React.useMemo(() => getParticleEngine(), []);
 
-  const effects = React.useMemo(() => {
-    return particleEngine.getEffectsForClip(clipId);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [clipId, particleEngine, updateTrigger]);
+  React.useEffect(() => {
+    const runtimeEffects = particleEngine.getAllEffects();
+    const projectEffects = useProjectStore.getState().project.timeline.particleEffects ?? [];
+    const projectIds = new Set(projectEffects.map((effect) => effect.id));
+    for (const runtimeEffect of runtimeEffects) {
+      if (!projectIds.has(runtimeEffect.id)) particleEngine.removeEffect(runtimeEffect.id);
+    }
+    for (const effect of projectEffects) {
+      const runtimeEffect = particleEngine.getEffect(effect.id);
+      if (!runtimeEffect) particleEngine.addEffect(effect);
+      else {
+        particleEngine.updateEffect(effect.id, effect.config);
+        particleEngine.updateEffectTiming(effect.id, effect.startTime, effect.duration);
+        particleEngine.toggleEffect(effect.id, effect.enabled);
+      }
+    }
+  }, [projectEffects, particleEngine]);
 
-  const handleAddEffect = React.useCallback(
-    (effect: ParticleEffect) => {
-      particleEngine.addEffect(effect);
-      setUpdateTrigger((v) => v + 1);
-    },
-    [particleEngine]
-  );
+  const commitEffects = React.useCallback((next: ParticleEffect[]) => {
+    useProjectStore.setState((state) => ({
+      project: {
+        ...state.project,
+        timeline: { ...state.project.timeline, particleEffects: next },
+        modifiedAt: Date.now(),
+      },
+    }));
+    window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+  }, []);
 
-  const handleUpdateEffect = React.useCallback(
-    (effectId: string, config: Partial<ParticleConfig>) => {
-      particleEngine.updateEffect(effectId, config);
-      setUpdateTrigger((v) => v + 1);
-    },
-    [particleEngine]
-  );
+  const updateEffect = React.useCallback((effectId: string, updater: (effect: ParticleEffect) => ParticleEffect) => {
+    const allEffects = useProjectStore.getState().project.timeline.particleEffects ?? [];
+    commitEffects(allEffects.map((effect) => effect.id === effectId ? updater(effect) : effect));
+  }, [commitEffects]);
 
-  const handleRemoveEffect = React.useCallback(
-    (effectId: string) => {
-      particleEngine.removeEffect(effectId);
-      setUpdateTrigger((v) => v + 1);
-    },
-    [particleEngine]
-  );
+  const handleAddEffect = React.useCallback((effect: ParticleEffect) => {
+    const allEffects = useProjectStore.getState().project.timeline.particleEffects ?? [];
+    commitEffects([...allEffects.filter((item) => item.id !== effect.id), effect]);
+  }, [commitEffects]);
 
-  const handleToggleEffect = React.useCallback(
-    (effectId: string, enabled: boolean) => {
-      particleEngine.toggleEffect(effectId, enabled);
-      setUpdateTrigger((v) => v + 1);
-    },
-    [particleEngine]
-  );
+  const handleUpdateEffect = React.useCallback((effectId: string, config: Partial<ParticleConfig>) => {
+    updateEffect(effectId, (effect) => ({ ...effect, config: { ...effect.config, ...config } }));
+  }, [updateEffect]);
 
-  const handleUpdateTiming = React.useCallback(
-    (effectId: string, startTime: number, duration: number) => {
-      particleEngine.updateEffectTiming(effectId, startTime, duration);
-      setUpdateTrigger((v) => v + 1);
-    },
-    [particleEngine]
-  );
+  const handleRemoveEffect = React.useCallback((effectId: string) => {
+    const allEffects = useProjectStore.getState().project.timeline.particleEffects ?? [];
+    commitEffects(allEffects.filter((effect) => effect.id !== effectId));
+  }, [commitEffects]);
+
+  const handleToggleEffect = React.useCallback((effectId: string, enabled: boolean) => {
+    updateEffect(effectId, (effect) => ({ ...effect, enabled }));
+  }, [updateEffect]);
+
+  const handleUpdateTiming = React.useCallback((effectId: string, startTime: number, duration: number) => {
+    updateEffect(effectId, (effect) => ({ ...effect, startTime, duration }));
+  }, [updateEffect]);
 
   return (
     <ParticleEffectsSection
@@ -192,6 +209,325 @@ const ParticleEffectsSectionWrapper: React.FC<{
       onToggleEffect={handleToggleEffect}
       onUpdateTiming={handleUpdateTiming}
     />
+  );
+};
+
+const LightningEffectsSection: React.FC = () => {
+  const project = useProjectStore((state) => state.project);
+  const effects = project.timeline.lightningEffects ?? [];
+  const [selectedId, setSelectedId] = useState<string | null>(effects[0]?.id ?? null);
+  const selected = effects.find((effect) => effect.id === selectedId) ?? effects[0] ?? null;
+
+  const updateEffects = useCallback((next: LightningEffectClip[]) => {
+    useProjectStore.setState((state) => ({
+      project: {
+        ...state.project,
+        timeline: { ...state.project.timeline, lightningEffects: next },
+        modifiedAt: Date.now(),
+      },
+    }));
+    window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+  }, []);
+
+  const addEffect = useCallback(() => {
+    const id = `lightning-${Date.now().toString(36)}`;
+    const effect = createLightningEffectClip(
+      id,
+      0,
+      Math.min(1.2, Math.max(0.25, project.timeline.duration || 1.2)),
+    );
+    updateEffects([...effects, effect]);
+    setSelectedId(id);
+  }, [effects, project.timeline.duration, updateEffects]);
+
+  const updateSelected = useCallback((patch: Partial<LightningEffectClip>) => {
+    if (!selected) return;
+    updateEffects(effects.map((effect) => effect.id === selected.id
+      ? { ...effect, ...patch,
+          start: patch.start ? { ...effect.start, ...patch.start } : effect.start,
+          end: patch.end ? { ...effect.end, ...patch.end } : effect.end }
+      : effect));
+  }, [effects, selected, updateEffects]);
+
+  const numberField = (
+    label: string,
+    value: number,
+    min: number,
+    max: number,
+    step: number,
+    onChange: (value: number) => void,
+  ) => (
+    <label className="block space-y-1">
+      <span className="text-[10px] text-text-muted">{label}</span>
+      <input type="number" value={value} min={min} max={max} step={step}
+        onFocus={beginEdit} onBlur={endEdit}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          if (Number.isFinite(next)) onChange(Math.min(max, Math.max(min, next)));
+        }}
+        className="w-full h-7 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary" />
+    </label>
+  );
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2">
+        <select value={selected?.id ?? ""} onChange={(event) => setSelectedId(event.target.value)}
+          className="min-w-0 flex-1 h-8 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary">
+          {effects.length === 0 && <option value="">No lightning effects</option>}
+          {effects.map((effect, index) => <option key={effect.id} value={effect.id}>{effect.name || `Lightning ${index + 1}`}</option>)}
+        </select>
+        <button type="button" onClick={addEffect}
+          className="h-8 rounded bg-primary px-3 text-xs font-medium text-primary-foreground hover:opacity-90">+ Add</button>
+      </div>
+      {!selected ? (
+        <p className="py-3 text-center text-[10px] text-text-muted">Add a bolt to create a cinematic lightning overlay.</p>
+      ) : (
+        <>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-medium text-text-primary">Bolt settings</span>
+            <div className="flex items-center gap-2">
+              <label className="flex items-center gap-1 text-[10px] text-text-muted">
+                <input type="checkbox" checked={selected.enabled} onChange={(event) => updateSelected({ enabled: event.target.checked })} />
+                Enabled
+              </label>
+              <button type="button" onClick={() => {
+                const remaining = effects.filter((effect) => effect.id !== selected.id);
+                updateEffects(remaining);
+                setSelectedId(remaining[0]?.id ?? null);
+              }} className="text-[10px] text-red-400 hover:text-red-300">Remove</button>
+            </div>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {numberField("Start time (s)", selected.startTime, 0, Math.max(0, project.timeline.duration), 0.1, (v) => updateSelected({ startTime: v }))}
+            {numberField("Duration (s)", selected.duration, 0.05, 30, 0.05, (v) => updateSelected({ duration: v }))}
+            {numberField("Start X (0–1)", selected.start.x, 0, 1, 0.01, (v) => updateSelected({ start: { ...selected.start, x: v } }))}
+            {numberField("Start Y (0–1)", selected.start.y, 0, 1, 0.01, (v) => updateSelected({ start: { ...selected.start, y: v } }))}
+            {numberField("End X (0–1)", selected.end.x, 0, 1, 0.01, (v) => updateSelected({ end: { ...selected.end, x: v } }))}
+            {numberField("End Y (0–1)", selected.end.y, 0, 1, 0.01, (v) => updateSelected({ end: { ...selected.end, y: v } }))}
+            {numberField("Intensity", selected.intensity, 0, 1, 0.05, (v) => updateSelected({ intensity: v }))}
+            {numberField("Branches", selected.branches ?? 3, 0, 12, 1, (v) => updateSelected({ branches: v }))}
+            {numberField("Segments", selected.segments ?? 18, 2, 64, 1, (v) => updateSelected({ segments: v }))}
+            {numberField("Amplitude", selected.amplitude ?? 24, 0, 100, 1, (v) => updateSelected({ amplitude: v }))}
+          </div>
+          <label className="flex items-center justify-between text-[10px] text-text-muted">
+            Bolt color
+            <input type="color" value={selected.color ?? "#9bdcff"} onChange={(event) => updateSelected({ color: event.target.value })}
+              className="h-7 w-10 cursor-pointer rounded border border-border bg-transparent" />
+          </label>
+          <p className="text-[10px] text-text-muted">Coordinates are normalized to the preview frame. The bolt is visible only during its start time and duration.</p>
+        </>
+      )}
+    </div>
+  );
+};
+
+const SelectedVfxInspector: React.FC<{ effectId: string }> = ({ effectId }) => {
+  const project = useProjectStore((state) => state.project);
+  const [presetQuery, setPresetQuery] = useState("");
+  const [presetCategory, setPresetCategory] = useState("all");
+  const lightning = (project.timeline.lightningEffects ?? []).find((item) => item.id === effectId);
+  const particle = (project.timeline.particleEffects ?? []).find((item) => item.id === effectId);
+  const effect = lightning ?? particle;
+  const beginEdit = () => useProjectStore.getState().beginHistoryGroup("Edit VFX settings");
+  const endEdit = () => useProjectStore.getState().endHistoryGroup();
+  const update = (patch: Record<string, unknown>) => {
+    const current = useProjectStore.getState().project.timeline;
+    const request = lightning
+      ? { lightningEffects: (current.lightningEffects ?? []).map((item) => item.id === effectId ? { ...item, ...patch } : item) }
+      : { particleEffects: (current.particleEffects ?? []).map((item) => item.id === effectId ? { ...item, ...patch } : item) };
+    void useProjectStore.getState().updateTimelineVfx(request).then((result) => {
+      if (result.success) window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+    });
+  };
+  if (!effect) return <EmptyState />;
+  const numberField = (label: string, value: number, patchKey: string, min: number, max: number, step: number) => (
+    <label className="block space-y-1">
+      <span className="text-[10px] text-text-muted">{label}</span>
+      <input type="number" value={value} min={min} max={max} step={step}
+        onChange={(event) => {
+          const next = Number(event.target.value);
+          if (!Number.isFinite(next)) return;
+          const bounded = Math.min(max, Math.max(min, next));
+          if (particle && patchKey.startsWith("size.")) {
+            const key = patchKey.slice(5) as "min" | "max";
+            const safeValue = key === "min"
+              ? Math.min(bounded, particle.config.size.max)
+              : Math.max(bounded, particle.config.size.min);
+            update({ config: { ...particle.config, size: { ...particle.config.size, [key]: safeValue } } });
+          } else if (particle) {
+            update({ config: { ...particle.config, [patchKey]: bounded } });
+          } else {
+            update({ [patchKey]: bounded });
+          }
+        }}
+        className="w-full h-8 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary" />
+    </label>
+  );
+  return (
+    <div className="space-y-4">
+      <div className="rounded-lg border border-border bg-background-tertiary p-3">
+        <p className="text-xs font-semibold text-text-primary">{lightning ? "⚡ Lightning VFX" : "✦ Particle VFX"}</p>
+        <p className="mt-1 text-[10px] text-text-muted">Selected timeline effect · {effect.id}</p>
+      </div>
+      <label className="flex items-center justify-between text-xs text-text-secondary">
+        Enabled
+        <input type="checkbox" checked={effect.enabled} onFocus={beginEdit} onBlur={endEdit} onChange={(event) => update({ enabled: event.target.checked })} />
+      </label>
+      <div className="grid grid-cols-2 gap-2">
+        {numberField("Start time (s)", effect.startTime, "startTime", 0, 36000, 0.05)}
+        {numberField("Duration (s)", effect.duration, "duration", 0.05, 36000, 0.05)}
+      </div>
+      {lightning && (
+        <div className="space-y-2">
+          {numberField("Intensity", lightning.intensity, "intensity", 0, 1, 0.05)}
+          {numberField("Branches", lightning.branches ?? 3, "branches", 0, 12, 1)}
+          {numberField("Segments", lightning.segments ?? 18, "segments", 2, 64, 1)}
+          <label className="flex items-center justify-between text-xs text-text-secondary">
+            Bolt color
+            <input type="color" value={lightning.color ?? "#9bdcff"} onFocus={beginEdit} onBlur={endEdit} onChange={(event) => update({ color: event.target.value })} />
+          </label>
+        </div>
+      )}
+      {particle && (
+        <div className="space-y-3">
+          <p className="text-[10px] text-text-muted">Particle type: {particle.type} · Clip: {particle.clipId}</p>
+          <div className="space-y-2 rounded-lg border border-border bg-background-secondary/40 p-2">
+            <div className="flex items-center justify-between">
+              <span className="text-[10px] font-semibold uppercase tracking-wide text-text-secondary">VFX Preset Browser</span>
+              <span className="text-[10px] text-text-muted">{PARTICLE_PRESETS.length} presets</span>
+            </div>
+            <input
+              type="search"
+              value={presetQuery}
+              onChange={(event) => setPresetQuery(event.target.value)}
+              placeholder="Search fire, smoke, sparks…"
+              aria-label="Search particle presets"
+              className="h-8 w-full rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary"
+            />
+            <div className="flex flex-wrap gap-1">
+              {[
+                { id: "all", label: "All" },
+                { id: "cinematic", label: "Cinematic" },
+                { id: "atmosphere", label: "Atmosphere" },
+                { id: "impact", label: "Impact" },
+                { id: "transform", label: "Transform" },
+              ].map((category) => (
+                <button
+                  key={category.id}
+                  type="button"
+                  aria-pressed={presetCategory === category.id}
+                  onClick={() => setPresetCategory(category.id)}
+                  className={`rounded px-2 py-1 text-[10px] ${presetCategory === category.id ? "bg-primary/20 text-primary border border-primary/40" : "border border-border text-text-muted hover:text-text-primary"}`}
+                >
+                  {category.label}
+                </button>
+              ))}
+            </div>
+            <div className="grid grid-cols-2 gap-1.5">
+              {PARTICLE_PRESETS.filter((preset) => {
+                const name = `${preset.name} ${preset.description} ${preset.id}`.toLowerCase();
+                const matchesQuery = name.includes(presetQuery.trim().toLowerCase());
+                const category = /fire|smoke|lightning/.test(preset.id) ? "cinematic"
+                  : /dust|snow|confetti/.test(preset.id) ? "atmosphere"
+                  : /explode|shatter/.test(preset.type) ? "impact"
+                  : /morph|disintegrate|pixelate|dissolve|implode/.test(preset.type) ? "transform"
+                  : "atmosphere";
+                return matchesQuery && (presetCategory === "all" || presetCategory === category);
+              }).map((preset) => (
+                <button
+                  key={preset.id}
+                  type="button"
+                  onClick={() => {
+                    beginEdit();
+                    const config = {
+                      ...preset.config,
+                      colors: [...preset.config.colors],
+                      size: { ...preset.config.size },
+                      opacity: { ...preset.config.opacity },
+                      lifetime: { ...preset.config.lifetime },
+                      wind: { ...preset.config.wind },
+                    };
+                    update({ config, type: preset.type });
+                    endEdit();
+                  }}
+                  className="min-h-[58px] rounded border border-border bg-background-tertiary p-2 text-left hover:border-primary/60 hover:bg-primary/5"
+                  title={preset.description}
+                >
+                  <span className="block text-[11px] font-medium text-text-primary">{preset.name}</span>
+                  <span className="mt-1 block line-clamp-2 text-[9px] text-text-muted">{preset.description}</span>
+                </button>
+              ))}
+            </div>
+            {PARTICLE_PRESETS.filter((preset) => {
+              const name = `${preset.name} ${preset.description} ${preset.id}`.toLowerCase();
+              const category = /fire|smoke|lightning/.test(preset.id) ? "cinematic"
+                : /dust|snow|confetti/.test(preset.id) ? "atmosphere"
+                : /explode|shatter/.test(preset.type) ? "impact"
+                : /morph|disintegrate|pixelate|dissolve|implode/.test(preset.type) ? "transform"
+                : "atmosphere";
+              return name.includes(presetQuery.trim().toLowerCase()) &&
+                (presetCategory === "all" || presetCategory === category);
+            }).length === 0 && <p className="py-2 text-center text-[10px] text-text-muted">No matching presets</p>}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {numberField("Particle count", particle.config.particleCount, "particleCount", 10, 1000, 10)}
+            {numberField("Speed", particle.config.speed, "speed", 0, 1000, 5)}
+            {numberField("Gravity", particle.config.gravity, "gravity", -1000, 1000, 5)}
+            {numberField("Emission rate", particle.config.emissionRate, "emissionRate", 0, 1000, 5)}
+            {numberField("Turbulence", particle.config.turbulence, "turbulence", 0, 200, 1)}
+            {numberField("Emission radius", particle.config.emissionRadius, "emissionRadius", 0, 1000, 1)}
+            {numberField("Min particle size", particle.config.size.min, "size.min", 0.1, 100, 0.5)}
+            {numberField("Max particle size", particle.config.size.max, "size.max", 0.1, 150, 0.5)}
+          </div>
+          <label className="block space-y-1">
+            <span className="text-[10px] text-text-muted">Emission shape</span>
+            <select value={particle.config.emissionShape} onFocus={beginEdit} onBlur={endEdit} onChange={(event) => update({ config: { ...particle.config, emissionShape: event.target.value } })}
+              className="w-full h-8 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary">
+              {["point","line","circle","rectangle","sphere"].map((shape) => <option key={shape} value={shape}>{shape}</option>)}
+            </select>
+          </label>
+          <label className="block space-y-1">
+            <span className="text-[10px] text-text-muted">Blend mode</span>
+            <select value={particle.config.blendMode} onFocus={beginEdit} onBlur={endEdit} onChange={(event) => update({ config: { ...particle.config, blendMode: event.target.value } })}
+              className="w-full h-8 rounded border border-border bg-background-tertiary px-2 text-xs text-text-primary">
+              {["normal","add","multiply","screen"].map((mode) => <option key={mode} value={mode}>{mode}</option>)}
+            </select>
+          </label>
+          <div className="space-y-2">
+            <span className="text-[10px] text-text-muted">Particle colors</span>
+            <div className="flex flex-wrap gap-2">
+              {particle.config.colors.map((color, index) => (
+                <label key={index} className="flex items-center gap-1 rounded border border-border bg-background-tertiary p-1">
+                  <input type="color" value={color} onFocus={beginEdit} onBlur={endEdit} onChange={(event) => {
+                    const colors = [...particle.config.colors]; colors[index] = event.target.value;
+                    update({ config: { ...particle.config, colors } });
+                  }} className="h-6 w-7 cursor-pointer bg-transparent" />
+                  <button type="button" onClick={() => update({ config: { ...particle.config, colors: particle.config.colors.filter((_, i) => i !== index) } })}
+                    disabled={particle.config.colors.length <= 1} className="px-1 text-[10px] text-text-muted disabled:opacity-30">×</button>
+                </label>
+              ))}
+              <button type="button" onClick={() => update({ config: { ...particle.config, colors: [...particle.config.colors, "#ffffff"] } })}
+                className="h-8 w-8 rounded border border-dashed border-border text-xs text-text-muted">+</button>
+            </div>
+          </div>
+        </div>
+      )}
+      <button type="button" onClick={() => {
+        const current = useProjectStore.getState().project.timeline;
+        const request = lightning
+          ? { lightningEffects: (current.lightningEffects ?? []).filter((item) => item.id !== effectId) }
+          : { particleEffects: (current.particleEffects ?? []).filter((item) => item.id !== effectId) };
+        void useProjectStore.getState().updateTimelineVfx(request).then((result) => {
+          if (result.success) {
+            useUIStore.getState().clearSelection();
+            window.dispatchEvent(new CustomEvent("fairarena:preview-invalidate"));
+          }
+        });
+      }} className="w-full rounded border border-red-500/40 bg-red-500/10 py-2 text-xs text-red-400 hover:bg-red-500/20">
+        Remove VFX
+      </button>
+    </div>
   );
 };
 
@@ -919,7 +1255,9 @@ export const InspectorPanel: React.FC = () => {
           Inspector
         </h3>
 
-        {selectedClip ? (
+        {selectedItems.some((item) => item.type === "effect") ? (
+          <SelectedVfxInspector effectId={selectedItems.find((item) => item.type === "effect")!.id} />
+        ) : selectedClip ? (
           <>
             {/* Clip Info */}
             <div className="mb-4 p-3 bg-background-tertiary rounded-lg border border-border">
@@ -1514,6 +1852,10 @@ export const InspectorPanel: React.FC = () => {
                 <MotionPathSection clipId={clipId} />
               </Section>
             )}
+
+            <Section title="Lightning VFX" sectionId="lightning-effects" defaultOpen={false}>
+              <LightningEffectsSection />
+            </Section>
 
             {/* Particle Effects - Visual particle systems */}
             {(clipType === "video" ||

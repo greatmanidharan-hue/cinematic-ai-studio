@@ -29,9 +29,15 @@ export const TrackHeader: React.FC<TrackHeaderProps> = ({
   onDrop,
   keyframeCount = 0,
 }) => {
-  const { lockTrack, hideTrack, muteTrack, removeTrack, renameTrack, consolidateTrack } = useProjectStore();
-  const { isTrackExpanded, toggleTrackExpanded, getTrackHeight } = useTimelineStore();
-  const isExpanded = isTrackExpanded(track.id);
+  const lockTrack = useProjectStore((state) => state.lockTrack);
+  const hideTrack = useProjectStore((state) => state.hideTrack);
+  const muteTrack = useProjectStore((state) => state.muteTrack);
+  const removeTrack = useProjectStore((state) => state.removeTrack);
+  const renameTrack = useProjectStore((state) => state.renameTrack);
+  const consolidateTrack = useProjectStore((state) => state.consolidateTrack);
+  const isExpanded = useTimelineStore((state) => state.isTrackExpanded(track.id));
+  const toggleTrackExpanded = useTimelineStore((state) => state.toggleTrackExpanded);
+  const getTrackHeight = useTimelineStore((state) => state.getTrackHeight);
 
   const [isRenaming, setIsRenaming] = useState(false);
   const [renameValue, setRenameValue] = useState(track.name);
