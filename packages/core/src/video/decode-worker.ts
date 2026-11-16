@@ -125,7 +125,10 @@ export async function getOrCreateResources(
       // that exact attempt, then re-check both cache and in-flight state.
       // Several waiters may resume together; the loop prevents them from
       // starting duplicate replacements for the same clip.
-      await inFlight;
+      const completed = await inFlight;
+      // A failed creation is a terminal result for every waiter on that
+      // attempt. Retrying here would create an unbounded failure loop.
+      if (!completed) return null;
       continue;
     }
 
@@ -385,7 +388,9 @@ async function getOrCreateResources(clipId, blob, width, height) {
  const inFlight = resourcePromises.get(clipId);
  if (inFlight) {
  // Re-check after every waiter resumes to serialize replacements per clip.
- await inFlight;
+ const completed = await inFlight;
+ // Share failed creation with every waiter instead of retrying forever.
+ if (!completed) return null;
  continue;
  }
 
