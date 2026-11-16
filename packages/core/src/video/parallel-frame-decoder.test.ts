@@ -572,3 +572,109 @@ describe("ParallelFrameDecoder worker scheduling", () => {
     expect(decoder.getLeastBusyWorker()?.workerId).toBe(2);
   });
 });
+
+
+describe("ParallelFrameDecoder response disposal race", () => {
+  it("rejects a response whose caller bitmap clone completes after dispose", async () => {
+    const decoder = Object.create(ParallelFrameDecoder.prototype) as ParallelFrameDecoder & {
+      workers: Array<{
+        failed: boolean;
+        busy: boolean;
+        pendingRequests: Map<string, {
+          resolve: (result: never) => void;
+          reject: (error: Error) => void;
+          startTime: number;
+          timeoutId: ReturnType<typeof setTimeout>;
+          cacheKey: string;
+          lifecycleGeneration?: number;
+          settled?: boolean;
+        }>;
+        totalDecodes: number;
+        totalDecodeTime: number;
+        worker: { terminate: ReturnType<typeof vi.fn> };
+      }>;
+      activeResponseHandlers: Set<{
+        reject: (error: Error) => void;
+        lifecycleGeneration?: number;
+        settled?: boolean;
+      }>;
+      frameCache: Map<string, { bitmap: ImageBitmap; timestamp: number }>;
+      workerUrls: string[];
+      requestQueue: Array<{ reject: (error: Error) => void }>;
+      inFlightDecodes: Map<string, { promise: Promise<never>; consumers: number }>;
+      initialized: boolean;
+      initPromise: Promise<void> | null;
+      lifecycleGeneration: number;
+      maxCacheSize: number;
+      cacheHits: number;
+      cacheMisses: number;
+      handleDecodeResponse: (state: (typeof decoder.workers)[number], response: {
+        requestId: string; clipId: string; time: number; bitmap: ImageBitmap;
+      }) => Promise<void>;
+      dispose: () => void;
+      processQueue: () => void;
+    };
+
+    let finishClone!: (bitmap: ImageBitmap) => void;
+    const callerBitmap = { close: vi.fn() } as unknown as ImageBitmap;
+    const cachedBitmap = { close: vi.fn() } as unknown as ImageBitmap;
+    vi.stubGlobal("createImageBitmap", () => new Promise<ImageBitmap>((resolve) => {
+      finishClone = resolve;
+    }));
+
+    const rejectPending = vi.fn();
+    const pending = {
+      resolve: vi.fn(),
+      reject: rejectPending,
+      startTime: performance.now(),
+      timeoutId: setTimeout(() => undefined, 60000),
+      cacheKey: "frame-key",
+      lifecycleGeneration: 0,
+      settled: false,
+    };
+    const state = {
+      failed: false,
+      busy: true,
+      pendingRequests: new Map([["request-1", pending]]),
+      totalDecodes: 0,
+      totalDecodeTime: 0,
+      worker: { terminate: vi.fn() },
+    };
+    decoder.workers = [state];
+    decoder.activeResponseHandlers = new Set();
+    decoder.frameCache = new Map();
+    decoder.workerUrls = [];
+    decoder.requestQueue = [];
+    decoder.inFlightDecodes = new Map();
+    decoder.initialized = true;
+    decoder.initPromise = null;
+    decoder.lifecycleGeneration = 0;
+    decoder.maxCacheSize = 100;
+    decoder.cacheHits = 0;
+    decoder.cacheMisses = 0;
+    decoder.processQueue = vi.fn();
+    vi.spyOn(decoder, "addToCache").mockImplementation(() => {
+      decoder.frameCache.set("frame-key", { bitmap: cachedBitmap, timestamp: 1 });
+    });
+
+    const responseHandling = decoder.handleDecodeResponse(state, {
+      requestId: "request-1",
+      clipId: "clip-a",
+      time: 1,
+      bitmap: { close: vi.fn() } as unknown as ImageBitmap,
+    });
+    await Promise.resolve();
+
+    decoder.dispose();
+    expect(rejectPending).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Decoder disposed" }),
+    );
+
+    finishClone(callerBitmap);
+    await responseHandling;
+
+    expect(callerBitmap.close).toHaveBeenCalledOnce();
+    expect(pending.resolve).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+});
