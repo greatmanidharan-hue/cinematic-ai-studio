@@ -155,6 +155,39 @@ describe("decode worker resource creation concurrency", () => {
     expect(mockInput).toHaveBeenCalledOnce();
   });
 
+  it("does not repopulate the cache when cleared during resource creation", async () => {
+    let resolveTrack!: (track: unknown) => void;
+    const dispose = vi.fn();
+    mockInput.mockImplementation(() => ({
+      getPrimaryVideoTrack: () => new Promise((resolve) => {
+        resolveTrack = resolve;
+      }),
+      [Symbol.dispose]: dispose,
+    }));
+
+    const pending = getOrCreateResources(
+      "clip-clear-race", new Blob(["stale"]), 320, 180,
+    );
+    await vi.waitFor(() => expect(resolveTrack).toBeTypeOf("function"));
+
+    clearCache("clip-clear-race");
+    resolveTrack({ id: "late-track" });
+
+    await expect(pending).resolves.toBeNull();
+    expect(dispose).toHaveBeenCalledOnce();
+
+    mockInput.mockImplementation(() => ({
+      getPrimaryVideoTrack: vi.fn(async () => ({ id: "fresh-track" })),
+      [Symbol.dispose]: vi.fn(),
+    }));
+    const fresh = await getOrCreateResources(
+      "clip-clear-race", new Blob(["fresh"]), 320, 180,
+    );
+    expect(fresh).not.toBeNull();
+    if (fresh) releaseResource(fresh);
+    clearCache("clip-clear-race");
+  });
+
   it("does not dispose an older resource until its active lease is released", async () => {
     const firstBlob = new Blob(["first"]);
     const secondBlob = new Blob(["second"]);
