@@ -715,3 +715,87 @@ describe("ParallelFrameDecoder cache disposal race", () => {
     vi.unstubAllGlobals();
   });
 });
+
+
+describe("ParallelFrameDecoder worker failure during response cloning", () => {
+  it("rejects an active response clone when its worker fails", async () => {
+    const decoder = Object.create(ParallelFrameDecoder.prototype) as ParallelFrameDecoder & {
+      workers: Array<{
+        failed: boolean;
+        busy: boolean;
+        pendingRequests: Map<string, {
+          resolve: (result: never) => void;
+          reject: (error: Error) => void;
+          startTime: number;
+          timeoutId: ReturnType<typeof setTimeout>;
+          cacheKey: string;
+          settled?: boolean;
+        }>;
+        totalDecodes: number;
+        totalDecodeTime: number;
+        worker: { terminate: ReturnType<typeof vi.fn> };
+      }>;
+      activeResponseHandlers: Map<object, unknown>;
+      frameCache: Map<string, { bitmap: ImageBitmap; timestamp: number }>;
+      requestQueue: Array<{ reject: (error: Error) => void }>;
+      lifecycleGeneration: number;
+      maxCacheSize: number;
+      handleDecodeResponse: (state: (typeof decoder.workers)[number], response: {
+        requestId: string; clipId: string; time: number; bitmap: ImageBitmap;
+      }) => Promise<void>;
+      failWorker: (state: (typeof decoder.workers)[number], error: Error) => void;
+      processQueue: () => void;
+      addToCache: (key: string, bitmap: ImageBitmap) => void;
+    };
+
+    let finishClone!: (bitmap: ImageBitmap) => void;
+    const callerBitmap = { close: vi.fn() } as unknown as ImageBitmap;
+    vi.stubGlobal("createImageBitmap", () => new Promise<ImageBitmap>((resolve) => {
+      finishClone = resolve;
+    }));
+
+    const rejectPending = vi.fn();
+    const pending = {
+      resolve: vi.fn(),
+      reject: rejectPending,
+      startTime: performance.now(),
+      timeoutId: setTimeout(() => undefined, 60000),
+      cacheKey: "frame-key",
+      settled: false,
+    };
+    const state = {
+      failed: false,
+      busy: true,
+      pendingRequests: new Map([["request-1", pending]]),
+      totalDecodes: 0,
+      totalDecodeTime: 0,
+      worker: { terminate: vi.fn() },
+    };
+    decoder.workers = [state];
+    decoder.activeResponseHandlers = new Map();
+    decoder.frameCache = new Map();
+    decoder.requestQueue = [];
+    decoder.lifecycleGeneration = 0;
+    decoder.maxCacheSize = 100;
+    decoder.processQueue = vi.fn();
+    decoder.addToCache = vi.fn();
+    const handling = decoder.handleDecodeResponse(state, {
+      requestId: "request-1",
+      clipId: "clip-a",
+      time: 1,
+      bitmap: { close: vi.fn() } as unknown as ImageBitmap,
+    });
+    await Promise.resolve();
+
+    decoder.failWorker(state, new Error("worker crashed"));
+    expect(rejectPending).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "worker crashed" }),
+    );
+
+    finishClone(callerBitmap);
+    await handling;
+    expect(callerBitmap.close).toHaveBeenCalledOnce();
+    expect(pending.resolve).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+});
