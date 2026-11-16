@@ -56,6 +56,39 @@ describe("ParallelFrameDecoder frame cache", () => {
     );
   });
 
+  it("rejects pending requests even when terminating a failed worker throws", () => {
+    const decoder = Object.create(ParallelFrameDecoder.prototype) as ParallelFrameDecoder & {
+      workers: Array<{
+        worker: { terminate: ReturnType<typeof vi.fn> };
+        failed: boolean;
+        busy: boolean;
+        pendingRequests: Map<string, { reject: (error: Error) => void; timeoutId: ReturnType<typeof setTimeout> }>;
+      }>;
+      requestQueue: Array<{ reject: (error: Error) => void }>;
+      processQueue: () => void;
+      failWorker: (state: (typeof decoder.workers)[number], error: Error) => void;
+    };
+    const rejectPending = vi.fn();
+    const terminate = vi.fn(() => { throw new Error("termination failed"); });
+    const state = {
+      worker: { terminate },
+      failed: false,
+      busy: true,
+      pendingRequests: new Map([
+        ["request-1", { reject: rejectPending, timeoutId: setTimeout(() => undefined, 60000) }],
+      ]),
+    };
+    decoder.workers = [state];
+    decoder.requestQueue = [];
+    decoder.processQueue = vi.fn();
+
+    expect(() => decoder.failWorker(state, new Error("worker crashed"))).not.toThrow();
+    expect(terminate).toHaveBeenCalledOnce();
+    expect(rejectPending).toHaveBeenCalledWith(expect.any(Error));
+    expect(state.pendingRequests.size).toBe(0);
+    expect(decoder.processQueue).toHaveBeenCalledOnce();
+  });
+
   it("rejects pending and queued requests when the last worker fails", () => {
     const decoder = Object.create(
       ParallelFrameDecoder.prototype,
