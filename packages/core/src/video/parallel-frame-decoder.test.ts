@@ -593,11 +593,11 @@ describe("ParallelFrameDecoder response disposal race", () => {
         totalDecodeTime: number;
         worker: { terminate: ReturnType<typeof vi.fn> };
       }>;
-      activeResponseHandlers: Set<{
+      activeResponseHandlers: Map<{
         reject: (error: Error) => void;
         lifecycleGeneration?: number;
         settled?: boolean;
-      }>;
+      }, unknown>;
       frameCache: Map<string, { bitmap: ImageBitmap; timestamp: number }>;
       workerUrls: string[];
       requestQueue: Array<{ reject: (error: Error) => void }>;
@@ -642,7 +642,7 @@ describe("ParallelFrameDecoder response disposal race", () => {
       worker: { terminate: vi.fn() },
     };
     decoder.workers = [state];
-    decoder.activeResponseHandlers = new Set();
+    decoder.activeResponseHandlers = new Map();
     decoder.frameCache = new Map();
     decoder.workerUrls = [];
     decoder.requestQueue = [];
