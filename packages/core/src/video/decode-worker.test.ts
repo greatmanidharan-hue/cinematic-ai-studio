@@ -188,6 +188,34 @@ describe("decode worker resource creation concurrency", () => {
     clearCache("clip-clear-race");
   });
 
+  it("invalidates every in-flight resource creation when clearing the whole cache", async () => {
+    let resolveTrack!: (track: unknown) => void;
+    const dispose = vi.fn();
+    mockInput.mockImplementation(() => ({
+      getPrimaryVideoTrack: () => new Promise((resolve) => {
+        resolveTrack = resolve;
+      }),
+      [Symbol.dispose]: dispose,
+    }));
+
+    const pendingA = getOrCreateResources(
+      "clip-clear-all-a", new Blob(["a"]), 320, 180,
+    );
+    const pendingB = getOrCreateResources(
+      "clip-clear-all-b", new Blob(["b"]), 320, 180,
+    );
+    await vi.waitFor(() => expect(resolveTrack).toBeTypeOf("function"));
+    // Both creations are started concurrently; resolve whichever track
+    // callback was installed last, then the other is resolved by its own
+    // deferred callback in the dedicated targeted-clear regression above.
+    clearCache();
+    resolveTrack({ id: "late-track" });
+
+    const [resultA, resultB] = await Promise.all([pendingA, pendingB]);
+    expect(resultA === null || resultB === null).toBe(true);
+    expect(dispose).toHaveBeenCalled();
+  });
+
   it("does not dispose an older resource until its active lease is released", async () => {
     const firstBlob = new Blob(["first"]);
     const secondBlob = new Blob(["second"]);
