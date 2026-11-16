@@ -247,7 +247,11 @@ export class ParallelFrameDecoder {
     this.workers = [];
 
     for (const url of this.workerUrls) {
-      URL.revokeObjectURL(url);
+      try {
+        URL.revokeObjectURL(url);
+      } catch {
+        // Continue cleanup for remaining worker URLs.
+      }
     }
     this.workerUrls = [];
     this.mediabunnyAvailable = false;
