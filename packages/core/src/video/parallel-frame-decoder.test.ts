@@ -679,3 +679,39 @@ describe("ParallelFrameDecoder response disposal race", () => {
     vi.unstubAllGlobals();
   });
 });
+
+
+describe("ParallelFrameDecoder cache disposal race", () => {
+  it("closes a cached bitmap clone that completes after dispose", async () => {
+    const decoder = Object.create(ParallelFrameDecoder.prototype) as ParallelFrameDecoder & {
+      frameCache: Map<string, { bitmap: ImageBitmap; timestamp: number }>;
+      cacheHits: number;
+      cacheMisses: number;
+      lifecycleGeneration: number;
+      getCacheKey: (request: { clipId: string; blob: Blob; time: number; width: number; height: number }) => string;
+      getFromCache: (request: { clipId: string; blob: Blob; time: number; width: number; height: number }) => Promise<ImageBitmap | null>;
+    };
+    const source = { close: vi.fn() } as unknown as ImageBitmap;
+    const lateClone = { close: vi.fn() } as unknown as ImageBitmap;
+    decoder.frameCache = new Map([["frame-key", { bitmap: source, timestamp: 1 }]]);
+    decoder.cacheHits = 0;
+    decoder.cacheMisses = 0;
+    decoder.lifecycleGeneration = 0;
+    decoder.getCacheKey = vi.fn(() => "frame-key");
+
+    let finishClone!: (bitmap: ImageBitmap) => void;
+    vi.stubGlobal("createImageBitmap", () => new Promise<ImageBitmap>((resolve) => {
+      finishClone = resolve;
+    }));
+
+    const lookup = decoder.getFromCache({
+      clipId: "clip-a", blob: new Blob(["source"]), time: 1, width: 10, height: 10,
+    });
+    decoder.lifecycleGeneration++;
+    finishClone(lateClone);
+
+    await expect(lookup).resolves.toBeNull();
+    expect(lateClone.close).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
+});
