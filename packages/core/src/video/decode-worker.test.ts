@@ -138,6 +138,23 @@ describe("decode worker resource creation concurrency", () => {
     clearCache("clip-race");
   });
 
+  it("returns a failed resource creation to every concurrent waiter", async () => {
+    mockInput.mockImplementation(() => ({
+      getPrimaryVideoTrack: vi.fn(async () => null),
+      [Symbol.dispose]: vi.fn(),
+    }));
+
+    const blob = new Blob(["invalid-video"]);
+    const [first, second] = await Promise.all([
+      getOrCreateResources("clip-failure", blob, 320, 180),
+      getOrCreateResources("clip-failure", blob, 320, 180),
+    ]);
+
+    expect(first).toBeNull();
+    expect(second).toBeNull();
+    expect(mockInput).toHaveBeenCalledOnce();
+  });
+
   it("does not dispose an older resource until its active lease is released", async () => {
     const firstBlob = new Blob(["first"]);
     const secondBlob = new Blob(["second"]);
