@@ -189,14 +189,18 @@ describe("decode worker resource creation concurrency", () => {
   });
 
   it("invalidates every in-flight resource creation when clearing the whole cache", async () => {
-    let resolveTrack!: (track: unknown) => void;
-    const dispose = vi.fn();
-    mockInput.mockImplementation(() => ({
-      getPrimaryVideoTrack: () => new Promise((resolve) => {
-        resolveTrack = resolve;
-      }),
-      [Symbol.dispose]: dispose,
-    }));
+    const resolveTracks: Array<(track: unknown) => void> = [];
+    const disposals: ReturnType<typeof vi.fn>[] = [];
+    mockInput.mockImplementation(() => {
+      const dispose = vi.fn();
+      disposals.push(dispose);
+      return {
+        getPrimaryVideoTrack: () => new Promise((resolve) => {
+          resolveTracks.push(resolve);
+        }),
+        [Symbol.dispose]: dispose,
+      };
+    });
 
     const pendingA = getOrCreateResources(
       "clip-clear-all-a", new Blob(["a"]), 320, 180,
@@ -204,16 +208,18 @@ describe("decode worker resource creation concurrency", () => {
     const pendingB = getOrCreateResources(
       "clip-clear-all-b", new Blob(["b"]), 320, 180,
     );
-    await vi.waitFor(() => expect(resolveTrack).toBeTypeOf("function"));
-    // Both creations are started concurrently; resolve whichever track
-    // callback was installed last, then the other is resolved by its own
-    // deferred callback in the dedicated targeted-clear regression above.
+    await vi.waitFor(() => expect(resolveTracks).toHaveLength(2));
+
     clearCache();
-    resolveTrack({ id: "late-track" });
+    for (const resolveTrack of resolveTracks) {
+      resolveTrack({ id: "late-track" });
+    }
 
     const [resultA, resultB] = await Promise.all([pendingA, pendingB]);
-    expect(resultA === null || resultB === null).toBe(true);
-    expect(dispose).toHaveBeenCalled();
+    expect(resultA).toBeNull();
+    expect(resultB).toBeNull();
+    expect(disposals).toHaveLength(2);
+    expect(disposals.every((dispose) => dispose.mock.calls.length === 1)).toBe(true);
   });
 
   it("does not dispose an older resource until its active lease is released", async () => {
