@@ -99,7 +99,7 @@ async function loadMediaBunny(): Promise<typeof import("mediabunny") | null> {
   }
 }
 
-async function getOrCreateResources(
+export async function getOrCreateResources(
   clipId: string,
   blob: Blob,
   width: number,
