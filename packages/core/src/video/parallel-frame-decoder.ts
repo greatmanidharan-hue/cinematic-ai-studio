@@ -312,7 +312,11 @@ export class ParallelFrameDecoder {
       (pending.lifecycleGeneration !== undefined &&
         pending.lifecycleGeneration !== this.lifecycleGeneration)
     ) {
-      bitmapForCaller?.close();
+      try {
+        bitmapForCaller?.close();
+      } catch {
+        // A late clone may already have been released; continue settling cleanup.
+      }
       if (!pending.settled) {
         pending.settled = true;
         pending.reject(new Error("Decoder disposed"));
