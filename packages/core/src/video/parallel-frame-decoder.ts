@@ -385,6 +385,7 @@ export class ParallelFrameDecoder {
   private async getFromCache(
     request: FrameDecodeRequest,
   ): Promise<ImageBitmap | null> {
+    const generation = this.lifecycleGeneration;
     const cacheKey = this.getCacheKey(request);
     const cached = this.frameCache.get(cacheKey);
 
@@ -392,7 +393,16 @@ export class ParallelFrameDecoder {
       cached.timestamp = performance.now();
       this.cacheHits++;
       try {
-        return await createImageBitmap(cached.bitmap);
+        const clone = await createImageBitmap(cached.bitmap);
+        if (generation !== this.lifecycleGeneration) {
+          try {
+            clone.close();
+          } catch {
+            // A clone released during disposal must not escape to the caller.
+          }
+          return null;
+        }
+        return clone;
       } catch {
         // A replacement may have been inserted while cloning was pending.
         // Only remove the entry whose bitmap actually failed to clone.
@@ -533,8 +543,12 @@ export class ParallelFrameDecoder {
       await this.initialize();
     }
 
+    const generation = this.lifecycleGeneration;
     const cacheKey = this.getCacheKey(request);
     const cached = await this.getFromCache(request);
+    if (generation !== this.lifecycleGeneration) {
+      throw new Error("Decoder disposed");
+    }
     if (cached) {
       return {
         clipId: request.clipId,
