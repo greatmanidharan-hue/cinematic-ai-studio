@@ -6,13 +6,28 @@ import {
   type Vector3,
   DEFAULT_PARTICLE_CONFIG,
 } from "./particle-types";
+import { createSeededRandom } from "./particle-random";
+import { getBoundedSimulationWindow } from "./particle-simulation-window";
+import { scheduleParticleEmissions } from "./particle-emission-scheduler";
 
-function generateId(): string {
-  return Math.random().toString(36).substring(2, 11);
+function cloneParticleConfig(config: ParticleConfig): ParticleConfig {
+  return {
+    ...config,
+    wind: { ...config.wind },
+    colors: [...config.colors],
+    size: { ...config.size },
+    opacity: { ...config.opacity },
+    lifetime: { ...config.lifetime },
+  };
 }
 
-function randomRange(min: number, max: number): number {
-  return min + Math.random() * (max - min);
+type RandomSource = () => number;
+
+const MAX_PARTICLES_PER_EFFECT = 10_000;
+const MAX_PARTICLES_TOTAL = 20_000;
+
+function randomRange(min: number, max: number, random: RandomSource): number {
+  return min + random() * (max - min);
 }
 
 function hexToRgb(hex: string): { r: number; g: number; b: number } {
@@ -34,11 +49,11 @@ function lerpColor(color1: string, color2: string, t: number): string {
   return `rgb(${r},${g},${b})`;
 }
 
-function getEmissionPosition(config: ParticleConfig, center: Vector3): Vector3 {
+function getEmissionPosition(config: ParticleConfig, center: Vector3, random: RandomSource): Vector3 {
   switch (config.emissionShape) {
     case "circle": {
-      const angle = Math.random() * Math.PI * 2;
-      const r = Math.random() * config.emissionRadius;
+      const angle = random() * Math.PI * 2;
+      const r = random() * config.emissionRadius;
       return {
         x: center.x + Math.cos(angle) * r,
         y: center.y + Math.sin(angle) * r,
@@ -46,9 +61,9 @@ function getEmissionPosition(config: ParticleConfig, center: Vector3): Vector3 {
       };
     }
     case "sphere": {
-      const theta = Math.random() * Math.PI * 2;
-      const phi = Math.acos(2 * Math.random() - 1);
-      const r = Math.random() * config.emissionRadius;
+      const theta = random() * Math.PI * 2;
+      const phi = Math.acos(2 * random() - 1);
+      const r = random() * config.emissionRadius;
       return {
         x: center.x + r * Math.sin(phi) * Math.cos(theta),
         y: center.y + r * Math.sin(phi) * Math.sin(theta),
@@ -57,14 +72,14 @@ function getEmissionPosition(config: ParticleConfig, center: Vector3): Vector3 {
     }
     case "rectangle": {
       return {
-        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius),
-        y: center.y + randomRange(-config.emissionRadius, config.emissionRadius),
+        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius, random),
+        y: center.y + randomRange(-config.emissionRadius, config.emissionRadius, random),
         z: center.z,
       };
     }
     case "line": {
       return {
-        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius),
+        x: center.x + randomRange(-config.emissionRadius, config.emissionRadius, random),
         y: center.y,
         z: center.z,
       };
@@ -79,9 +94,10 @@ function getInitialVelocity(
   config: ParticleConfig,
   effectType: string,
   center: Vector3,
-  position: Vector3
+  position: Vector3,
+  random: RandomSource
 ): Vector3 {
-  const speed = config.speed + randomRange(-config.speedVariance, config.speedVariance);
+  const speed = config.speed + randomRange(-config.speedVariance, config.speedVariance, random);
 
   switch (effectType) {
     case "explode": {
@@ -89,9 +105,9 @@ function getInitialVelocity(
       const dy = position.y - center.y;
       const dist = Math.sqrt(dx * dx + dy * dy) || 1;
       return {
-        x: (dx / dist) * speed + randomRange(-20, 20),
-        y: (dy / dist) * speed + randomRange(-20, 20),
-        z: randomRange(-speed * 0.5, speed * 0.5),
+        x: (dx / dist) * speed + randomRange(-20, 20, random),
+        y: (dy / dist) * speed + randomRange(-20, 20, random),
+        z: randomRange(-speed * 0.5, speed * 0.5, random),
       };
     }
     case "implode": {
@@ -106,38 +122,38 @@ function getInitialVelocity(
     }
     case "confetti": {
       return {
-        x: randomRange(-speed, speed),
-        y: -Math.abs(speed) * randomRange(0.5, 1.5),
-        z: randomRange(-speed * 0.3, speed * 0.3),
+        x: randomRange(-speed, speed, random),
+        y: -Math.abs(speed) * randomRange(0.5, 1.5, random),
+        z: randomRange(-speed * 0.3, speed * 0.3, random),
       };
     }
     case "dust":
     case "sparkle": {
-      const angle = Math.random() * Math.PI * 2;
+      const angle = random() * Math.PI * 2;
       return {
         x: Math.cos(angle) * speed * 0.3,
         y: Math.sin(angle) * speed * 0.3 - speed * 0.2,
-        z: randomRange(-10, 10),
+        z: randomRange(-10, 10, random),
       };
     }
     case "disintegrate": {
       return {
-        x: randomRange(-speed * 0.5, speed * 0.5),
-        y: -speed * randomRange(0.3, 0.8),
-        z: randomRange(-speed * 0.2, speed * 0.2),
+        x: randomRange(-speed * 0.5, speed * 0.5, random),
+        y: -speed * randomRange(0.3, 0.8, random),
+        z: randomRange(-speed * 0.2, speed * 0.2, random),
       };
     }
     case "shatter": {
-      const angle = Math.random() * Math.PI * 2;
+      const angle = random() * Math.PI * 2;
       return {
         x: Math.cos(angle) * speed,
         y: Math.sin(angle) * speed - speed * 0.5,
-        z: randomRange(-speed * 0.5, speed * 0.5),
+        z: randomRange(-speed * 0.5, speed * 0.5, random),
       };
     }
     case "dissolve":
     default: {
-      const angle = Math.random() * Math.PI * 2;
+      const angle = random() * Math.PI * 2;
       return {
         x: Math.cos(angle) * speed * 0.5,
         y: Math.sin(angle) * speed * 0.5,
@@ -154,6 +170,12 @@ export class ParticleEngine {
   private canvasHeight: number = 1080;
   private changeListeners: Set<() => void> = new Set();
   private changeVersion: number = 0;
+  private lastUpdateTime: number | null = null;
+  private fixedStepAccumulator = 0;
+  private readonly fixedStep = 1 / 120;
+  private readonly maxFixedStepsPerUpdate = 8;
+  private randomGenerators = new Map<string, RandomSource>();
+  private particleCounters = new Map<string, number>();
 
   onEffectsChange(listener: () => void): () => void {
     this.changeListeners.add(listener);
@@ -179,7 +201,13 @@ export class ParticleEngine {
   }
 
   addEffect(effect: ParticleEffect): void {
-    this.effects.set(effect.id, effect);
+    // Keep engine state independent from mutable objects owned by the UI.
+    this.effects.set(effect.id, {
+      ...effect,
+      config: cloneParticleConfig(effect.config),
+    });
+    this.randomGenerators.set(effect.id, createSeededRandom(effect.id));
+    this.particleCounters.set(effect.id, 0);
     this.emitters.set(effect.id, {
       effectId: effect.id,
       particles: [],
@@ -193,13 +221,16 @@ export class ParticleEngine {
   removeEffect(effectId: string): void {
     this.effects.delete(effectId);
     this.emitters.delete(effectId);
+    this.randomGenerators.delete(effectId);
+    this.particleCounters.delete(effectId);
     this.notifyChange();
   }
 
   updateEffect(effectId: string, updates: Partial<ParticleConfig>): void {
     const effect = this.effects.get(effectId);
     if (effect) {
-      effect.config = { ...effect.config, ...updates };
+      effect.config = cloneParticleConfig({ ...effect.config, ...updates });
+      this.resetEmitterForEffect(effectId);
       this.notifyChange();
     }
   }
@@ -209,20 +240,44 @@ export class ParticleEngine {
     if (effect) {
       effect.startTime = startTime;
       effect.duration = duration;
+      this.resetEmitterForEffect(effectId);
       this.notifyChange();
     }
   }
 
+  /** Clears only the edited effect's simulation state and restarts its seed. */
+  private resetEmitterForEffect(effectId: string): void {
+    const emitter = this.emitters.get(effectId);
+    if (emitter) {
+      emitter.particles = [];
+      emitter.elapsedTime = 0;
+      emitter.emissionAccumulator = 0;
+      emitter.active = false;
+    }
+    this.randomGenerators.set(effectId, createSeededRandom(effectId));
+    this.particleCounters.set(effectId, 0);
+  }
+
+  private cloneEffect(effect: ParticleEffect): ParticleEffect {
+    return {
+      ...effect,
+      config: cloneParticleConfig(effect.config),
+    };
+  }
+
   getEffect(effectId: string): ParticleEffect | undefined {
-    return this.effects.get(effectId);
+    const effect = this.effects.get(effectId);
+    return effect ? this.cloneEffect(effect) : undefined;
   }
 
   getAllEffects(): ParticleEffect[] {
-    return Array.from(this.effects.values());
+    return Array.from(this.effects.values(), effect => this.cloneEffect(effect));
   }
 
   getEffectsForClip(clipId: string): ParticleEffect[] {
-    return Array.from(this.effects.values()).filter(e => e.clipId === clipId);
+    return Array.from(this.effects.values())
+      .filter(effect => effect.clipId === clipId)
+      .map(effect => this.cloneEffect(effect));
   }
 
   toggleEffect(effectId: string, enabled: boolean): void {
@@ -235,33 +290,62 @@ export class ParticleEngine {
 
   private createParticle(
     effect: ParticleEffect,
-    center: Vector3
+    center: Vector3,
+    random: RandomSource,
+    birthTime: number,
   ): Particle {
     const config = effect.config;
-    const position = getEmissionPosition(config, center);
-    const velocity = getInitialVelocity(config, effect.type, center, position);
-    const colorIndex = Math.floor(Math.random() * config.colors.length);
+    const position = getEmissionPosition(config, center, random);
+    const velocity = getInitialVelocity(config, effect.type, center, position, random);
+    const colorIndex = Math.floor(random() * config.colors.length);
 
     return {
-      id: generateId(),
+      id: `${effect.id}-particle-${this.particleCounters.get(effect.id) ?? 0}`,
+      birthTime,
+      blendMode: config.blendMode,
       position,
       velocity,
       acceleration: { x: 0, y: config.gravity, z: 0 },
       color: config.colors[colorIndex],
-      size: randomRange(config.size.min, config.size.max),
+      size: randomRange(config.size.min, config.size.max, random),
       opacity: config.opacity.start,
-      rotation: Math.random() * Math.PI * 2,
-      rotationSpeed: randomRange(-config.rotationSpeed, config.rotationSpeed),
-      lifetime: randomRange(config.lifetime.min, config.lifetime.max),
+      rotation: random() * Math.PI * 2,
+      rotationSpeed: randomRange(-config.rotationSpeed, config.rotationSpeed, random),
+      lifetime: randomRange(config.lifetime.min, config.lifetime.max, random),
       age: 0,
       active: true,
     };
   }
 
   update(currentTime: number, deltaTime: number): void {
+    // A backwards timeline seek invalidates particles simulated in the future.
+    if (this.lastUpdateTime !== null && currentTime < this.lastUpdateTime) {
+      this.reset();
+    }
+    this.lastUpdateTime = currentTime;
+    const safeDeltaTime = Number.isFinite(deltaTime) ? Math.max(0, deltaTime) : 0;
+    const frameStartTime = currentTime - safeDeltaTime;
+    const previousFixedStepAccumulator = this.fixedStepAccumulator;
+    const simulationWindow = getBoundedSimulationWindow(
+      frameStartTime,
+      safeDeltaTime,
+      previousFixedStepAccumulator,
+      this.fixedStep,
+      this.maxFixedStepsPerUpdate,
+    );
+    this.fixedStepAccumulator = simulationWindow.remainder;
+
+    let totalParticleCount = Array.from(this.emitters.values()).reduce(
+      (total, state) => total + state.particles.length,
+      0,
+    );
+
     for (const [effectId, emitter] of this.emitters) {
       const effect = this.effects.get(effectId);
       if (!effect || !effect.enabled) {
+        emitter.active = false;
+        emitter.particles = [];
+        emitter.emissionAccumulator = 0;
         continue;
       }
 
@@ -270,6 +354,8 @@ export class ParticleEngine {
 
       if (!effectStarted || effectEnded) {
         emitter.active = false;
+        emitter.particles = [];
+        emitter.emissionAccumulator = 0;
         continue;
       }
 
@@ -283,51 +369,202 @@ export class ParticleEngine {
         z: 0,
       };
 
-      emitter.emissionAccumulator += config.emissionRate * deltaTime;
-      while (
-        emitter.emissionAccumulator >= 1 &&
-        emitter.particles.length < config.particleCount
-      ) {
-        emitter.particles.push(this.createParticle(effect, center));
-        emitter.emissionAccumulator -= 1;
-      }
 
-      for (const particle of emitter.particles) {
-        if (!particle.active) continue;
-
-        particle.velocity.x += (particle.acceleration.x + config.wind.x) * deltaTime;
-        particle.velocity.y += (particle.acceleration.y + config.wind.y) * deltaTime;
-        particle.velocity.z += (particle.acceleration.z + config.wind.z) * deltaTime;
-
-        if (config.turbulence > 0) {
-          particle.velocity.x += randomRange(-config.turbulence, config.turbulence) * deltaTime;
-          particle.velocity.y += randomRange(-config.turbulence, config.turbulence) * deltaTime;
-        }
-
-        particle.position.x += particle.velocity.x * deltaTime;
-        particle.position.y += particle.velocity.y * deltaTime;
-        particle.position.z += particle.velocity.z * deltaTime;
-
-        particle.rotation += particle.rotationSpeed * deltaTime;
-        particle.age += deltaTime;
-
-        const lifeProgress = particle.age / particle.lifetime;
-        if (lifeProgress < config.fadeIn) {
-          particle.opacity = config.opacity.start * (lifeProgress / config.fadeIn);
-        } else if (lifeProgress > 1 - config.fadeOut) {
-          const fadeProgress = (1 - lifeProgress) / config.fadeOut;
-          particle.opacity = config.opacity.end + (config.opacity.start - config.opacity.end) * fadeProgress;
-        } else {
-          const midProgress = (lifeProgress - config.fadeIn) / (1 - config.fadeIn - config.fadeOut);
-          particle.opacity = config.opacity.start + (config.opacity.end - config.opacity.start) * midProgress;
-        }
-
-        if (particle.age >= particle.lifetime) {
-          particle.active = false;
+      // Process every accepted fixed step chronologically. Emissions are
+      // created at their scheduled timestamp before that step is integrated,
+      // so a new particle receives only the portion after its birth time.
+      const effectEndTime = effect.startTime + effect.duration;
+      // Advance emission progress through deliberately dropped simulation
+      // time without creating particles, so skipped emissions are discarded
+      // while their fractional progress remains aligned with the timeline.
+      if (simulationWindow.droppedTime > 0) {
+        const droppedStart = frameStartTime - previousFixedStepAccumulator;
+        const droppedEnd = simulationWindow.startTime;
+        const activeDroppedStart = Math.max(droppedStart, effect.startTime);
+        const activeDroppedEnd = Math.min(droppedEnd, effectEndTime);
+        if (activeDroppedEnd > activeDroppedStart) {
+          const droppedSchedule = scheduleParticleEmissions(
+            activeDroppedStart,
+            activeDroppedEnd,
+            config.emissionRate,
+            emitter.emissionAccumulator,
+            0,
+          );
+          emitter.emissionAccumulator = droppedSchedule.remainder;
         }
       }
 
-      emitter.particles = emitter.particles.filter((p) => p.active);
+      const particleLimit = Number.isFinite(config.particleCount)
+        ? Math.min(MAX_PARTICLES_PER_EFFECT, Math.max(0, Math.floor(config.particleCount)))
+        : 0;
+
+      for (let stepIndex = 0; stepIndex < simulationWindow.steps; stepIndex++) {
+        const stepStart = simulationWindow.startTime + stepIndex * this.fixedStep;
+        const stepEnd = stepStart + this.fixedStep;
+        const activeStepStart = Math.max(stepStart, effect.startTime);
+        const activeStepEnd = Math.min(stepEnd, effectEndTime);
+
+        if (activeStepEnd > activeStepStart) {
+          const schedule = scheduleParticleEmissions(
+            activeStepStart,
+            activeStepEnd,
+            config.emissionRate,
+            emitter.emissionAccumulator,
+            Math.min(
+              Math.max(0, particleLimit - emitter.particles.length),
+              Math.max(0, MAX_PARTICLES_TOTAL - totalParticleCount),
+            ),
+          );
+          emitter.emissionAccumulator = schedule.remainder;
+
+          for (const emissionTime of schedule.emissionTimes) {
+            const random = this.randomGenerators.get(effectId) ?? createSeededRandom(effectId);
+            this.randomGenerators.set(effectId, random);
+            emitter.particles.push(this.createParticle(effect, center, random, emissionTime));
+            this.particleCounters.set(effectId, (this.particleCounters.get(effectId) ?? 0) + 1);
+            totalParticleCount++;
+          }
+        }
+
+        for (const particle of emitter.particles) {
+          if (!particle.active || particle.birthTime >= stepEnd) continue;
+
+          const integrationStart = Math.max(stepStart, particle.birthTime);
+          const integrationEnd = Math.min(stepEnd, effectEndTime);
+          const stepDelta = Math.max(0, integrationEnd - integrationStart);
+          if (stepDelta <= 0) continue;
+
+          particle.velocity.x += (particle.acceleration.x + config.wind.x) * stepDelta;
+          particle.velocity.y += (particle.acceleration.y + config.wind.y) * stepDelta;
+          particle.velocity.z += (particle.acceleration.z + config.wind.z) * stepDelta;
+
+          if (config.turbulence > 0) {
+            const random = this.randomGenerators.get(effectId) ?? createSeededRandom(effectId);
+            this.randomGenerators.set(effectId, random);
+            particle.velocity.x += randomRange(-config.turbulence, config.turbulence, random) * stepDelta;
+            particle.velocity.y += randomRange(-config.turbulence, config.turbulence, random) * stepDelta;
+          }
+
+          particle.position.x += particle.velocity.x * stepDelta;
+          particle.position.y += particle.velocity.y * stepDelta;
+          particle.position.z += particle.velocity.z * stepDelta;
+          particle.rotation += particle.rotationSpeed * stepDelta;
+          particle.age += stepDelta;
+
+          const lifeProgress = particle.age / particle.lifetime;
+          if (lifeProgress < config.fadeIn) {
+            particle.opacity = config.opacity.start * (lifeProgress / config.fadeIn);
+          } else if (lifeProgress > 1 - config.fadeOut) {
+            const fadeProgress = (1 - lifeProgress) / config.fadeOut;
+            particle.opacity = config.opacity.end + (config.opacity.start - config.opacity.end) * fadeProgress;
+          } else {
+            const midProgress = (lifeProgress - config.fadeIn) / (1 - config.fadeIn - config.fadeOut);
+            particle.opacity = config.opacity.start + (config.opacity.end - config.opacity.start) * midProgress;
+          }
+
+          if (particle.age >= particle.lifetime) particle.active = false;
+        }
+
+        const previousParticleCount = emitter.particles.length;
+        emitter.particles = emitter.particles.filter((particle) => particle.active);
+        totalParticleCount -= previousParticleCount - emitter.particles.length;
+        if (emitter.particles.length >= particleLimit || totalParticleCount >= MAX_PARTICLES_TOTAL) {
+          emitter.emissionAccumulator %= 1;
+        }
+      }
+
+      // Process emissions and integration for any remaining time between the
+      // last retained step end and currentTime. Only applies when at least one
+      // fixed step was retained; otherwise all time is carried as remainder.
+      if (simulationWindow.steps > 0) {
+        const remainingStart = Math.max(simulationWindow.endTime, effect.startTime);
+        const remainingEnd = Math.min(currentTime, effectEndTime);
+        if (remainingEnd > remainingStart) {
+          const remainingSchedule = scheduleParticleEmissions(
+            remainingStart,
+            remainingEnd,
+            config.emissionRate,
+            emitter.emissionAccumulator,
+            Math.min(
+              Math.max(0, particleLimit - emitter.particles.length),
+              Math.max(0, MAX_PARTICLES_TOTAL - totalParticleCount),
+            ),
+          );
+          emitter.emissionAccumulator = remainingSchedule.remainder;
+
+          for (const emissionTime of remainingSchedule.emissionTimes) {
+            const random = this.randomGenerators.get(effectId) ?? createSeededRandom(effectId);
+            this.randomGenerators.set(effectId, random);
+            emitter.particles.push(this.createParticle(effect, center, random, emissionTime));
+            this.particleCounters.set(effectId, (this.particleCounters.get(effectId) ?? 0) + 1);
+            totalParticleCount++;
+          }
+
+          for (const particle of emitter.particles) {
+            if (!particle.active || particle.birthTime >= remainingEnd) continue;
+
+            const integrationStart = Math.max(simulationWindow.endTime, particle.birthTime);
+            const integrationEnd = Math.min(remainingEnd, effectEndTime);
+            const stepDelta = Math.max(0, integrationEnd - integrationStart);
+            if (stepDelta <= 0) continue;
+
+            particle.velocity.x += (particle.acceleration.x + config.wind.x) * stepDelta;
+            particle.velocity.y += (particle.acceleration.y + config.wind.y) * stepDelta;
+            particle.velocity.z += (particle.acceleration.z + config.wind.z) * stepDelta;
+
+            if (config.turbulence > 0) {
+              const random = this.randomGenerators.get(effectId) ?? createSeededRandom(effectId);
+              this.randomGenerators.set(effectId, random);
+              particle.velocity.x += randomRange(-config.turbulence, config.turbulence, random) * stepDelta;
+              particle.velocity.y += randomRange(-config.turbulence, config.turbulence, random) * stepDelta;
+            }
+
+            particle.position.x += particle.velocity.x * stepDelta;
+            particle.position.y += particle.velocity.y * stepDelta;
+            particle.position.z += particle.velocity.z * stepDelta;
+            particle.rotation += particle.rotationSpeed * stepDelta;
+            particle.age += stepDelta;
+
+            const lifeProgress = particle.age / particle.lifetime;
+            if (lifeProgress < config.fadeIn) {
+              particle.opacity = config.opacity.start * (lifeProgress / config.fadeIn);
+            } else if (lifeProgress > 1 - config.fadeOut) {
+              const fadeProgress = (1 - lifeProgress) / config.fadeOut;
+              particle.opacity = config.opacity.end + (config.opacity.start - config.opacity.end) * fadeProgress;
+            } else {
+              const midProgress = (lifeProgress - config.fadeIn) / (1 - config.fadeIn - config.fadeOut);
+              particle.opacity = config.opacity.start + (config.opacity.end - config.opacity.start) * midProgress;
+            }
+
+            if (particle.age >= particle.lifetime) particle.active = false;
+          }
+
+          const previousParticleCount = emitter.particles.length;
+          emitter.particles = emitter.particles.filter((particle) => particle.active);
+          totalParticleCount -= previousParticleCount - emitter.particles.length;
+          if (emitter.particles.length >= particleLimit || totalParticleCount >= MAX_PARTICLES_TOTAL) {
+            emitter.emissionAccumulator %= 1;
+          }
+        }
+      }
+
+      // Keep the emitter's fractional emission progress; whole due emissions
+      // are discarded at capacity and are never banked for a later burst.
+      emitter.particles = emitter.particles.filter((particle) => particle.active);
+    }
+  }
+
+  /**
+   * Set the deterministic random seed before resetting and simulating an export.
+   * The same seed and update sequence produce the same particle simulation.
+   */
+  setRandomSeed(seed: number): void {
+    this.randomGenerators.clear();
+    for (const effectId of this.effects.keys()) {
+      this.randomGenerators.set(effectId, createSeededRandom(String(seed) + "-" + effectId));
+    }
+    for (const effectId of this.particleCounters.keys()) {
+      this.particleCounters.set(effectId, 0);
     }
   }
 
@@ -357,7 +594,11 @@ export class ParticleEngine {
   }
 
   reset(): void {
-    for (const emitter of this.emitters.values()) {
+    this.lastUpdateTime = null;
+    this.fixedStepAccumulator = 0;
+    for (const [effectId, emitter] of this.emitters) {
+      this.randomGenerators.set(effectId, createSeededRandom(effectId));
+      this.particleCounters.set(effectId, 0);
       emitter.particles = [];
       emitter.elapsedTime = 0;
       emitter.emissionAccumulator = 0;
@@ -365,10 +606,113 @@ export class ParticleEngine {
     }
   }
 
+  /**
+   * Rebuild the simulation at an absolute timeline position.
+   * Replaying from zero avoids accumulating stale particles when the editor
+   * playhead is scrubbed, paused, or moved backwards.
+   */
+  seekToTime(
+    targetTime: number,
+    fixedStep = 1 / 30,
+    seed?: number,
+  ): void {
+    const safeTarget = Number.isFinite(targetTime) ? Math.max(0, targetTime) : 0;
+    const safeStep = Number.isFinite(fixedStep) && fixedStep > 0
+      ? Math.min(fixedStep, 1 / 10)
+      : 1 / 30;
+
+    if (seed !== undefined) this.setRandomSeed(seed);
+    else this.setRandomSeed(0x6d2b79f5);
+    this.lastUpdateTime = null;
+    this.fixedStepAccumulator = 0;
+
+    let simulatedTime = 0;
+    while (simulatedTime + safeStep <= safeTarget) {
+      simulatedTime += safeStep;
+      this.update(simulatedTime, safeStep);
+    }
+
+    const remainder = safeTarget - simulatedTime;
+    if (remainder > 1e-8) {
+      this.update(safeTarget, remainder);
+    }
+  }
+
+  private seekTargetTime: number | null = null;
+  private seekCursorTime = 0;
+
+  /**
+   * Starts a deterministic rebuild from timeline zero to the requested time.
+   * Call advanceSeek() repeatedly to spread the work across animation frames.
+   */
+  beginSeek(targetTime: number): void {
+    this.reset();
+    this.seekTargetTime = Number.isFinite(targetTime) ? Math.max(0, targetTime) : 0;
+    this.seekCursorTime = 0;
+    this.update(0, 0);
+  }
+
+  /**
+   * Advances at most maxFixedStepsPerUpdate fixed steps toward the seek target.
+   * Returns true when the target time has been reconstructed.
+   */
+  advanceSeek(): boolean {
+    if (this.seekTargetTime === null) return true;
+    const remaining = this.seekTargetTime - this.seekCursorTime;
+    if (remaining <= 0) {
+      this.seekTargetTime = null;
+      return true;
+    }
+
+    const maxDelta = this.fixedStep * this.maxFixedStepsPerUpdate;
+    const deltaTime = Math.min(remaining, maxDelta);
+    this.seekCursorTime += deltaTime;
+    this.update(this.seekCursorTime, deltaTime);
+
+    if (this.seekCursorTime >= this.seekTargetTime) {
+      this.seekTargetTime = null;
+      return true;
+    }
+    return false;
+  }
+
+  isSeeking(): boolean {
+    return this.seekTargetTime !== null;
+  }
+
   dispose(): void {
     this.emitters.clear();
     this.effects.clear();
+    this.randomGenerators.clear();
+    this.particleCounters.clear();
   }
+}
+
+/**
+ * Stable seed shared by editor preview and export for the same VFX setup.
+ */
+export function getParticleEffectsSeed(effects: readonly ParticleEffect[]): number {
+  const signature = JSON.stringify(
+    [...effects]
+      .map((effect) => ({
+        ...effect,
+        config: {
+          ...effect.config,
+          wind: { ...effect.config.wind },
+          colors: [...effect.config.colors],
+          size: { ...effect.config.size },
+          opacity: { ...effect.config.opacity },
+          lifetime: { ...effect.config.lifetime },
+        },
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  );
+  let seed = 0x811c9dc5;
+  for (let index = 0; index < signature.length; index++) {
+    seed ^= signature.charCodeAt(index);
+    seed = Math.imul(seed, 0x01000193);
+  }
+  return seed >>> 0;
 }
 
 let engineInstance: ParticleEngine | null = null;

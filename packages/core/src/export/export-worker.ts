@@ -1,4 +1,4 @@
-import type { VideoExportSettings } from "./types";
+﻿import type { VideoExportSettings } from "./types";
 
 interface WorkerMessage {
   type:

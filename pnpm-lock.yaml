@@ -20,15 +20,15 @@ importers:
 
   apps/image:
     dependencies:
-      '@imgly/background-removal':
-        specifier: ^1.7.0
-        version: 1.7.0(onnxruntime-web@1.21.0)
       '@fairarena/image-core':
         specifier: workspace:*
         version: link:../../packages/image-core
       '@fairarena/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@imgly/background-removal':
+        specifier: ^1.7.0
+        version: 1.7.0(onnxruntime-web@1.21.0)
       '@radix-ui/react-context-menu':
         specifier: ^2.2.16
         version: 2.2.16(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -150,15 +150,15 @@ importers:
 
   apps/web:
     dependencies:
-      '@gsap/react':
-        specifier: ^2.1.2
-        version: 2.1.2(gsap@3.14.2)(react@18.3.1)
       '@fairarena/core':
         specifier: workspace:*
         version: link:../../packages/core
       '@fairarena/ui':
         specifier: workspace:*
         version: link:../../packages/ui
+      '@gsap/react':
+        specifier: ^2.1.2
+        version: 2.1.2(gsap@3.14.2)(react@18.3.1)
       '@radix-ui/react-context-menu':
         specifier: ^2.2.16
         version: 2.2.16(@types/react-dom@18.3.7(@types/react@18.3.27))(@types/react@18.3.27)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
@@ -307,6 +307,9 @@ importers:
       '@mediapipe/tasks-vision':
         specifier: ^0.10.35
         version: 0.10.35
+      fflate:
+        specifier: ^0.8.2
+        version: 0.8.2
       gsap:
         specifier: ^3.14.2
         version: 3.14.2
